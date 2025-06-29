@@ -6,11 +6,18 @@ def scrape_yellowpages(query, location):
     base_url = "https://www.yellowpages.com"
     search_url = f"{base_url}/search?search_terms={query}&geo_location_terms={location}"
 
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/122.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.google.com/",
+    })
 
-    response = requests.get(search_url, headers=headers)
+    response = session.get(search_url)
     if response.status_code != 200:
         print(f"Failed to fetch page: {response.status_code}")
         return
