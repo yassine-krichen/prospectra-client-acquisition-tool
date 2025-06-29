@@ -30,18 +30,42 @@ def scrape_yellowpages_playwright(query, location):
 
         for idx, biz in enumerate(results):
             print(f"\n[INFO] Business #{idx + 1}")
-            name = biz.find('a', class_='business-name')
-            phone = biz.find('div', class_='phones phone primary')
+
+            # ✅ Name
+            name_tag = biz.find('a', class_='business-name')
+            name = name_tag.text.strip() if name_tag else "N/A"
+
+            # ✅ Phone with fallback
+            phone_tag = biz.find('div', class_='phones phone primary') or biz.find('div', class_='phone')
+            phone = phone_tag.text.strip() if phone_tag else "N/A"
+
+            # ✅ Address with fallback
             street = biz.find('div', class_='street-address')
             locality = biz.find('div', class_='locality')
-            website = biz.find('a', class_='track-visit-website')
+            if street and locality:
+                address = f"{street.text.strip()}, {locality.text.strip()}"
+            else:
+                adr_tag = biz.find('p', class_='adr')
+                address = adr_tag.text.strip() if adr_tag else "N/A"
 
-            print({
-                "name": name.text.strip() if name else None,
-                "phone": phone.text.strip() if phone else None,
-                "address": f"{street.text.strip()} {locality.text.strip()}" if street and locality else None,
-                "website": website['href'] if website else None
-            })
+            # ✅ Website with fallback logic
+            website = None
+            links = biz.find_all('a')
+            for link in links:
+                if (
+                    "website" in link.text.lower()
+                    and link.get("href", "").startswith("http")
+                    and link.get("target") == "_blank"
+                ):
+                    website = link['href']
+                    break
+            website = website or "N/A"
+
+            # ✅ Pretty print
+            print(f"Name    : {name}")
+            print(f"Phone   : {phone}")
+            print(f"Address : {address}")
+            print(f"Website : {website}")
 
         browser.close()
 
