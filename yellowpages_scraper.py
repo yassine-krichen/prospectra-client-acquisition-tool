@@ -1,43 +1,49 @@
-import requests
+from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 
-
-def scrape_yellowpages(query, location):
+def scrape_yellowpages_playwright(query, location):
     base_url = "https://www.yellowpages.com"
     search_url = f"{base_url}/search?search_terms={query}&geo_location_terms={location}"
+    print(f"[INFO] Target URL: {search_url}")
 
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/122.0.0.0 Safari/537.36"
-        ),
-        "Accept-Language": "en-US,en;q=0.9",
-        "Referer": "https://www.google.com/",
-    })
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=False)  # Set headless=False to see browser
+        context = browser.new_context()
+        page = context.new_page()
 
-    response = session.get(search_url)
-    if response.status_code != 200:
-        print(f"Failed to fetch page: {response.status_code}")
-        return
+        print("[INFO] Navigating to page...")
+        page.goto(search_url, timeout=60000)
 
-    soup = BeautifulSoup(response.text, 'html.parser')
-    results = soup.find_all('div', class_='result')
+        print("[INFO] Page loaded. Extracting HTML content...")
+        html = page.content()
 
-    for biz in results:
-        name = biz.find('a', class_='business-name')
-        phone = biz.find('div', class_='phones phone primary')
-        street = biz.find('div', class_='street-address')
-        locality = biz.find('div', class_='locality')
-        website = biz.find('a', class_='track-visit-website')
+        soup = BeautifulSoup(html, "html.parser")
+        results = soup.find_all("div", class_="result")
+        print(f"[INFO] Found {len(results)} business listing containers.")
 
-        print({
-            "name": name.text.strip() if name else None,
-            "phone": phone.text.strip() if phone else None,
-            "address": f"{street.text.strip()} {locality.text.strip()}" if street and locality else None,
-            "website": website['href'] if website else None
-        })
+        if not results:
+            print("[WARN] No business listings found. Page structure may have changed.")
+            print("[DEBUG] Printing part of page HTML:")
+            print(soup.prettify()[:2000])  # print first 2K characters for inspection
+            browser.close()
+            return
+
+        for idx, biz in enumerate(results):
+            print(f"\n[INFO] Business #{idx + 1}")
+            name = biz.find('a', class_='business-name')
+            phone = biz.find('div', class_='phones phone primary')
+            street = biz.find('div', class_='street-address')
+            locality = biz.find('div', class_='locality')
+            website = biz.find('a', class_='track-visit-website')
+
+            print({
+                "name": name.text.strip() if name else None,
+                "phone": phone.text.strip() if phone else None,
+                "address": f"{street.text.strip()} {locality.text.strip()}" if street and locality else None,
+                "website": website['href'] if website else None
+            })
+
+        browser.close()
 
 # Example run
-scrape_yellowpages("plumber", "new york, ny")
+scrape_yellowpages_playwright("plumber", "new york, ny")
