@@ -1,0 +1,169 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Industry {
+  local_service
+  saas
+  ecommerce
+  agency
+  other
+}
+
+enum CompanySize {
+  size_1_10     @map("1-10")
+  size_11_50    @map("11-50")
+  size_51_200   @map("51-200")
+  size_201_plus @map("201+")
+  unknown
+
+  @@map("CompanySize")
+}
+
+enum ProspectSource {
+  google_places
+  builtwith
+  product_hunt
+  crunchbase
+  github
+  indiehackers
+  manual
+}
+
+enum SignalType {
+  outdated_site
+  no_https
+  old_stack
+  new_launch
+  funding_event
+  hiring_post
+  no_website
+  technical_debt
+}
+
+enum SignalStrength {
+  weak
+  medium
+  strong
+}
+
+enum ProjectFit {
+  landing_page
+  full_stack_app
+  backend_api
+  unclear
+}
+
+enum EstimatedBudget {
+  low
+  mid
+  high
+  unknown
+}
+
+enum ProspectStatus {
+  new
+  enriched
+  drafted
+  queued
+  sent
+  followup_1
+  followup_2
+  followup_3
+  replied
+  won
+  dead
+  unsubscribed
+}
+
+enum ReplySentiment {
+  positive
+  neutral
+  negative
+}
+
+enum ModelUsed {
+  gemini
+  groq
+  claude_bridge @map("claude-bridge")
+}
+
+model Prospect {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  companyName String
+  domain      String?
+  websiteUrl  String?
+  industry    Industry
+
+  // Nested { city, country, lat, lng } — no query pattern needs it normalized.
+  location Json
+
+  companySize CompanySize
+
+  contactName     String?
+  contactTitle    String?
+  contactEmail    String?
+  emailVerified   Boolean @default(false)
+  // 0-100 int, not a 0-1 float. Not in the original spec's type but a
+  // reasonable concretization to avoid float-precision surprises.
+  emailConfidence Int
+  linkedinUrl     String?
+
+  source       ProspectSource
+  sourceUrl    String
+  discoveredAt DateTime
+
+  // Nested { type, description, evidence, strength } — no query pattern
+  // needs it normalized.
+  signal Json
+
+  projectFit      ProjectFit
+  estimatedBudget EstimatedBudget
+  priorityScore   Int
+
+  status        ProspectStatus @default(new)
+  // Array of { status, timestamp } — no query pattern needs it normalized.
+  statusHistory Json           @default("[]")
+
+  drafts         Draft[]
+  activeDraftId  String?
+  sentAt         DateTime?
+  lastFollowupAt DateTime?
+  followupCount  Int       @default(0)
+
+  repliedAt      DateTime?
+  replySentiment ReplySentiment?
+
+  doNotContact   Boolean   @default(false)
+  unsubscribedAt DateTime?
+
+  notes String?
+  tags  String[]
+}
+
+model Draft {
+  id            String    @id @default(cuid())
+  prospect      Prospect  @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  prospectId    String
+  variant       Int
+  subject       String
+  body          String
+  humanizedBody String?
+  modelUsed     ModelUsed
+  generatedAt   DateTime  @default(now())
+  edited        Boolean   @default(false)
+  approved      Boolean   @default(false)
+
+  @@index([prospectId])
+}
