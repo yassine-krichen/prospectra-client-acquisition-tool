@@ -40,6 +40,34 @@ const envSchema = z.object({
   // above) since the route itself has no safe "disabled" state to fall back
   // to — fail closed at boot rather than at first request.
   CRON_SECRET: z.string().min(32, 'CRON_SECRET must be at least 32 characters'),
+  // Stage 3 send queue — resend.client.ts. Optional: no Resend account is
+  // provisioned yet. Missing means every send attempt degrades to a typed
+  // failure instead of crashing (same graceful-skip pattern as every other
+  // external client), and — separately — the domain-verification-gate below
+  // means no real volume can go out yet regardless.
+  RESEND_API_KEY: z.string().min(1).optional(),
+  // Local part of the outbound `from` address is fixed in resend.client.ts;
+  // this only supplies the domain. Optional: no sending domain is owned yet.
+  SENDING_DOMAIN: z.string().min(1).optional(),
+  // Whether SPF/DKIM/DMARC are actually verified on SENDING_DOMAIN. THE hard
+  // gate for send volume — see domain-verification-gate.ts. Deliberately NOT
+  // z.coerce.boolean() (which treats any non-empty string, including
+  // "false", as true): only the exact string "true" opens the gate, so an
+  // unset, empty, or malformed value all fail closed to `false` rather than
+  // accidentally opening it.
+  DOMAIN_DNS_VERIFIED: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true'),
+  // Daily send cap enforced ONLY while DOMAIN_DNS_VERIFIED is false — see
+  // getEffectiveDailyCap() in domain-verification-gate.ts. Small default
+  // keeps pre-verification volume trivial even if this var is never set.
+  DAILY_SEND_CAP_TEST: z.coerce.number().int().positive().default(3),
+  // ISO date string marking when domain warmup began, used by
+  // daily-cap.ts's ramp schedule (only ever consulted once the domain is
+  // verified). Optional — unset/malformed is treated as "warmup hasn't
+  // started" there, the most conservative reading.
+  DOMAIN_WARMUP_START_DATE: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
