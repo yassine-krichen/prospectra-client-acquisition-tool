@@ -11,6 +11,17 @@ const envSchema = z.object({
   // unavailable at call time instead of crashing the whole discovery run.
   GOOGLE_PLACES_API_KEY: z.string().min(1).optional(),
   BUILTWITH_API_KEY: z.string().min(1).optional(),
+  // Branch B (startup/SaaS discovery) source keys — same graceful-skip
+  // pattern as the Branch A keys above.
+  PRODUCT_HUNT_API_TOKEN: z.string().min(1).optional(),
+  CRUNCHBASE_API_KEY: z.string().min(1).optional(),
+  // Unlike the other source keys, GitHub's API works unauthenticated (at a
+  // much lower rate limit), so its source treats a missing token as
+  // "reduced rate limit", not "unavailable".
+  GITHUB_TOKEN: z.string().min(1).optional(),
+  // Branch C (contact enrichment) source keys — same graceful-skip pattern.
+  HUNTER_API_KEY: z.string().min(1).optional(),
+  PEOPLE_DATA_LABS_API_KEY: z.string().min(1).optional(),
   // Protects the discovery cron route. Required (unlike the source keys
   // above) since the route itself has no safe "disabled" state to fall back
   // to — fail closed at boot rather than at first request.

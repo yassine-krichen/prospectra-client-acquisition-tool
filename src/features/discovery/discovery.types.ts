@@ -45,6 +45,13 @@ export interface SourceUnavailable {
 export interface SourceRunSuccess {
   ok: true;
   prospects: DiscoveredProspect[];
+  /**
+   * Set when a source returned partial results because it self-limited
+   * mid-run (e.g. github.source.ts stopping early to avoid exhausting
+   * GitHub's unauthenticated rate limit) rather than because it was
+   * unavailable outright.
+   */
+  degradedReason?: string;
 }
 
 // Every discovery source returns this shape instead of throwing, so a

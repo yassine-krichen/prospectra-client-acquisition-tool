@@ -42,6 +42,26 @@ vi.mock('@/features/discovery/sources/builtwith.source', () => ({
   lookupStaleStack: lookupStaleStackMock,
 }));
 
+const runProductHuntSourceMock = vi.fn();
+vi.mock('@/features/discovery/sources/product-hunt.source', () => ({
+  runProductHuntSource: runProductHuntSourceMock,
+}));
+
+const runCrunchbaseSourceMock = vi.fn();
+vi.mock('@/features/discovery/sources/crunchbase.source', () => ({
+  runCrunchbaseSource: runCrunchbaseSourceMock,
+}));
+
+const runGitHubSourceMock = vi.fn();
+vi.mock('@/features/discovery/sources/github.source', () => ({
+  runGitHubSource: runGitHubSourceMock,
+}));
+
+const runIndieHackersSourceMock = vi.fn();
+vi.mock('@/features/discovery/sources/indiehackers.source', () => ({
+  runIndieHackersSource: runIndieHackersSourceMock,
+}));
+
 const { runDiscovery } = await import('./discovery.service');
 
 function buildSignal(overrides: Partial<Signal> = {}): Signal {
@@ -79,6 +99,10 @@ beforeEach(() => {
   envMock.BUILTWITH_API_KEY = undefined;
   runGooglePlacesSourceMock.mockResolvedValue({ ok: true, prospects: [] });
   runYellowPagesSourceMock.mockResolvedValue({ ok: true, prospects: [] });
+  runProductHuntSourceMock.mockResolvedValue({ ok: true, prospects: [] });
+  runCrunchbaseSourceMock.mockResolvedValue({ ok: true, prospects: [] });
+  runGitHubSourceMock.mockResolvedValue({ ok: true, prospects: [] });
+  runIndieHackersSourceMock.mockResolvedValue({ ok: true, prospects: [] });
   findFirstMock.mockResolvedValue(null);
   createMock.mockResolvedValue(undefined);
   updateMock.mockResolvedValue(undefined);
@@ -239,5 +263,92 @@ describe('runDiscovery', () => {
 
   it('rejects an invalid query missing required fields', async () => {
     await expect(runDiscovery({ category: '' })).rejects.toThrow();
+  });
+});
+
+describe('runDiscovery branch selection', () => {
+  it('defaults to branch "a" (local/SMB only) when no branch argument is given, preserving Phase 1 behavior', async () => {
+    await runDiscovery(query);
+
+    expect(runGooglePlacesSourceMock).toHaveBeenCalledTimes(1);
+    expect(runYellowPagesSourceMock).toHaveBeenCalledTimes(1);
+    expect(runProductHuntSourceMock).not.toHaveBeenCalled();
+    expect(runCrunchbaseSourceMock).not.toHaveBeenCalled();
+    expect(runGitHubSourceMock).not.toHaveBeenCalled();
+    expect(runIndieHackersSourceMock).not.toHaveBeenCalled();
+  });
+
+  it('runs only Branch A sources when branch is explicitly "a"', async () => {
+    const summary = await runDiscovery(query, 'a');
+
+    expect(summary.sources.map((s) => s.source).sort()).toEqual(['builtwith', 'google_places', 'yellowpages']);
+    expect(runProductHuntSourceMock).not.toHaveBeenCalled();
+  });
+
+  it('runs only Branch B sources (product_hunt, crunchbase, github, indiehackers) when branch is "b"', async () => {
+    const summary = await runDiscovery(query, 'b');
+
+    expect(runGooglePlacesSourceMock).not.toHaveBeenCalled();
+    expect(runYellowPagesSourceMock).not.toHaveBeenCalled();
+    expect(runProductHuntSourceMock).toHaveBeenCalledTimes(1);
+    expect(runCrunchbaseSourceMock).toHaveBeenCalledTimes(1);
+    expect(runGitHubSourceMock).toHaveBeenCalledTimes(1);
+    expect(runIndieHackersSourceMock).toHaveBeenCalledTimes(1);
+    expect(summary.sources.map((s) => s.source).sort()).toEqual([
+      'builtwith',
+      'crunchbase',
+      'github',
+      'indiehackers',
+      'product_hunt',
+    ]);
+  });
+
+  it('records the requested branch on the returned summary', async () => {
+    const summary = await runDiscovery(query, 'b');
+
+    expect(summary.branch).toBe('b');
+  });
+
+  it('runs every source exactly once (not twice) when branch is "both"', async () => {
+    await runDiscovery(query, 'both');
+
+    expect(runGooglePlacesSourceMock).toHaveBeenCalledTimes(1);
+    expect(runYellowPagesSourceMock).toHaveBeenCalledTimes(1);
+    expect(runProductHuntSourceMock).toHaveBeenCalledTimes(1);
+    expect(runCrunchbaseSourceMock).toHaveBeenCalledTimes(1);
+    expect(runGitHubSourceMock).toHaveBeenCalledTimes(1);
+    expect(runIndieHackersSourceMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('dedupes a Branch A and a Branch B source reporting the same normalized domain into a single persisted prospect when branch is "both"', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ domain: 'acme.com', companyName: 'From Google', source: 'google_places' })],
+    });
+    runProductHuntSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ domain: 'acme.com', companyName: 'From Product Hunt', source: 'product_hunt' })],
+    });
+
+    const summary = await runDiscovery(query, 'both');
+
+    expect(summary.totalFound).toBe(1);
+    expect(createMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not dedupe a Branch A and a Branch B prospect from genuinely different domains when branch is "both"', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ domain: 'acme.com', source: 'google_places' })],
+    });
+    runProductHuntSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ domain: 'other.com', source: 'product_hunt' })],
+    });
+
+    const summary = await runDiscovery(query, 'both');
+
+    expect(summary.totalFound).toBe(2);
+    expect(createMock).toHaveBeenCalledTimes(2);
   });
 });

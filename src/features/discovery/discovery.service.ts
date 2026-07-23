@@ -5,8 +5,21 @@ import { normalizeDomain } from '@/features/discovery/normalize-domain';
 import { runGooglePlacesSource } from '@/features/discovery/sources/google-places.source';
 import { lookupStaleStack } from '@/features/discovery/sources/builtwith.source';
 import { runYellowPagesSource } from '@/features/discovery/sources/yellowpages.source';
+import { runProductHuntSource } from '@/features/discovery/sources/product-hunt.source';
+import { runCrunchbaseSource } from '@/features/discovery/sources/crunchbase.source';
+import { runGitHubSource } from '@/features/discovery/sources/github.source';
+import { runIndieHackersSource } from '@/features/discovery/sources/indiehackers.source';
 import { toPrismaCompanySize } from '@/features/prospects/company-size.mapper';
 import type { Signal, SignalStrength } from '@/features/prospects/prospect.types';
+
+// Branch A = local/SMB discovery (category+geography search: Google Places,
+// yellowpages). Branch B = startup/SaaS discovery (topic/recency-based:
+// Product Hunt, Crunchbase, GitHub, Indie Hackers) — same `DiscoveryQuery`
+// shape is reused (`category` doubles as a topic/keyword filter, and
+// `geography` is mostly ignored by Branch B sources — see each source's own
+// doc comment), so both branches share one orchestrator and one query type
+// rather than duplicating the discovery pipeline.
+export type DiscoveryBranch = 'a' | 'b' | 'both';
 
 // Stub scoring for this phase — real weighting arrives in Phase 6. For now,
 // priority is just the strength of the single strongest signal found.
@@ -29,6 +42,7 @@ interface SourceRunSummary {
 
 export interface DiscoveryRunSummary {
   query: DiscoveryQuery;
+  branch: DiscoveryBranch;
   sources: SourceRunSummary[];
   totalFound: number;
   inserted: number;
@@ -118,26 +132,45 @@ async function persistProspect(prospect: DiscoveredProspect): Promise<'inserted'
 }
 
 /**
- * Orchestrates all Branch A discovery sources for a category+geography
- * query: runs whatever sources are configured, dedupes by domain, computes a
- * stub priority score, and persists new/updated prospects. Never fails the
- * whole run because one source lacks an API key — each source's
- * availability and outcome is reported in `sources`.
+ * Orchestrates discovery sources for a category+geography query: runs
+ * whatever sources are configured for the requested `branch`, dedupes by
+ * domain, computes a stub priority score, and persists new/updated
+ * prospects. Never fails the whole run because one source lacks an API
+ * key — each source's availability and outcome is reported in `sources`.
+ *
+ * `branch` selects which sources run: `'a'` (default) = local/SMB discovery
+ * (Google Places, yellowpages), `'b'` = startup/SaaS discovery (Product
+ * Hunt, Crunchbase, GitHub, Indie Hackers), `'both'` = every source. BuiltWith
+ * enrichment always runs afterward regardless of branch, since it enriches
+ * whatever prospects were found rather than discovering its own.
  */
-export async function runDiscovery(input: unknown): Promise<DiscoveryRunSummary> {
+export async function runDiscovery(input: unknown, branch: DiscoveryBranch = 'a'): Promise<DiscoveryRunSummary> {
   const query = discoveryQuerySchema.parse(input);
 
-  const sourceRuns: Array<{ name: string; result: SourceResult }> = [
-    { name: 'google_places', result: await runGooglePlacesSource(query) },
-    { name: 'yellowpages', result: await runYellowPagesSource(query) },
-  ];
+  const sourceRuns: Array<{ name: string; result: SourceResult }> = [];
+
+  if (branch === 'a' || branch === 'both') {
+    sourceRuns.push(
+      { name: 'google_places', result: await runGooglePlacesSource(query) },
+      { name: 'yellowpages', result: await runYellowPagesSource(query) }
+    );
+  }
+
+  if (branch === 'b' || branch === 'both') {
+    sourceRuns.push(
+      { name: 'product_hunt', result: await runProductHuntSource(query) },
+      { name: 'crunchbase', result: await runCrunchbaseSource(query) },
+      { name: 'github', result: await runGitHubSource(query) },
+      { name: 'indiehackers', result: await runIndieHackersSource(query) }
+    );
+  }
 
   const sources: SourceRunSummary[] = [];
   let allProspects: DiscoveredProspect[] = [];
 
   for (const { name, result } of sourceRuns) {
     if (result.ok) {
-      sources.push({ source: name, ran: true, count: result.prospects.length });
+      sources.push({ source: name, ran: true, count: result.prospects.length, reason: result.degradedReason });
       allProspects = allProspects.concat(result.prospects);
     } else {
       sources.push({ source: name, ran: false, reason: result.reason, count: 0 });
@@ -171,5 +204,5 @@ export async function runDiscovery(input: unknown): Promise<DiscoveryRunSummary>
     else updated += 1;
   }
 
-  return { query, sources, totalFound: deduped.length, inserted, updated };
+  return { query, branch, sources, totalFound: deduped.length, inserted, updated };
 }

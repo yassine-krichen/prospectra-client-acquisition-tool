@@ -167,3 +167,16 @@ model Draft {
 
   @@index([prospectId])
 }
+
+// Tracks calls made against a hard external free-tier quota (e.g. Hunter.io's
+// 25 searches/month) so enrichment can refuse a call once the monthly cap is
+// reached, rather than burning the quota on calls that fail anyway.
+// `yearMonth` is a "YYYY-MM" string in UTC; a new row is created each month.
+model ApiUsageCounter {
+  id        String @id @default(cuid())
+  source    String
+  yearMonth String
+  count     Int    @default(0)
+
+  @@unique([source, yearMonth])
+}

@@ -7,9 +7,14 @@ import { runDiscovery } from '@/features/discovery/discovery.service';
 
 const CRON_SECRET_HEADER = 'x-cron-secret';
 
+// `branch` selects which discovery sources run for this request: 'a' (the
+// default, preserving prior behavior) = local/SMB sources, 'b' = startup/SaaS
+// sources, 'both' = every source. See `discovery.service.ts`'s `runDiscovery`
+// doc comment for what each branch includes.
 const discoverRequestSchema = z.object({
   category: z.string().min(1),
   geography: z.string().min(1),
+  branch: z.enum(['a', 'b', 'both']).default('a'),
 });
 
 // Fail closed, same pattern as the dashboard login flow: hash both sides to
@@ -35,6 +40,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const fromQuery = discoverRequestSchema.safeParse({
     category: request.nextUrl.searchParams.get('category'),
     geography: request.nextUrl.searchParams.get('geography'),
+    branch: request.nextUrl.searchParams.get('branch') ?? undefined,
   });
 
   const parsed = fromBody.success ? fromBody : fromQuery;
@@ -42,6 +48,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'category and geography are required.' }, { status: 400 });
   }
 
-  const summary = await runDiscovery(parsed.data);
+  const { category, geography, branch } = parsed.data;
+  const summary = await runDiscovery({ category, geography }, branch);
   return NextResponse.json(summary);
 }
