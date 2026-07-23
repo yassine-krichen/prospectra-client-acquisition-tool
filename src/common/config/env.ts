@@ -6,6 +6,15 @@ const envSchema = z.object({
   DATABASE_URL: z.string().url(),
   DASHBOARD_PASSWORD: z.string().min(1, 'DASHBOARD_PASSWORD must not be empty'),
   SESSION_SECRET: z.string().min(32, 'SESSION_SECRET must be at least 32 characters'),
+  // Discovery source API keys aren't available yet. Left optional so the app
+  // boots without them — the sources that need them report themselves as
+  // unavailable at call time instead of crashing the whole discovery run.
+  GOOGLE_PLACES_API_KEY: z.string().min(1).optional(),
+  BUILTWITH_API_KEY: z.string().min(1).optional(),
+  // Protects the discovery cron route. Required (unlike the source keys
+  // above) since the route itself has no safe "disabled" state to fall back
+  // to — fail closed at boot rather than at first request.
+  CRON_SECRET: z.string().min(32, 'CRON_SECRET must be at least 32 characters'),
 });
 
 export type Env = z.infer<typeof envSchema>;

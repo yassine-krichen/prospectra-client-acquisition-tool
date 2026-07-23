@@ -1,0 +1,243 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { DiscoveredProspect, DiscoveryQuery } from '@/features/discovery/discovery.types';
+import type { StaleStackResult } from '@/features/discovery/sources/builtwith.source';
+import type { Signal } from '@/features/prospects/prospect.types';
+
+// This is an orchestration test: the sources and the DB are already/will be
+// tested elsewhere, so both are mocked here and only `discovery.service.ts`'s
+// own orchestration logic (dedupe, enrichment gating, priority scoring,
+// persistence branching, source-unavailable reporting) is under test.
+const { prospectMock, findFirstMock, createMock, updateMock } = vi.hoisted(() => {
+  const findFirst = vi.fn();
+  const create = vi.fn();
+  const update = vi.fn();
+  return {
+    prospectMock: { findFirst, create, update },
+    findFirstMock: findFirst,
+    createMock: create,
+    updateMock: update,
+  };
+});
+
+vi.mock('@/common/db/client', () => ({
+  prisma: { prospect: prospectMock },
+}));
+
+const envMock: { BUILTWITH_API_KEY: string | undefined } = { BUILTWITH_API_KEY: undefined };
+vi.mock('@/common/config/env', () => ({ env: envMock }));
+
+const runGooglePlacesSourceMock = vi.fn();
+vi.mock('@/features/discovery/sources/google-places.source', () => ({
+  runGooglePlacesSource: runGooglePlacesSourceMock,
+}));
+
+const runYellowPagesSourceMock = vi.fn();
+vi.mock('@/features/discovery/sources/yellowpages.source', () => ({
+  runYellowPagesSource: runYellowPagesSourceMock,
+}));
+
+const lookupStaleStackMock = vi.fn();
+vi.mock('@/features/discovery/sources/builtwith.source', () => ({
+  lookupStaleStack: lookupStaleStackMock,
+}));
+
+const { runDiscovery } = await import('./discovery.service');
+
+function buildSignal(overrides: Partial<Signal> = {}): Signal {
+  return {
+    type: 'outdated_site',
+    description: 'stale',
+    evidence: null,
+    strength: 'medium',
+    ...overrides,
+  };
+}
+
+function buildProspect(overrides: Partial<DiscoveredProspect> = {}): DiscoveredProspect {
+  return {
+    companyName: 'Acme Co',
+    domain: 'acme.com',
+    websiteUrl: 'https://acme.com',
+    industry: 'local_service',
+    location: { city: 'Austin', country: null, lat: null, lng: null },
+    companySize: 'unknown',
+    source: 'google_places',
+    sourceUrl: 'https://example.com/source',
+    discoveredAt: new Date('2026-01-01'),
+    signal: buildSignal(),
+    projectFit: 'unclear',
+    estimatedBudget: 'unknown',
+    ...overrides,
+  };
+}
+
+const query: DiscoveryQuery = { category: 'plumber', geography: 'Austin, TX' };
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  envMock.BUILTWITH_API_KEY = undefined;
+  runGooglePlacesSourceMock.mockResolvedValue({ ok: true, prospects: [] });
+  runYellowPagesSourceMock.mockResolvedValue({ ok: true, prospects: [] });
+  findFirstMock.mockResolvedValue(null);
+  createMock.mockResolvedValue(undefined);
+  updateMock.mockResolvedValue(undefined);
+});
+
+describe('runDiscovery', () => {
+  it('inserts a newly discovered prospect that has no existing record', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({ ok: true, prospects: [buildProspect()] });
+
+    const summary = await runDiscovery(query);
+
+    expect(summary.inserted).toBe(1);
+    expect(summary.updated).toBe(0);
+    expect(createMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('updates instead of inserting when a prospect with the same domain already exists', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({ ok: true, prospects: [buildProspect()] });
+    findFirstMock.mockResolvedValue({ id: 'existing-id' });
+
+    const summary = await runDiscovery(query);
+
+    expect(summary.inserted).toBe(0);
+    expect(summary.updated).toBe(1);
+    expect(updateMock).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'existing-id' } })
+    );
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it('dedupes two sources reporting the same normalized domain into a single persisted prospect', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ domain: 'Example.com', companyName: 'From Google' })],
+    });
+    runYellowPagesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ domain: 'www.example.com', companyName: 'From YellowPages' })],
+    });
+
+    const summary = await runDiscovery(query);
+
+    expect(summary.totalFound).toBe(1);
+    expect(createMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not dedupe two prospects from different domains', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ domain: 'acme.com' }), buildProspect({ domain: 'other.com' })],
+    });
+
+    const summary = await runDiscovery(query);
+
+    expect(summary.totalFound).toBe(2);
+    expect(createMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports a source with a missing API key as skipped-with-reason instead of aborting the run', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: false,
+      reason: 'source unavailable: GOOGLE_PLACES_API_KEY not configured',
+    });
+    runYellowPagesSourceMock.mockResolvedValue({ ok: true, prospects: [buildProspect()] });
+
+    const summary = await runDiscovery(query);
+
+    const googlePlacesSummary = summary.sources.find((s) => s.source === 'google_places');
+    expect(googlePlacesSummary).toEqual({
+      source: 'google_places',
+      ran: false,
+      reason: 'source unavailable: GOOGLE_PLACES_API_KEY not configured',
+      count: 0,
+    });
+    // The run still completes and persists the source that did succeed.
+    expect(summary.inserted).toBe(1);
+  });
+
+  it('reports builtwith as unavailable with a clear reason when BUILTWITH_API_KEY is not configured', async () => {
+    envMock.BUILTWITH_API_KEY = undefined;
+    runGooglePlacesSourceMock.mockResolvedValue({ ok: true, prospects: [buildProspect()] });
+
+    const summary = await runDiscovery(query);
+
+    const builtwithSummary = summary.sources.find((s) => s.source === 'builtwith');
+    expect(builtwithSummary).toEqual({
+      source: 'builtwith',
+      ran: false,
+      reason: 'source unavailable: BUILTWITH_API_KEY not configured',
+      count: 0,
+    });
+    expect(lookupStaleStackMock).not.toHaveBeenCalled();
+  });
+
+  it('upgrades a prospect signal with a stronger BuiltWith stale-stack signal when BuiltWith is configured', async () => {
+    envMock.BUILTWITH_API_KEY = 'test-key';
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ signal: buildSignal({ strength: 'weak' }) })],
+    });
+    const staleStackSignal = buildSignal({ type: 'old_stack', strength: 'strong', description: 'jQuery 1.x' });
+    lookupStaleStackMock.mockResolvedValue({
+      ok: true,
+      lookup: { domain: 'acme.com', technologies: ['jQuery 1.9.1'], signal: staleStackSignal },
+    } satisfies StaleStackResult);
+
+    const summary = await runDiscovery(query);
+
+    const builtwithSummary = summary.sources.find((s) => s.source === 'builtwith');
+    expect(builtwithSummary?.ran).toBe(true);
+    expect(builtwithSummary?.count).toBe(1);
+    expect(createMock).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ signal: staleStackSignal, priorityScore: 3 }) })
+    );
+  });
+
+  it('does not downgrade a prospect signal when BuiltWith reports a weaker signal than the source already found', async () => {
+    envMock.BUILTWITH_API_KEY = 'test-key';
+    const strongExistingSignal = buildSignal({ strength: 'strong', description: 'no https' });
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ signal: strongExistingSignal })],
+    });
+    lookupStaleStackMock.mockResolvedValue({
+      ok: true,
+      lookup: {
+        domain: 'acme.com',
+        technologies: ['jQuery'],
+        signal: buildSignal({ type: 'old_stack', strength: 'weak' }),
+      },
+    } satisfies StaleStackResult);
+
+    const summary = await runDiscovery(query);
+
+    const builtwithSummary = summary.sources.find((s) => s.source === 'builtwith');
+    expect(builtwithSummary?.count).toBe(0);
+    expect(createMock).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ signal: strongExistingSignal, priorityScore: 3 }) })
+    );
+  });
+
+  it.each([
+    ['strong', 3],
+    ['medium', 2],
+    ['weak', 1],
+  ] as const)('computes a priorityScore of %s for a %s signal strength', async (strength, expectedScore) => {
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ signal: buildSignal({ strength }) })],
+    });
+
+    await runDiscovery(query);
+
+    expect(createMock).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ priorityScore: expectedScore }) })
+    );
+  });
+
+  it('rejects an invalid query missing required fields', async () => {
+    await expect(runDiscovery({ category: '' })).rejects.toThrow();
+  });
+});

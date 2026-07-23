@@ -10,6 +10,7 @@ const VALID_ENV = {
     "postgresql://postgres:postgres@localhost:5433/biz_scraper_test?schema=public",
   DASHBOARD_PASSWORD: "a-real-password",
   SESSION_SECRET: "a-secret-that-is-at-least-32-characters-long",
+  CRON_SECRET: "a-cron-secret-that-is-at-least-32-characters-long",
 }
 
 const originalEnv = { ...process.env }
@@ -46,6 +47,7 @@ describe("env", () => {
     expect(env.DATABASE_URL).toBe(VALID_ENV.DATABASE_URL)
     expect(env.DASHBOARD_PASSWORD).toBe(VALID_ENV.DASHBOARD_PASSWORD)
     expect(env.SESSION_SECRET).toBe(VALID_ENV.SESSION_SECRET)
+    expect(env.CRON_SECRET).toBe(VALID_ENV.CRON_SECRET)
   })
 
   it("throws at load time when DATABASE_URL is missing", async () => {

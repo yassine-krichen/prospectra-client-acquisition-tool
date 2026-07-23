@@ -140,3 +140,29 @@ export const prospectSchema = z.object({
   tags: z.array(z.string()),
 });
 export type Prospect = z.infer<typeof prospectSchema>;
+
+// Narrower projection returned by the prospect list/dashboard view
+// (`listProspects` in `prospects.repository.ts`). Excludes heavier fields
+// the list UI doesn't render (drafts, statusHistory, notes, tags, contact
+// details, follow-up/reply tracking) — a full prospect detail view can
+// fetch the rest by id later. Keeping this explicit (rather than reusing
+// the full `prospectSchema`) also means the list query only ever selects
+// the columns it actually needs.
+export const prospectListItemSchema = prospectSchema.omit({
+  contactName: true,
+  contactTitle: true,
+  contactEmail: true,
+  linkedinUrl: true,
+  statusHistory: true,
+  drafts: true,
+  activeDraftId: true,
+  lastFollowupAt: true,
+  followupCount: true,
+  repliedAt: true,
+  replySentiment: true,
+  doNotContact: true,
+  unsubscribedAt: true,
+  notes: true,
+  tags: true,
+});
+export type ProspectListItem = z.infer<typeof prospectListItemSchema>;

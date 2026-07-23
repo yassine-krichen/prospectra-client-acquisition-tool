@@ -6,3 +6,4 @@ process.env.DATABASE_URL ??=
   "postgresql://postgres:postgres@localhost:5433/biz_scraper_test?schema=public"
 process.env.DASHBOARD_PASSWORD ??= "test-password"
 process.env.SESSION_SECRET ??= "test-session-secret-32-characters"
+process.env.CRON_SECRET ??= "test-cron-secret-32-characters-long"
