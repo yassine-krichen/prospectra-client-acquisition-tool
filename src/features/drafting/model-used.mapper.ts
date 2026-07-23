@@ -8,12 +8,14 @@ import type { ModelUsed } from '@/features/prospects/prospect.types';
 const DOMAIN_TO_PRISMA: Record<ModelUsed, PrismaModelUsed> = {
   gemini: PrismaModelUsed.gemini,
   groq: PrismaModelUsed.groq,
+  deepseek: PrismaModelUsed.deepseek,
   'claude-bridge': PrismaModelUsed.claude_bridge,
 };
 
 const PRISMA_TO_DOMAIN: Record<PrismaModelUsed, ModelUsed> = {
   gemini: 'gemini',
   groq: 'groq',
+  deepseek: 'deepseek',
   claude_bridge: 'claude-bridge',
 };
 

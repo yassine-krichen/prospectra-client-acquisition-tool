@@ -13,6 +13,7 @@ import type { ModelUsed } from '@/features/prospects/prospect.types';
 const DOMAIN_TO_PRISMA_PAIRS: ReadonlyArray<[ModelUsed, PrismaModelUsed]> = [
   ['gemini', PrismaModelUsed.gemini],
   ['groq', PrismaModelUsed.groq],
+  ['deepseek', PrismaModelUsed.deepseek],
   ['claude-bridge', PrismaModelUsed.claude_bridge],
 ];
 

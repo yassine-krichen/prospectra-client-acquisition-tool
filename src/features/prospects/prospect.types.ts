@@ -61,7 +61,7 @@ export type ProspectStatus = z.infer<typeof prospectStatusSchema>;
 export const replySentimentSchema = z.enum(['positive', 'neutral', 'negative']);
 export type ReplySentiment = z.infer<typeof replySentimentSchema>;
 
-export const modelUsedSchema = z.enum(['gemini', 'groq', 'claude-bridge']);
+export const modelUsedSchema = z.enum(['gemini', 'groq', 'deepseek', 'claude-bridge']);
 export type ModelUsed = z.infer<typeof modelUsedSchema>;
 
 export const locationSchema = z.object({
@@ -94,6 +94,11 @@ export const draftSchema = z.object({
   body: z.string(),
   humanizedBody: z.string().nullable(),
   modelUsed: modelUsedSchema,
+  // Which copywriting framework (prompt-templates.ts's `FrameworkId`)
+  // generated this variant. Nullable: rows created before this column
+  // existed have no value on file.
+  // Deliberately a plain string rather than a `FrameworkId` union: a strict union would fail validation on old rows once a framework is eventually retired from `ACTIVE_FRAMEWORKS`.
+  framework: z.string().nullable(),
   generatedAt: z.coerce.date(),
   edited: z.boolean(),
   approved: z.boolean(),

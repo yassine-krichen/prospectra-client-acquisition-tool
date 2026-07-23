@@ -2,12 +2,13 @@ import { ModelUsed as PrismaModelUsed, ProspectStatus as PrismaProspectStatus } 
 import { prisma } from '@/common/db/client';
 import { humanize } from '@/features/drafting/claude-bridge.client';
 import { fromPrismaModelUsed, toPrismaModelUsed } from '@/features/drafting/model-used.mapper';
-import { generateDraftWithRotation } from '@/features/drafting/model-rotation';
-import { buildDraftPrompt } from '@/features/drafting/prompt-templates';
+import { generateDraftWithFallback } from '@/features/drafting/model-rotation';
+import { buildDraftPrompt, sampleFrameworks } from '@/features/drafting/prompt-templates';
 import { validateDraftOutput } from '@/features/drafting/validate-draft-output';
 import { signalSchema } from '@/features/prospects/prospect.types';
 import type { Draft, EstimatedBudget, Industry, ProjectFit } from '@/features/prospects/prospect.types';
 import type {
+  DraftingProvider,
   DraftProspectOutcome,
   HumanizeBatchItemResult,
   HumanizeBatchSummary,
@@ -74,17 +75,18 @@ interface DraftRow {
   body: string;
   humanizedBody: string | null;
   modelUsed: PrismaModelUsed;
+  framework: string | null;
   generatedAt: Date;
   edited: boolean;
   approved: boolean;
 }
 
 type ValidatedDraftResult =
-  | { ok: true; subject: string; body: string; modelUsed: 'gemini' | 'groq' }
+  | { ok: true; subject: string; body: string; modelUsed: DraftingProvider }
   | { ok: false; flagged: 'no_llm_available' | 'invalid_draft_output'; reason: string };
 
 /**
- * Wraps `generateDraftWithRotation` with a post-generation check against
+ * Wraps `generateDraftWithFallback` with a post-generation check against
  * `validateDraftOutput`'s hard constraints (word count, banned phrases) —
  * prompt-templates.ts only asks the model for these as instructions, and
  * models don't always comply. A validation failure is treated the same way
@@ -95,14 +97,17 @@ type ValidatedDraftResult =
  * constraint. If the retry is also non-compliant, this reports failure so
  * the caller flags the prospect instead of persisting anything for it —
  * consistent with `draftProspect`'s existing "generated all-or-nothing"
- * behavior for a `no_llm_available` failure.
+ * behavior for a `no_llm_available` failure. `isHighPriority` is threaded
+ * straight through to `generateDraftWithFallback`, which only attempts its
+ * scarce claude-bridge tier-2 lane for high-priority prospects — see that
+ * function's doc comment in model-rotation.ts.
  */
-async function generateValidatedDraft(prompt: string): Promise<ValidatedDraftResult> {
-  const first = await generateDraftWithRotation(prompt);
+async function generateValidatedDraft(prompt: string, isHighPriority: boolean): Promise<ValidatedDraftResult> {
+  const first = await generateDraftWithFallback(prompt, { isHighPriority });
   if (!first.ok) return { ok: false, flagged: 'no_llm_available', reason: first.reason };
   if (validateDraftOutput(first).valid) return first;
 
-  const retry = await generateDraftWithRotation(prompt);
+  const retry = await generateDraftWithFallback(prompt, { isHighPriority });
   if (!retry.ok) return { ok: false, flagged: 'no_llm_available', reason: retry.reason };
   const retryValidation = validateDraftOutput(retry);
   if (retryValidation.valid) return retry;
@@ -123,6 +128,7 @@ function toDraftView(row: DraftRow): Draft {
     body: row.body,
     humanizedBody: row.humanizedBody,
     modelUsed: fromPrismaModelUsed(row.modelUsed),
+    framework: row.framework,
     generatedAt: row.generatedAt,
     edited: row.edited,
     approved: row.approved,
@@ -165,7 +171,7 @@ export async function draftProspect(prospectId: string): Promise<DraftProspectOu
     };
   }
 
-  const prompt = buildDraftPrompt({
+  const prospectData = {
     companyName: existing.companyName,
     contactName: existing.contactName,
     contactTitle: existing.contactTitle,
@@ -173,23 +179,32 @@ export async function draftProspect(prospectId: string): Promise<DraftProspectOu
     projectFit: existing.projectFit,
     estimatedBudget: existing.estimatedBudget,
     signal: signalResult.data,
-  });
+  };
+
+  const isHighPriority = existing.priorityScore >= HIGH_PRIORITY_THRESHOLD;
+
+  // Each variant gets its own distinct copywriting framework — sampled
+  // without replacement so a prospect never gets the same narrative angle
+  // twice — and therefore its own distinct prompt (see prompt-templates.ts's
+  // `sampleFrameworks`/`buildDraftPrompt`), rather than 3 independent samples
+  // of one shared prompt.
+  const frameworkIds = sampleFrameworks(VARIANT_COUNT);
 
   // Generated all-or-nothing: if any of the `VARIANT_COUNT` calls comes back
   // "no LLM available" (or fails validation twice — see
   // `generateValidatedDraft`), every subsequent call would very likely fail
   // the same way, so there's no value in persisting a partially-drafted
   // prospect — flag it instead.
-  const generations: Array<{ subject: string; body: string; modelUsed: 'gemini' | 'groq' }> = [];
-  for (let i = 0; i < VARIANT_COUNT; i += 1) {
-    const result = await generateValidatedDraft(prompt);
+  const generations: Array<{ subject: string; body: string; modelUsed: DraftingProvider; framework: string }> = [];
+  for (const frameworkId of frameworkIds) {
+    const prompt = buildDraftPrompt(prospectData, frameworkId);
+    const result = await generateValidatedDraft(prompt, isHighPriority);
     if (!result.ok) {
       return { ok: false, flagged: result.flagged, message: result.reason };
     }
-    generations.push(result);
+    generations.push({ ...result, framework: frameworkId });
   }
 
-  const isHighPriority = existing.priorityScore >= HIGH_PRIORITY_THRESHOLD;
   let humanizedFirstVariant: string | null = null;
   let humanizeOutcome: HumanizeOutcomeSummary = { attempted: false };
 
@@ -224,6 +239,7 @@ export async function draftProspect(prospectId: string): Promise<DraftProspectOu
           body: generation.body,
           humanizedBody: i === 0 ? humanizedFirstVariant : null,
           modelUsed: toPrismaModelUsed(generation.modelUsed),
+          framework: generation.framework,
         },
       });
       rows.push(row);

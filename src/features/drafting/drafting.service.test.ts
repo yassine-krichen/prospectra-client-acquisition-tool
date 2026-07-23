@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { ACTIVE_FRAMEWORKS } from './prompt-templates';
+
 // This is an orchestration test: gemini.client.ts/groq.client.ts and
 // model-rotation.ts have their own dedicated suites, and claude-bridge.client.ts
 // does too, so all three are mocked here — only drafting.service.ts's own
@@ -40,9 +42,9 @@ vi.mock('@/common/db/client', () => ({
   },
 }));
 
-const generateDraftWithRotationMock = vi.fn();
+const generateDraftWithFallbackMock = vi.fn();
 vi.mock('@/features/drafting/model-rotation', () => ({
-  generateDraftWithRotation: generateDraftWithRotationMock,
+  generateDraftWithFallback: generateDraftWithFallbackMock,
 }));
 
 const humanizeMock = vi.fn();
@@ -92,7 +94,7 @@ function validBody(label: string): string {
   return `Body ${label} ${Array(60).fill('filler').join(' ')}`;
 }
 
-function draftGeneration(label: string, modelUsed: 'gemini' | 'groq' = 'gemini') {
+function draftGeneration(label: string, modelUsed: 'gemini' | 'groq' | 'deepseek' | 'claude-bridge' = 'gemini') {
   return { ok: true as const, subject: `Subject ${label}`, body: validBody(label), modelUsed };
 }
 
@@ -116,6 +118,7 @@ beforeEach(() => {
         body: data.body,
         humanizedBody: data.humanizedBody ?? null,
         modelUsed: data.modelUsed,
+        framework: data.framework ?? null,
         generatedAt: new Date('2026-01-01T00:00:00.000Z'),
         edited: false,
         approved: false,
@@ -142,7 +145,7 @@ describe('draftProspect', () => {
       flagged: 'missing_signal',
       message: expect.stringContaining('no valid signal'),
     });
-    expect(generateDraftWithRotationMock).not.toHaveBeenCalled();
+    expect(generateDraftWithFallbackMock).not.toHaveBeenCalled();
     expect(createDraftMock).not.toHaveBeenCalled();
   });
 
@@ -161,7 +164,7 @@ describe('draftProspect', () => {
 
   it('persists exactly 3 Draft rows with variants 1/2/3 and the modelUsed the rotation reported, on a successful generation', async () => {
     findUniqueMock.mockResolvedValue(buildProspectRow({ priorityScore: 1 }));
-    generateDraftWithRotationMock
+    generateDraftWithFallbackMock
       .mockResolvedValueOnce(draftGeneration('one'))
       .mockResolvedValueOnce(draftGeneration('two'))
       .mockResolvedValueOnce(draftGeneration('three'));
@@ -177,9 +180,50 @@ describe('draftProspect', () => {
     expect(createDraftMock).toHaveBeenCalledTimes(3);
   });
 
+  it('samples a distinct framework per variant, builds a distinct prompt per variant, and persists each framework on its Draft row', async () => {
+    findUniqueMock.mockResolvedValue(buildProspectRow({ priorityScore: 1 }));
+    generateDraftWithFallbackMock
+      .mockResolvedValueOnce(draftGeneration('one'))
+      .mockResolvedValueOnce(draftGeneration('two'))
+      .mockResolvedValueOnce(draftGeneration('three'));
+
+    const result = await draftProspect('prospect-1');
+    if (!result) throw new Error('expected a non-null result');
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected a drafted result');
+
+    // ACTIVE_FRAMEWORKS currently has exactly 3 entries and VARIANT_COUNT is
+    // 3, so every active framework is used exactly once, in some order —
+    // never the same framework twice, never a shared prompt across variants.
+    const promptsUsed = generateDraftWithFallbackMock.mock.calls.map(([prompt]) => prompt as string);
+    expect(new Set(promptsUsed).size).toBe(promptsUsed.length);
+
+    const persistedFrameworks = createDraftMock.mock.calls.map(
+      ([{ data }]) => data.framework as string
+    );
+    expect(new Set(persistedFrameworks)).toEqual(new Set(ACTIVE_FRAMEWORKS));
+    expect(result.drafts.map((d) => d.framework).sort()).toEqual([...ACTIVE_FRAMEWORKS].sort());
+  });
+
+  it('threads isHighPriority through to generateDraftWithFallback for every variant', async () => {
+    findUniqueMock.mockResolvedValue(buildProspectRow({ priorityScore: HIGH_PRIORITY_THRESHOLD }));
+    generateDraftWithFallbackMock
+      .mockResolvedValueOnce(draftGeneration('one'))
+      .mockResolvedValueOnce(draftGeneration('two'))
+      .mockResolvedValueOnce(draftGeneration('three'));
+    humanizeMock.mockResolvedValue({ ok: true, text: 'Humanized body one.' });
+
+    await draftProspect('prospect-1');
+
+    expect(generateDraftWithFallbackMock).toHaveBeenCalledTimes(3);
+    for (const [, options] of generateDraftWithFallbackMock.mock.calls) {
+      expect(options).toEqual({ isHighPriority: true });
+    }
+  });
+
   it('flags no_llm_available and creates no Draft rows when the rotation reports no provider is available', async () => {
     findUniqueMock.mockResolvedValue(buildProspectRow());
-    generateDraftWithRotationMock.mockResolvedValue({ ok: false, reason: 'no LLM available: gemini/groq unconfigured' });
+    generateDraftWithFallbackMock.mockResolvedValue({ ok: false, reason: 'no LLM available: gemini/groq unconfigured' });
 
     const result = await draftProspect('prospect-1');
 
@@ -194,7 +238,7 @@ describe('draftProspect', () => {
 
   it('retries a variant once through the rotation when the first generation fails post-generation validation, and persists the compliant retry', async () => {
     findUniqueMock.mockResolvedValue(buildProspectRow());
-    generateDraftWithRotationMock
+    generateDraftWithFallbackMock
       .mockResolvedValueOnce({ ok: true, subject: 'Subject', body: 'circle back soon', modelUsed: 'gemini' }) // fails: too short + banned phrase
       .mockResolvedValueOnce(draftGeneration('retry', 'groq')) // compliant retry
       .mockResolvedValueOnce(draftGeneration('two'))
@@ -205,14 +249,14 @@ describe('draftProspect', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected a drafted result');
-    expect(generateDraftWithRotationMock).toHaveBeenCalledTimes(4);
+    expect(generateDraftWithFallbackMock).toHaveBeenCalledTimes(4);
     expect(result.drafts[0].modelUsed).toBe('groq');
     expect(result.drafts[0].body).toBe(validBody('retry'));
   });
 
   it('flags invalid_draft_output and creates no Draft rows when a variant fails post-generation validation twice in a row', async () => {
     findUniqueMock.mockResolvedValue(buildProspectRow());
-    generateDraftWithRotationMock.mockResolvedValue({ ok: true, subject: 'Subject', body: 'circle back soon', modelUsed: 'gemini' });
+    generateDraftWithFallbackMock.mockResolvedValue({ ok: true, subject: 'Subject', body: 'circle back soon', modelUsed: 'gemini' });
 
     const result = await draftProspect('prospect-1');
 
@@ -221,14 +265,14 @@ describe('draftProspect', () => {
       flagged: 'invalid_draft_output',
       message: expect.stringContaining('failed post-generation validation twice'),
     });
-    expect(generateDraftWithRotationMock).toHaveBeenCalledTimes(2);
+    expect(generateDraftWithFallbackMock).toHaveBeenCalledTimes(2);
     expect(createDraftMock).not.toHaveBeenCalled();
     expect(transactionMock).not.toHaveBeenCalled();
   });
 
   it('never calls humanize for variants 2 and 3, only ever variant 1', async () => {
     findUniqueMock.mockResolvedValue(buildProspectRow({ priorityScore: HIGH_PRIORITY_THRESHOLD }));
-    generateDraftWithRotationMock
+    generateDraftWithFallbackMock
       .mockResolvedValueOnce(draftGeneration('one'))
       .mockResolvedValueOnce(draftGeneration('two'))
       .mockResolvedValueOnce(draftGeneration('three'));
@@ -242,7 +286,7 @@ describe('draftProspect', () => {
 
   it('runs an inline humanize pass and stores humanizedBody on variant 1 only for a high-priority prospect', async () => {
     findUniqueMock.mockResolvedValue(buildProspectRow({ priorityScore: HIGH_PRIORITY_THRESHOLD }));
-    generateDraftWithRotationMock
+    generateDraftWithFallbackMock
       .mockResolvedValueOnce(draftGeneration('one'))
       .mockResolvedValueOnce(draftGeneration('two'))
       .mockResolvedValueOnce(draftGeneration('three'));
@@ -261,7 +305,7 @@ describe('draftProspect', () => {
 
   it('never attempts humanize for a below-threshold priority prospect', async () => {
     findUniqueMock.mockResolvedValue(buildProspectRow({ priorityScore: HIGH_PRIORITY_THRESHOLD - 1 }));
-    generateDraftWithRotationMock
+    generateDraftWithFallbackMock
       .mockResolvedValueOnce(draftGeneration('one'))
       .mockResolvedValueOnce(draftGeneration('two'))
       .mockResolvedValueOnce(draftGeneration('three'));
@@ -277,7 +321,7 @@ describe('draftProspect', () => {
 
   it('still creates all 3 drafts and advances status to drafted even when the inline humanize call fails', async () => {
     findUniqueMock.mockResolvedValue(buildProspectRow({ priorityScore: HIGH_PRIORITY_THRESHOLD, status: 'enriched' }));
-    generateDraftWithRotationMock
+    generateDraftWithFallbackMock
       .mockResolvedValueOnce(draftGeneration('one'))
       .mockResolvedValueOnce(draftGeneration('two'))
       .mockResolvedValueOnce(draftGeneration('three'));
@@ -298,7 +342,7 @@ describe('draftProspect', () => {
 
   it('reports a rate-limited inline humanize attempt as deferred rather than failed, without blocking drafting', async () => {
     findUniqueMock.mockResolvedValue(buildProspectRow({ priorityScore: HIGH_PRIORITY_THRESHOLD }));
-    generateDraftWithRotationMock
+    generateDraftWithFallbackMock
       .mockResolvedValueOnce(draftGeneration('one'))
       .mockResolvedValueOnce(draftGeneration('two'))
       .mockResolvedValueOnce(draftGeneration('three'));
@@ -315,7 +359,7 @@ describe('draftProspect', () => {
 
   it('advances status from enriched to drafted and appends a statusHistory entry', async () => {
     findUniqueMock.mockResolvedValue(buildProspectRow({ status: 'enriched', statusHistory: [] }));
-    generateDraftWithRotationMock.mockResolvedValue(draftGeneration('one'));
+    generateDraftWithFallbackMock.mockResolvedValue(draftGeneration('one'));
 
     await draftProspect('prospect-1');
 
@@ -334,7 +378,7 @@ describe('draftBatch', () => {
     findUniqueMock.mockImplementation(({ where }: { where: { id: string } }) =>
       Promise.resolve(buildProspectRow({ id: where.id }))
     );
-    generateDraftWithRotationMock.mockResolvedValue(draftGeneration('one'));
+    generateDraftWithFallbackMock.mockResolvedValue(draftGeneration('one'));
 
     const results = await draftBatch(2);
 

@@ -20,7 +20,10 @@ import type { Signal } from '@/features/prospects/prospect.types';
 // rendered body outside the allowed range.
 
 // Each touch number gets a distinct angle, per the spec's "not a bare 'just
-// bumping this'" requirement:
+// bumping this'" requirement. These angles loosely correspond to AIDA's
+// Interest/Desire/Action stages (a different value-prop angle → a fast,
+// low-commitment next step → the no-pressure close) — noted here only as a
+// cross-reference, not a restructure of these already-validated templates.
 //   - touch 2 (first follow-up): a different value-prop angle (speed/cost of
 //     a lean direct build vs. the back-and-forth of a larger agency).
 //   - touch 3 (second follow-up): deliberately shorter and more direct —

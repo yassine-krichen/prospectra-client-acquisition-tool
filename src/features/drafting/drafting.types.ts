@@ -42,7 +42,7 @@ export interface DraftGenerationFailure {
 // single generation attempt against an already-selected API key.
 export type DraftGenerationResult = DraftGenerationSuccess | DraftGenerationFailure;
 
-export type DraftingProvider = 'gemini' | 'groq';
+export type DraftingProvider = 'gemini' | 'groq' | 'deepseek' | 'claude-bridge';
 
 export interface ModelRotationSuccess {
   ok: true;

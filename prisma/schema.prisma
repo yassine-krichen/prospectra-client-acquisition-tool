@@ -93,6 +93,7 @@ enum ReplySentiment {
 enum ModelUsed {
   gemini
   groq
+  deepseek
   claude_bridge @map("claude-bridge")
 }
 
@@ -161,6 +162,13 @@ model Draft {
   body          String
   humanizedBody String?
   modelUsed     ModelUsed
+  // Which copywriting framework (prompt-templates.ts's `FrameworkId`, e.g.
+  // "pas") generated this variant. Plain nullable string, deliberately NOT a
+  // Prisma enum: an enum would require a migration every time a framework is
+  // added or retired, working against the framework registry's whole point
+  // of easy iteration. Nullable so existing rows from before this column
+  // existed remain valid without a backfill.
+  framework     String?
   generatedAt   DateTime  @default(now())
   edited        Boolean   @default(false)
   approved      Boolean   @default(false)
@@ -179,4 +187,15 @@ model ApiUsageCounter {
   count     Int    @default(0)
 
   @@unique([source, yearMonth])
+}
+
+// Shared cooldown record for the claude-web-bridge sibling app: whenever ANY
+// bridge call (the existing humanize() pass or Phase C's tier-2 draft
+// generation) gets a 429, `bridge-budget.ts` upserts `blockedUntil` here so
+// every future caller — across separate serverless invocations, which don't
+// share in-memory state — cheaply knows the bridge is still rate-limited
+// without independently rediscovering it.
+model BridgeCooldown {
+  source       String    @id
+  blockedUntil DateTime?
 }

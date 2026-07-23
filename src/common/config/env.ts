@@ -24,10 +24,15 @@ const envSchema = z.object({
   PEOPLE_DATA_LABS_API_KEY: z.string().min(1).optional(),
   // Stage 2 drafting LLM keys — same graceful-skip pattern as the source
   // keys above: model-rotation.ts reports a provider unavailable and fails
-  // over to the other when unset. Each accepts a comma-separated list of
-  // keys for simple round-robin rotation (see model-rotation.ts).
+  // over to another configured one when unset. Each accepts a comma-
+  // separated list of keys for random rotation across keys (see
+  // model-rotation.ts's provider registry).
   GEMINI_API_KEY: z.string().min(1).optional(),
   GROQ_API_KEY: z.string().min(1).optional(),
+  // DeepSeek, the third registered drafting provider — same optional/
+  // comma-separated-list/graceful-skip pattern as GEMINI_API_KEY/
+  // GROQ_API_KEY above.
+  DEEPSEEK_API_KEY: z.string().min(1).optional(),
   // Base URL of the local claude-web-bridge sibling app used for the
   // Stage 2 humanizer pass. Optional — claude-bridge.client.ts defaults to
   // http://127.0.0.1:3000 in code when unset, so this only needs setting
