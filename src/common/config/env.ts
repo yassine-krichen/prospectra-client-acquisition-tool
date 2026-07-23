@@ -68,6 +68,14 @@ const envSchema = z.object({
   // verified). Optional — unset/malformed is treated as "warmup hasn't
   // started" there, the most conservative reading.
   DOMAIN_WARMUP_START_DATE: z.string().min(1).optional(),
+  // Signing secret for Resend's inbound webhook (app/api/webhooks/resend),
+  // in Resend/Svix's `whsec_<base64>` format. Optional: no webhook is
+  // provisioned yet. Deliberately NOT treated as "skip verification when
+  // unset" like the other optional keys above — see
+  // verify-resend-signature.ts: an unset secret means the webhook route
+  // refuses every event rather than trusting anything unverified, matching
+  // this app's fail-closed posture.
+  RESEND_WEBHOOK_SECRET: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

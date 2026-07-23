@@ -20,7 +20,7 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-async function seedProspect(sentAt: Date | null): Promise<void> {
+async function seedProspect(sentAt: Date | null, lastFollowupAt: Date | null = null): Promise<void> {
   const domain = `${randomUUID()}.example.com`;
   await prisma.prospect.create({
     data: {
@@ -39,6 +39,7 @@ async function seedProspect(sentAt: Date | null): Promise<void> {
       estimatedBudget: 'unknown',
       priorityScore: 1,
       sentAt,
+      lastFollowupAt,
     },
   });
 }
@@ -99,6 +100,42 @@ describe('getTodaysSendCount', () => {
     await seedProspect(new Date());
 
     const count = await getTodaysSendCount();
+
+    expect(count).toBe(1);
+  });
+
+  // A follow-up send (followup-scheduler.ts) only ever sets `lastFollowupAt`,
+  // never `sentAt` (which must keep meaning "when the ORIGINAL send went
+  // out" — see the module doc comment). Without this, follow-up sends were
+  // invisible to the daily cap entirely.
+  it('counts a prospect whose ONLY today-timestamp is lastFollowupAt (a follow-up send with no sentAt change today)', async () => {
+    await seedProspect(new Date('2026-01-01T00:00:00.000Z'), new Date('2026-06-15T10:00:00.000Z'));
+
+    const count = await getTodaysSendCount(referenceDate);
+
+    expect(count).toBe(1);
+  });
+
+  it('does not count a prospect whose sentAt and lastFollowupAt both fall outside the reference UTC day', async () => {
+    await seedProspect(new Date('2026-01-01T00:00:00.000Z'), new Date('2026-06-10T10:00:00.000Z'));
+
+    const count = await getTodaysSendCount(referenceDate);
+
+    expect(count).toBe(0);
+  });
+
+  it('still counts via sentAt alone when lastFollowupAt is null, unchanged from Phase 4\'s original-send cap enforcement', async () => {
+    await seedProspect(new Date('2026-06-15T08:00:00.000Z'), null);
+
+    const count = await getTodaysSendCount(referenceDate);
+
+    expect(count).toBe(1);
+  });
+
+  it('counts a prospect once even if both sentAt and lastFollowupAt fall within today (not double-counted)', async () => {
+    await seedProspect(new Date('2026-06-15T01:00:00.000Z'), new Date('2026-06-15T20:00:00.000Z'));
+
+    const count = await getTodaysSendCount(referenceDate);
 
     expect(count).toBe(1);
   });

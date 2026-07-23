@@ -47,6 +47,10 @@ export interface DiscoveryRunSummary {
   totalFound: number;
   inserted: number;
   updated: number;
+  /** Existing prospects re-discovered by domain that were left untouched
+   * because `doNotContact` is already `true` — see `persistProspect`'s doc
+   * comment. */
+  skippedDoNotContact: number;
 }
 
 function computePriorityScore(signal: Signal): number {
@@ -88,12 +92,27 @@ function dedupeByDomain(prospects: DiscoveredProspect[]): DiscoveredProspect[] {
   return Array.from(seen.values());
 }
 
-async function persistProspect(prospect: DiscoveredProspect): Promise<'inserted' | 'updated'> {
+/**
+ * Inserts a newly-discovered prospect, or updates the existing one matched
+ * by `domain`. Per the spec's "doNotContact checked before every send
+ * including future re-scraping of the same source": a prospect already
+ * marked `doNotContact` (e.g. it previously unsubscribed or replied
+ * negatively) is left completely untouched by re-discovery — its
+ * `doNotContact` flag is never overwritten back to `false`, and nothing
+ * about it (signal, priorityScore, status) is refreshed, so a routine
+ * re-scrape can never pull a permanently-opted-out prospect back into the
+ * normal discovery/drafting/sending flow.
+ */
+async function persistProspect(prospect: DiscoveredProspect): Promise<'inserted' | 'updated' | 'skipped_do_not_contact'> {
   const priorityScore = computePriorityScore(prospect.signal);
 
   const existing = prospect.domain
     ? await prisma.prospect.findFirst({ where: { domain: prospect.domain } })
     : null;
+
+  if (existing?.doNotContact) {
+    return 'skipped_do_not_contact';
+  }
 
   if (existing) {
     await prisma.prospect.update({
@@ -198,11 +217,13 @@ export async function runDiscovery(input: unknown, branch: DiscoveryBranch = 'a'
 
   let inserted = 0;
   let updated = 0;
+  let skippedDoNotContact = 0;
   for (const prospect of deduped) {
     const outcome = await persistProspect(prospect);
     if (outcome === 'inserted') inserted += 1;
-    else updated += 1;
+    else if (outcome === 'updated') updated += 1;
+    else skippedDoNotContact += 1;
   }
 
-  return { query, branch, sources, totalFound: deduped.length, inserted, updated };
+  return { query, branch, sources, totalFound: deduped.length, inserted, updated, skippedDoNotContact };
 }
