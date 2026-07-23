@@ -22,6 +22,20 @@ const envSchema = z.object({
   // Branch C (contact enrichment) source keys — same graceful-skip pattern.
   HUNTER_API_KEY: z.string().min(1).optional(),
   PEOPLE_DATA_LABS_API_KEY: z.string().min(1).optional(),
+  // Stage 2 drafting LLM keys — same graceful-skip pattern as the source
+  // keys above: model-rotation.ts reports a provider unavailable and fails
+  // over to the other when unset. Each accepts a comma-separated list of
+  // keys for simple round-robin rotation (see model-rotation.ts).
+  GEMINI_API_KEY: z.string().min(1).optional(),
+  GROQ_API_KEY: z.string().min(1).optional(),
+  // Base URL of the local claude-web-bridge sibling app used for the
+  // Stage 2 humanizer pass. Optional — claude-bridge.client.ts defaults to
+  // http://127.0.0.1:3000 in code when unset, so this only needs setting
+  // for a non-local bridge deployment.
+  CLAUDE_BRIDGE_URL: z.string().url().optional(),
+  // Bearer token for the claude-web-bridge's own optional API_KEY auth.
+  // Optional — a local dev bridge instance may not have one configured.
+  CLAUDE_BRIDGE_API_KEY: z.string().min(1).optional(),
   // Protects the discovery cron route. Required (unlike the source keys
   // above) since the route itself has no safe "disabled" state to fall back
   // to — fail closed at boot rather than at first request.
