@@ -46,6 +46,23 @@ export const jobSchema = z.object({
 });
 export type Job = z.infer<typeof jobSchema>;
 
+// Request DTO for creating a Job. `cadence` is deliberately absent — it's
+// derived from `service` (see `getServiceCadence` in service-catalog.ts), not
+// a free-form field a caller could mismatch against the service. `status`,
+// `soldAt`, `statusHistory` are likewise not caller-supplied: every new Job
+// starts `active` as of now, same as the Prisma column default.
+export const createJobRequestSchema = z.object({
+  service: serviceTypeSchema,
+  agreedPriceCents: z.number().int().positive(),
+  // Only meaningful for `infra_hosting_retainer` sold alongside a delivery —
+  // see the catalog's "3 months free/half-price hosting" lock-in rule.
+  // Validated against `service` in create-job.service.ts, not here (a
+  // cross-field rule, not a shape rule).
+  retainerDiscount: retainerDiscountSchema.optional(),
+  notes: z.string().optional(),
+});
+export type CreateJobRequest = z.infer<typeof createJobRequestSchema>;
+
 export const clientSchema = z.object({
   id: z.string(),
   createdAt: z.coerce.date(),

@@ -61,6 +61,23 @@ const TIERED_CATALOG: Record<
 // single monthly hosting/infra retainer price regardless of client size.
 const INFRA_HOSTING_RETAINER_RANGE: PriceRange = { minCents: 5_000, maxCents: 15_000 };
 
+// Each ServiceType has exactly one valid cadence — landing_page/full_stack_app
+// are one-off builds, linkedin_media_management/infra_hosting_retainer are
+// monthly retainers. Derived here (not a free-form field a caller picks)
+// so a Job can never be created with an invalid service+cadence pairing —
+// see createJob in create-job.service.ts.
+const SERVICE_CADENCE: Record<ServiceType, 'one_off' | 'recurring'> = {
+  landing_page: 'one_off',
+  full_stack_app: 'one_off',
+  linkedin_media_management: 'recurring',
+  infra_hosting_retainer: 'recurring',
+};
+
+/** The one valid `JobCadence` for a given service — see `SERVICE_CADENCE`'s doc comment. */
+export function getServiceCadence(service: ServiceType): 'one_off' | 'recurring' {
+  return SERVICE_CADENCE[service];
+}
+
 export const FREE_REVISION_ROUNDS = 2;
 export const FREE_REVISION_WINDOW_DAYS = 30;
 export const RETAINER_LOCKIN_MONTHS = 3;
