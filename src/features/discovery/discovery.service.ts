@@ -1,3 +1,4 @@
+import type { Prisma } from '@/lib/generated/prisma/client';
 import { env } from '@/common/config/env';
 import { prisma } from '@/common/db/client';
 import { discoveryQuerySchema, type DiscoveredProspect, type DiscoveryQuery, type SourceResult } from '@/features/discovery/discovery.types';
@@ -9,6 +10,7 @@ import { runProductHuntSource } from '@/features/discovery/sources/product-hunt.
 import { runCrunchbaseSource } from '@/features/discovery/sources/crunchbase.source';
 import { runGitHubSource } from '@/features/discovery/sources/github.source';
 import { runIndieHackersSource } from '@/features/discovery/sources/indiehackers.source';
+import { computeServiceSuggestions, deriveProjectFitAndBudget } from '@/features/matching/service-matching-rules';
 import { toPrismaCompanySize } from '@/features/prospects/company-size.mapper';
 import type { Signal, SignalStrength } from '@/features/prospects/prospect.types';
 
@@ -21,7 +23,7 @@ import type { Signal, SignalStrength } from '@/features/prospects/prospect.types
 // rather than duplicating the discovery pipeline.
 export type DiscoveryBranch = 'a' | 'b' | 'both';
 
-// Stub scoring for this phase — real weighting arrives in Phase 6. For now,
+// Stub scoring for this phase — real weighting arrives in Phase 7. For now,
 // priority is just the strength of the single strongest signal found.
 const SIGNAL_STRENGTH_SCORE: Record<SignalStrength, number> = {
   weak: 1,
@@ -114,6 +116,19 @@ async function persistProspect(prospect: DiscoveredProspect): Promise<'inserted'
     return 'skipped_do_not_contact';
   }
 
+  // Computed centrally (rather than supplied by each discovery source) so
+  // every source shares one matching engine — see service-matching-rules.ts.
+  // Recomputed on every persist, insert or update: a re-scrape can upgrade a
+  // prospect's signal (e.g. weak -> strong, or a different signal type
+  // entirely), and stale suggestions left over from a prior scrape would
+  // otherwise silently linger until someone manually hits the /match route.
+  const suggestedServices = computeServiceSuggestions({
+    signal: prospect.signal,
+    companySize: prospect.companySize,
+    industry: prospect.industry,
+  });
+  const { projectFit, estimatedBudget } = deriveProjectFitAndBudget(suggestedServices, prospect.signal);
+
   if (existing) {
     await prisma.prospect.update({
       where: { id: existing.id },
@@ -123,6 +138,12 @@ async function persistProspect(prospect: DiscoveredProspect): Promise<'inserted'
         signal: prospect.signal,
         priorityScore,
         location: prospect.location,
+        // Cast needed: see the identical cast on the create() call below —
+        // an array of a plain interface doesn't structurally satisfy
+        // Prisma's `InputJsonValue`.
+        suggestedServices: suggestedServices as unknown as Prisma.InputJsonValue,
+        projectFit,
+        estimatedBudget,
       },
     });
     return 'updated';
@@ -142,8 +163,13 @@ async function persistProspect(prospect: DiscoveredProspect): Promise<'inserted'
       sourceUrl: prospect.sourceUrl,
       discoveredAt: prospect.discoveredAt,
       signal: prospect.signal,
-      projectFit: prospect.projectFit,
-      estimatedBudget: prospect.estimatedBudget,
+      projectFit,
+      estimatedBudget,
+      // Cast needed: an array of a plain interface (no string index
+      // signature) doesn't structurally satisfy Prisma's `InputJsonValue`
+      // even though it's valid JSON at runtime — same non-issue `Signal`
+      // avoids only because it's a single object, not an array.
+      suggestedServices: suggestedServices as unknown as Prisma.InputJsonValue,
       priorityScore,
     },
   });

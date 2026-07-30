@@ -1,14 +1,6 @@
 import { z } from 'zod';
 
-import type {
-  CompanySize,
-  EstimatedBudget,
-  Industry,
-  Location,
-  ProjectFit,
-  ProspectSource,
-  Signal,
-} from '@/features/prospects/prospect.types';
+import type { CompanySize, Industry, Location, ProspectSource, Signal } from '@/features/prospects/prospect.types';
 
 // A category + geography search input shared by every Branch A discovery
 // source (e.g. category: "plumber", geography: "Austin, TX").
@@ -20,7 +12,10 @@ export type DiscoveryQuery = z.infer<typeof discoveryQuerySchema>;
 
 // The subset of the `Prospect` shape a discovery source can populate on its
 // own. The orchestrator fills in the rest (id, priorityScore persistence,
-// status, etc) once results are deduped.
+// status, etc) once results are deduped — including `projectFit`/
+// `estimatedBudget`, which are computed centrally from `signal`/
+// `companySize`/`industry` by the matching engine at persist time
+// (`service-matching-rules.ts`) rather than supplied by each source.
 export interface DiscoveredProspect {
   companyName: string;
   domain: string | null;
@@ -32,8 +27,6 @@ export interface DiscoveredProspect {
   sourceUrl: string;
   discoveredAt: Date;
   signal: Signal;
-  projectFit: ProjectFit;
-  estimatedBudget: EstimatedBudget;
 }
 
 export interface SourceUnavailable {

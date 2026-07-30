@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 
 import { verifyResendWebhookSignature } from '@/features/followups/verify-resend-signature';
-import { processInboundReply } from '@/features/followups/reply-detection.service';
+import { processInboundReply, processInboundReplyForClient } from '@/features/followups/reply-detection.service';
 
 // The one intentionally-unauthenticated-by-session route in this app: it
 // receives POSTs from Resend's own servers, not from the dashboard's
@@ -79,11 +79,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Could not parse a sender email address.' }, { status: 400 });
   }
 
-  const result = await processInboundReply({
-    fromEmail,
-    subject: event.data.subject ?? null,
-    text: event.data.text ?? null,
-  });
+  // Both checks run independently: `fromEmail` may match a Prospect, a
+  // Client, both, or neither — a converted (won) Prospect and its resulting
+  // Client are separate tables with separate email histories (cold outreach
+  // vs. retention), and this webhook is the only place either can ever learn
+  // about a reply.
+  const [prospectResult, clientResult] = await Promise.all([
+    processInboundReply({
+      fromEmail,
+      subject: event.data.subject ?? null,
+      text: event.data.text ?? null,
+    }),
+    processInboundReplyForClient({
+      fromEmail,
+      subject: event.data.subject ?? null,
+      text: event.data.text ?? null,
+    }),
+  ]);
 
-  return NextResponse.json({ result });
+  return NextResponse.json({ result: prospectResult, clientResult });
 }

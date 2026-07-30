@@ -102,8 +102,6 @@ export async function runYellowPagesSource(query: DiscoveryQuery): Promise<Sourc
       sourceUrl: searchUrl,
       discoveredAt: new Date(),
       signal,
-      projectFit: 'unclear',
-      estimatedBudget: 'unknown',
     });
   }
 

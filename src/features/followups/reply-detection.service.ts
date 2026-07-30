@@ -149,3 +149,77 @@ export async function processInboundReply(payload: unknown): Promise<ReplyProces
 
   return { outcome: 'matched', prospectId: prospect.id, sentiment };
 }
+
+export type ClientReplyProcessingOutcome =
+  | { outcome: 'opted_out'; clientId: string }
+  | { outcome: 'acknowledged'; clientId: string }
+  | { outcome: 'no_match' }
+  | { outcome: 'invalid_payload'; reason: string };
+
+const CLIENT_SELECT = {
+  id: true,
+  doNotContact: true,
+  statusHistory: true,
+} as const satisfies Prisma.ClientSelect;
+
+/**
+ * The `Client`-side counterpart to `processInboundReply` above. Retention
+ * emails (`src/features/retention/`) go out against `Client.contactEmail`,
+ * not `Prospect.contactEmail` — a converted prospect's `status` is `won`
+ * (outside `REPLYABLE_STATUSES`), so `processInboundReply` alone can never
+ * observe a reply to a retention email, meaning `Client.doNotContact` (the
+ * one guard that halts the otherwise-indefinite retention cadence — see its
+ * schema comment) would otherwise be unreachable. This function matches the
+ * same inbound event against `Client` independently, so both this and
+ * `processInboundReply` should be called for every inbound webhook event —
+ * they check different tables and neither excludes the other.
+ *
+ * Only a negative/unsubscribe-intent reply changes anything: there's no
+ * Client-side notion of "replied"/sentiment history to track (unlike
+ * Prospect), just the one opt-out flag. Idempotent — a Client already
+ * `doNotContact: true` stays `opted_out` on a repeat/duplicate webhook
+ * delivery rather than erroring or double-appending history.
+ */
+export async function processInboundReplyForClient(payload: unknown): Promise<ClientReplyProcessingOutcome> {
+  const parsed = inboundReplySchema.safeParse(payload);
+  if (!parsed.success) {
+    return { outcome: 'invalid_payload', reason: parsed.error.issues.map((issue) => issue.message).join('; ') };
+  }
+
+  const { fromEmail, subject, text } = parsed.data;
+
+  const client = await prisma.client.findFirst({
+    where: { contactEmail: fromEmail },
+    select: CLIENT_SELECT,
+  });
+
+  if (!client) {
+    return { outcome: 'no_match' };
+  }
+
+  const sentiment = detectSentiment(`${subject ?? ''} ${text ?? ''}`);
+  if (sentiment !== PrismaReplySentiment.negative) {
+    return { outcome: 'acknowledged', clientId: client.id };
+  }
+
+  if (client.doNotContact) {
+    return { outcome: 'opted_out', clientId: client.id };
+  }
+
+  const statusHistory = Array.isArray(client.statusHistory) ? client.statusHistory : [];
+  const now = new Date();
+
+  // Atomic claim conditioned on the exact state just read, same principle as
+  // every other claim in this codebase — a race against a concurrent
+  // retention send or a second duplicate webhook delivery can't double-apply
+  // or lose this.
+  await prisma.client.updateMany({
+    where: { id: client.id, doNotContact: false },
+    data: {
+      doNotContact: true,
+      statusHistory: [...statusHistory, { status: 'opted_out', timestamp: now.toISOString() }],
+    },
+  });
+
+  return { outcome: 'opted_out', clientId: client.id };
+}

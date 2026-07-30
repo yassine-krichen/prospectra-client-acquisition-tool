@@ -4,6 +4,7 @@ import { generateEmailGuesses } from '@/features/enrichment/pattern-guess';
 import { domainAcceptsEmail } from '@/features/enrichment/smtp-verify';
 import { runHunterEnrichment } from '@/features/enrichment/hunter.source';
 import { runPeopleDataLabsEnrichment } from '@/features/enrichment/peopledatalabs.source';
+import { applyServiceMatching } from '@/features/matching/matching.service';
 import type {
   EnrichedContact,
   EnrichmentInput,
@@ -213,6 +214,11 @@ export async function enrichProspect(prospectId: string): Promise<EnrichProspect
     },
     select: PROSPECT_SELECT,
   })) as ProspectRow;
+
+  // Company size/industry confidence may have shifted now that a contact was
+  // found — recompute service suggestions against the freshly enriched
+  // prospect rather than leaving discovery-time suggestions stale.
+  await applyServiceMatching(prospectId);
 
   return { prospect: toView(updated), sources };
 }

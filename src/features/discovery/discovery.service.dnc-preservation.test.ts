@@ -104,8 +104,6 @@ describe('runDiscovery doNotContact preservation (real DB)', () => {
           sourceUrl: 'https://example.com/rescrape',
           discoveredAt: new Date(),
           signal: { type: 'outdated_site', description: 'freshly re-scraped signal', evidence: 'evidence', strength: 'strong' },
-          projectFit: 'landing_page',
-          estimatedBudget: 'high',
         },
       ],
     });
@@ -146,8 +144,6 @@ describe('runDiscovery doNotContact preservation (real DB)', () => {
           sourceUrl: 'https://example.com/source',
           discoveredAt: new Date(),
           signal: { type: 'no_https', description: 'x', evidence: null, strength: 'weak' },
-          projectFit: 'unclear',
-          estimatedBudget: 'unknown',
         },
         {
           companyName: 'Brand New Co',
@@ -160,8 +156,6 @@ describe('runDiscovery doNotContact preservation (real DB)', () => {
           sourceUrl: 'https://example.com/source',
           discoveredAt: new Date(),
           signal: { type: 'no_https', description: 'x', evidence: null, strength: 'medium' },
-          projectFit: 'unclear',
-          estimatedBudget: 'unknown',
         },
       ],
     });

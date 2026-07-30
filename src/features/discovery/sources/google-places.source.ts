@@ -148,8 +148,6 @@ export async function runGooglePlacesSource(query: DiscoveryQuery): Promise<Sour
       sourceUrl: `https://www.google.com/maps/place/?q=place_id:${result.place_id}`,
       discoveredAt: new Date(),
       signal,
-      projectFit: 'unclear',
-      estimatedBudget: 'unknown',
     });
   }
 

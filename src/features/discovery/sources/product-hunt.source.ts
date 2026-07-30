@@ -113,8 +113,6 @@ export async function runProductHuntSource(query: DiscoveryQuery): Promise<Sourc
       evidence: node.tagline ?? null,
       strength: 'strong',
     },
-    projectFit: 'unclear',
-    estimatedBudget: 'unknown',
   }));
 
   return { ok: true, prospects };

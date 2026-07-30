@@ -263,8 +263,6 @@ export async function runGitHubSource(query: DiscoveryQuery): Promise<SourceResu
       sourceUrl: repo.html_url,
       discoveredAt: new Date(),
       signal,
-      projectFit: 'unclear',
-      estimatedBudget: 'unknown',
     });
   }
 

@@ -97,6 +97,30 @@ enum ModelUsed {
   claude_bridge @map("claude-bridge")
 }
 
+enum ServiceType {
+  landing_page
+  full_stack_app
+  linkedin_media_management
+  infra_hosting_retainer
+}
+
+enum JobCadence {
+  one_off
+  recurring
+}
+
+enum JobStatus {
+  active
+  delivered
+  monthly
+  cancelled
+}
+
+enum RetainerDiscount {
+  free
+  half_price
+}
+
 model Prospect {
   id        String   @id @default(cuid())
   createdAt DateTime @default(now())
@@ -151,6 +175,18 @@ model Prospect {
 
   notes String?
   tags  String[]
+
+  // Nullable+unique: a Client can also be created directly (no forced
+  // synthetic Prospect), and not every Prospect converts. The FK itself
+  // lives on `Client.prospectId` — this is the back-relation only.
+  client Client?
+
+  // Array of { service, role: 'primary'|'cross_sell', priceRangeCents:
+  // {min,max}|null, requiresManualQuote, reasoning, source: 'rules' } — no
+  // query pattern needs it normalized. `source` is a deliberate seam for a
+  // future optional LLM-suggestion overlay on top of the rules engine, not
+  // built now.
+  suggestedServices Json @default("[]")
 }
 
 model Draft {
@@ -198,4 +234,80 @@ model ApiUsageCounter {
 model BridgeCooldown {
   source       String    @id
   blockedUntil DateTime?
+}
+
+// The post-sale relationship, created once a Prospect converts (or created
+// directly, with no Prospect at all). Fields below are a denormalized COPY
+// of the relevant Prospect fields at conversion time, not a live join —
+// Client's lifecycle (jobs, retention) is deliberately separate from
+// Prospect's outreach-era fields, and a Client must remain intact/queryable
+// even if the source Prospect is later edited or deleted.
+model Client {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  prospect   Prospect? @relation(fields: [prospectId], references: [id])
+  prospectId String?   @unique
+
+  companyName  String
+  domain       String?
+  contactName  String?
+  contactTitle String?
+  contactEmail String?
+
+  industry    Industry
+  companySize CompanySize
+
+  // Mirrors Prospect.doNotContact — retention (Phase 8) runs indefinitely
+  // with no natural stop, so this is the one guard that halts it.
+  doNotContact Boolean @default(false)
+
+  notes String?
+  // Array of { status, timestamp } — no query pattern needs it normalized.
+  statusHistory Json @default("[]")
+
+  jobs Job[]
+}
+
+// A single sold service against a Client. `agreedPriceCents` (cents, not
+// float) is the actual negotiated price, independent of the catalog range
+// it was quoted from (service-catalog.ts).
+model Job {
+  id String @id @default(cuid())
+
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  clientId String
+
+  service  ServiceType
+  cadence  JobCadence
+  status   JobStatus   @default(active)
+
+  agreedPriceCents Int
+
+  soldAt      DateTime  @default(now())
+  deliveredAt DateTime?
+
+  // Catalog's "2 free fixes within 30 days of delivery" guarantee.
+  freeRevisionRoundsUsed   Int       @default(0)
+  freeRevisionWindowEndsAt DateTime?
+
+  // Catalog's "3 months free/half-price hosting" lock-in on `infra_hosting_retainer`.
+  retainerDiscount       RetainerDiscount?
+  retainerDiscountEndsAt DateTime?
+
+  // Phase 8 retention-scheduler state — same shape as Prospect's follow-up
+  // counters (lastFollowupAt/followupCount).
+  lastRetentionTouchAt DateTime?
+  retentionTouchCount  Int       @default(0)
+
+  // Array of { status, timestamp } — no query pattern needs it normalized.
+  statusHistory Json    @default("[]")
+  notes         String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clientId])
+  @@index([status])
 }

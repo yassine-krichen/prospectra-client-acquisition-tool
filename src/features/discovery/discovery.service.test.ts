@@ -86,8 +86,6 @@ function buildProspect(overrides: Partial<DiscoveredProspect> = {}): DiscoveredP
     sourceUrl: 'https://example.com/source',
     discoveredAt: new Date('2026-01-01'),
     signal: buildSignal(),
-    projectFit: 'unclear',
-    estimatedBudget: 'unknown',
     ...overrides,
   };
 }
@@ -131,6 +129,26 @@ describe('runDiscovery', () => {
       expect.objectContaining({ where: { id: 'existing-id' } })
     );
     expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it('recomputes suggestedServices/projectFit/estimatedBudget on the update path too, not just on insert', async () => {
+    // no_https signal (default buildSignal type below) drives a landing_page
+    // primary via the matching engine — asserting the actual values here
+    // (not just "some object") is what proves this is genuinely recomputed
+    // on re-discovery, not a stale carry-over from the prior scrape.
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ signal: buildSignal({ type: 'no_https' }) })],
+    });
+    findFirstMock.mockResolvedValue({ id: 'existing-id' });
+
+    await runDiscovery(query);
+
+    const call = updateMock.mock.calls[0][0] as { data: Record<string, unknown> };
+    expect(call.data.projectFit).toBe('landing_page');
+    expect(call.data.estimatedBudget).not.toBeUndefined();
+    expect(Array.isArray(call.data.suggestedServices)).toBe(true);
+    expect((call.data.suggestedServices as Array<{ role: string }>).some((s) => s.role === 'primary')).toBe(true);
   });
 
   it('dedupes two sources reporting the same normalized domain into a single persisted prospect', async () => {

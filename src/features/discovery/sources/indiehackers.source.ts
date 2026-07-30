@@ -119,8 +119,6 @@ export async function runIndieHackersSource(_query: DiscoveryQuery): Promise<Sou
       sourceUrl: launch.productPath ? `${INDIE_HACKERS_BASE_URL}${launch.productPath}` : PRODUCTS_URL,
       discoveredAt: new Date(),
       signal,
-      projectFit: 'unclear',
-      estimatedBudget: 'unknown',
     });
   }
 
@@ -143,8 +141,6 @@ export async function runIndieHackersSource(_query: DiscoveryQuery): Promise<Sou
         evidence: job.title,
         strength: 'medium',
       },
-      projectFit: 'unclear',
-      estimatedBudget: 'unknown',
     });
   }
 

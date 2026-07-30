@@ -12,8 +12,10 @@ vi.mock('@/features/followups/verify-resend-signature', () => ({
 }));
 
 const processInboundReplyMock = vi.fn();
+const processInboundReplyForClientMock = vi.fn();
 vi.mock('@/features/followups/reply-detection.service', () => ({
   processInboundReply: processInboundReplyMock,
+  processInboundReplyForClient: processInboundReplyForClientMock,
 }));
 
 const { POST } = await import('./route');
@@ -43,6 +45,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   verifyResendWebhookSignatureMock.mockResolvedValue(true);
   processInboundReplyMock.mockResolvedValue({ outcome: 'no_match' });
+  processInboundReplyForClientMock.mockResolvedValue({ outcome: 'no_match' });
 });
 
 describe('POST /api/webhooks/resend signature verification', () => {
@@ -142,7 +145,28 @@ describe('POST /api/webhooks/resend relevant reply events', () => {
       subject: 'Re: outreach',
       text: 'sounds good',
     });
-    expect(body).toEqual({ result: { outcome: 'matched', prospectId: 'prospect-1', sentiment: 'neutral' } });
+    expect(body).toEqual({
+      result: { outcome: 'matched', prospectId: 'prospect-1', sentiment: 'neutral' },
+      clientResult: { outcome: 'no_match' },
+    });
+  });
+
+  it('also calls processInboundReplyForClient with the same extracted fields, independently of the Prospect result', async () => {
+    processInboundReplyMock.mockResolvedValue({ outcome: 'no_match' });
+    processInboundReplyForClientMock.mockResolvedValue({ outcome: 'opted_out', clientId: 'client-1' });
+
+    const response = await POST(webhookRequest(inboundReplyEventBody(), VALID_HEADERS));
+    const body = await response.json();
+
+    expect(processInboundReplyForClientMock).toHaveBeenCalledWith({
+      fromEmail: 'prospect@example.com',
+      subject: 'Re: outreach',
+      text: 'sounds good',
+    });
+    expect(body).toEqual({
+      result: { outcome: 'no_match' },
+      clientResult: { outcome: 'opted_out', clientId: 'client-1' },
+    });
   });
 
   it('extracts the email address out of an RFC 5322 "Name <email>" display-form from field', async () => {

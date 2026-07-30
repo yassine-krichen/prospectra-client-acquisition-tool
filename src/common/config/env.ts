@@ -81,6 +81,12 @@ const envSchema = z.object({
   // refuses every event rather than trusting anything unverified, matching
   // this app's fail-closed posture.
   RESEND_WEBHOOK_SECRET: z.string().min(1).optional(),
+  // Hourly rate for work beyond a Job's bundled free-revision scope, and for
+  // estimating manual-quote services (service-catalog.ts's
+  // `getHourlyRateCents`) where the fixed catalog has no price range at all
+  // (e.g. the 201+ company-size tier). Has a sane default so the app boots
+  // without a business decision on file yet; override once a real rate is set.
+  HOURLY_RATE_CENTS: z.coerce.number().int().positive().default(5000),
 });
 
 export type Env = z.infer<typeof envSchema>;

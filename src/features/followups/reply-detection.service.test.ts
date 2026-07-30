@@ -6,16 +6,26 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // duplicate/late-arriving webhook event a no-op rather than a re-trigger.
 // Prisma is mocked (this is an orchestration test, not a DB test) —
 // `followup-scheduler.test.ts` covers the scheduler's half of the same race.
-const { findFirstMock, updateManyMock } = vi.hoisted(() => ({
+const {
+  findFirstMock,
+  updateManyMock,
+  clientFindFirstMock,
+  clientUpdateManyMock,
+} = vi.hoisted(() => ({
   findFirstMock: vi.fn(),
   updateManyMock: vi.fn(),
+  clientFindFirstMock: vi.fn(),
+  clientUpdateManyMock: vi.fn(),
 }));
 
 vi.mock('@/common/db/client', () => ({
-  prisma: { prospect: { findFirst: findFirstMock, updateMany: updateManyMock } },
+  prisma: {
+    prospect: { findFirst: findFirstMock, updateMany: updateManyMock },
+    client: { findFirst: clientFindFirstMock, updateMany: clientUpdateManyMock },
+  },
 }));
 
-const { processInboundReply } = await import('./reply-detection.service');
+const { processInboundReply, processInboundReplyForClient } = await import('./reply-detection.service');
 
 function buildProspectRow(overrides: Partial<{ id: string; status: string; statusHistory: unknown }> = {}) {
   return {
@@ -25,10 +35,20 @@ function buildProspectRow(overrides: Partial<{ id: string; status: string; statu
   };
 }
 
+function buildClientRow(overrides: Partial<{ id: string; doNotContact: boolean; statusHistory: unknown }> = {}) {
+  return {
+    id: overrides.id ?? 'client-1',
+    doNotContact: overrides.doNotContact ?? false,
+    statusHistory: overrides.statusHistory ?? [],
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   findFirstMock.mockResolvedValue(null);
   updateManyMock.mockResolvedValue({ count: 1 });
+  clientFindFirstMock.mockResolvedValue(null);
+  clientUpdateManyMock.mockResolvedValue({ count: 1 });
 });
 
 describe('processInboundReply payload validation', () => {
@@ -246,5 +266,105 @@ describe('processInboundReply idempotency / already-terminal prospects', () => {
     const second = await processInboundReply({ fromEmail: 'contact@example.com', subject: null, text: 'ok' });
 
     expect(second).toEqual({ outcome: 'already_terminal', prospectId: 'prospect-1' });
+  });
+});
+
+// The Client-side counterpart: retention emails go out against
+// Client.contactEmail, a converted Prospect's status ('won') sits outside
+// REPLYABLE_STATUSES, so this is the only path that can ever set
+// Client.doNotContact — the one guard that halts the otherwise-indefinite
+// retention cadence (see retention-scheduler.ts).
+describe('processInboundReplyForClient', () => {
+  it('returns invalid_payload without touching the database for a malformed payload', async () => {
+    const result = await processInboundReplyForClient({ fromEmail: 'not-an-email', subject: null, text: null });
+
+    expect(result).toEqual({ outcome: 'invalid_payload', reason: expect.any(String) });
+    expect(clientFindFirstMock).not.toHaveBeenCalled();
+    expect(clientUpdateManyMock).not.toHaveBeenCalled();
+  });
+
+  it('returns no_match and never calls updateMany when no Client has this contactEmail', async () => {
+    clientFindFirstMock.mockResolvedValue(null);
+
+    const result = await processInboundReplyForClient({ fromEmail: 'stranger@example.com', subject: null, text: 'hi' });
+
+    expect(result).toEqual({ outcome: 'no_match' });
+    expect(clientUpdateManyMock).not.toHaveBeenCalled();
+  });
+
+  it('matches by exact contactEmail via findFirst', async () => {
+    clientFindFirstMock.mockResolvedValue(null);
+
+    await processInboundReplyForClient({ fromEmail: 'client@example.com', subject: null, text: null });
+
+    expect(clientFindFirstMock).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { contactEmail: 'client@example.com' } })
+    );
+  });
+
+  it('returns acknowledged without calling updateMany for a positive-sentiment reply', async () => {
+    clientFindFirstMock.mockResolvedValue(buildClientRow());
+
+    const result = await processInboundReplyForClient({ fromEmail: 'client@example.com', subject: null, text: 'sounds good' });
+
+    expect(result).toEqual({ outcome: 'acknowledged', clientId: 'client-1' });
+    expect(clientUpdateManyMock).not.toHaveBeenCalled();
+  });
+
+  it('returns acknowledged without calling updateMany for a neutral-sentiment reply', async () => {
+    clientFindFirstMock.mockResolvedValue(buildClientRow());
+
+    const result = await processInboundReplyForClient({ fromEmail: 'client@example.com', subject: null, text: 'what is the timeline?' });
+
+    expect(result).toEqual({ outcome: 'acknowledged', clientId: 'client-1' });
+    expect(clientUpdateManyMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['unsubscribe', 'stop emailing', 'not interested', "don't contact"])(
+    'sets doNotContact:true and returns opted_out for a reply containing the negative keyword %j',
+    async (keyword) => {
+      clientFindFirstMock.mockResolvedValue(buildClientRow());
+
+      const result = await processInboundReplyForClient({ fromEmail: 'client@example.com', subject: null, text: `Please ${keyword}` });
+
+      expect(result).toEqual({ outcome: 'opted_out', clientId: 'client-1' });
+      expect(clientUpdateManyMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'client-1', doNotContact: false },
+          data: expect.objectContaining({ doNotContact: true }),
+        })
+      );
+    }
+  );
+
+  it('appends to statusHistory rather than discarding prior entries', async () => {
+    clientFindFirstMock.mockResolvedValue(
+      buildClientRow({ statusHistory: [{ status: 'created', timestamp: '2026-01-01T00:00:00.000Z' }] })
+    );
+
+    await processInboundReplyForClient({ fromEmail: 'client@example.com', subject: null, text: 'unsubscribe' });
+
+    const call = clientUpdateManyMock.mock.calls[0][0] as { data: { statusHistory: Array<{ status: string }> } };
+    expect(call.data.statusHistory).toHaveLength(2);
+    expect(call.data.statusHistory[0]).toEqual({ status: 'created', timestamp: '2026-01-01T00:00:00.000Z' });
+    expect(call.data.statusHistory[1].status).toBe('opted_out');
+  });
+
+  it('is idempotent: reports opted_out without calling updateMany again for a Client already doNotContact:true', async () => {
+    clientFindFirstMock.mockResolvedValue(buildClientRow({ doNotContact: true }));
+
+    const result = await processInboundReplyForClient({ fromEmail: 'client@example.com', subject: null, text: 'unsubscribe' });
+
+    expect(result).toEqual({ outcome: 'opted_out', clientId: 'client-1' });
+    expect(clientUpdateManyMock).not.toHaveBeenCalled();
+  });
+
+  it('still reports opted_out even if the atomic claim loses a race (a concurrent request already flipped it)', async () => {
+    clientFindFirstMock.mockResolvedValue(buildClientRow({ doNotContact: false }));
+    clientUpdateManyMock.mockResolvedValue({ count: 0 });
+
+    const result = await processInboundReplyForClient({ fromEmail: 'client@example.com', subject: null, text: 'unsubscribe' });
+
+    expect(result).toEqual({ outcome: 'opted_out', clientId: 'client-1' });
   });
 });

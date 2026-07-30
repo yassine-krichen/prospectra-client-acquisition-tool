@@ -12,10 +12,14 @@ import { getTodaysSendCount } from '@/features/sending/daily-send-counter';
 // exercised for real rather than mocked — an off-by-one here would let a
 // bulk-approve batch quietly exceed the daily cap.
 beforeEach(async () => {
+  await prisma.job.deleteMany();
+  await prisma.client.deleteMany();
   await prisma.prospect.deleteMany();
 });
 
 afterAll(async () => {
+  await prisma.job.deleteMany();
+  await prisma.client.deleteMany();
   await prisma.prospect.deleteMany();
   await prisma.$disconnect();
 });
@@ -40,6 +44,26 @@ async function seedProspect(sentAt: Date | null, lastFollowupAt: Date | null = n
       priorityScore: 1,
       sentAt,
       lastFollowupAt,
+    },
+  });
+}
+
+async function seedJobWithRetentionTouch(lastRetentionTouchAt: Date | null): Promise<void> {
+  const client = await prisma.client.create({
+    data: {
+      companyName: `Test Client ${randomUUID()}`,
+      industry: 'local_service',
+      companySize: 'unknown',
+    },
+  });
+  await prisma.job.create({
+    data: {
+      clientId: client.id,
+      service: 'landing_page',
+      cadence: 'one_off',
+      status: 'delivered',
+      agreedPriceCents: 100_000,
+      lastRetentionTouchAt,
     },
   });
 }
@@ -138,5 +162,42 @@ describe('getTodaysSendCount', () => {
     const count = await getTodaysSendCount(referenceDate);
 
     expect(count).toBe(1);
+  });
+
+  // A retention touch (retention-scheduler.ts) sets Job.lastRetentionTouchAt,
+  // a separate table from Prospect — without this, retention sends were
+  // invisible to the shared daily cap entirely, letting a busy retention day
+  // exceed sending-domain volume limits alongside cold outreach.
+  it('counts a Job whose lastRetentionTouchAt falls within the reference UTC day', async () => {
+    await seedJobWithRetentionTouch(new Date('2026-06-15T10:00:00.000Z'));
+
+    const count = await getTodaysSendCount(referenceDate);
+
+    expect(count).toBe(1);
+  });
+
+  it('excludes a Job whose lastRetentionTouchAt falls outside the reference UTC day', async () => {
+    await seedJobWithRetentionTouch(new Date('2026-06-10T10:00:00.000Z'));
+
+    const count = await getTodaysSendCount(referenceDate);
+
+    expect(count).toBe(0);
+  });
+
+  it('excludes a Job that has never had a retention touch (lastRetentionTouchAt null)', async () => {
+    await seedJobWithRetentionTouch(null);
+
+    const count = await getTodaysSendCount(referenceDate);
+
+    expect(count).toBe(0);
+  });
+
+  it('sums prospect sends and Job retention touches from today (not one replacing the other)', async () => {
+    await seedProspect(new Date('2026-06-15T08:00:00.000Z'));
+    await seedJobWithRetentionTouch(new Date('2026-06-15T10:00:00.000Z'));
+
+    const count = await getTodaysSendCount(referenceDate);
+
+    expect(count).toBe(2);
   });
 });

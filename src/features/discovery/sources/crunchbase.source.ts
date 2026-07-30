@@ -151,8 +151,6 @@ export async function runCrunchbaseSource(query: DiscoveryQuery): Promise<Source
         ),
         strength: 'strong',
       },
-      projectFit: 'unclear',
-      estimatedBudget: 'unknown',
     });
   }
 

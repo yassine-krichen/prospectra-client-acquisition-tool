@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { serviceTypeSchema } from '@/features/pricing/service-catalog';
+
 // Mirrors the enums/models defined in prisma/schema.prisma. Kept in sync by
 // hand since Prisma's generated types describe persistence shape, not the
 // validated shape of data crossing API boundaries.
@@ -80,6 +82,25 @@ export const signalSchema = z.object({
 });
 export type Signal = z.infer<typeof signalSchema>;
 
+// Mirrors `ServiceSuggestion` in matching/service-matching-rules.ts.
+// `source` is a literal today (only the rules engine produces suggestions
+// in this scope), widening later if an LLM-suggestion overlay is added.
+export const priceRangeCentsSchema = z.object({
+  min: z.number().int(),
+  max: z.number().int(),
+});
+export type PriceRangeCents = z.infer<typeof priceRangeCentsSchema>;
+
+export const serviceSuggestionSchema = z.object({
+  service: serviceTypeSchema,
+  role: z.enum(['primary', 'cross_sell']),
+  priceRangeCents: priceRangeCentsSchema.nullable(),
+  requiresManualQuote: z.boolean(),
+  reasoning: z.string(),
+  source: z.literal('rules'),
+});
+export type ServiceSuggestion = z.infer<typeof serviceSuggestionSchema>;
+
 export const statusHistoryEntrySchema = z.object({
   status: z.string(),
   timestamp: z.coerce.date(),
@@ -129,6 +150,7 @@ export const prospectSchema = z.object({
   signal: signalSchema,
   projectFit: projectFitSchema,
   estimatedBudget: estimatedBudgetSchema,
+  suggestedServices: z.array(serviceSuggestionSchema),
   priorityScore: z.number().int(),
   status: prospectStatusSchema,
   statusHistory: z.array(statusHistoryEntrySchema),

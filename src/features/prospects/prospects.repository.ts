@@ -8,6 +8,7 @@ import type {
   ProspectListItem,
   ProspectSource,
   ProspectStatus,
+  ServiceSuggestion,
   Signal,
   SignalStrength,
   SignalType,
@@ -35,6 +36,7 @@ const LIST_ITEM_SELECT = {
   signal: true,
   projectFit: true,
   estimatedBudget: true,
+  suggestedServices: true,
   priorityScore: true,
   status: true,
   sentAt: true,
@@ -42,16 +44,18 @@ const LIST_ITEM_SELECT = {
 
 type ProspectListRow = Prisma.ProspectGetPayload<{ select: typeof LIST_ITEM_SELECT }>;
 
-// `location`/`signal` are untyped `Json` columns in the schema — this app
-// only ever writes them in the `Location`/`Signal` shape, so it's safe to
-// assert that shape back on read. Kept in sync by hand with
-// `prospect.types.ts`, same as that file's own header comment describes.
+// `location`/`signal`/`suggestedServices` are untyped `Json` columns in the
+// schema — this app only ever writes them in the `Location`/`Signal`/
+// `ServiceSuggestion[]` shape, so it's safe to assert that shape back on
+// read. Kept in sync by hand with `prospect.types.ts`, same as that file's
+// own header comment describes.
 function toListItem(row: ProspectListRow): ProspectListItem {
   return {
     ...row,
     companySize: fromPrismaCompanySize(row.companySize),
     location: row.location as Location,
     signal: row.signal as Signal,
+    suggestedServices: row.suggestedServices as ServiceSuggestion[],
   };
 }
 
