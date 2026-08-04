@@ -89,6 +89,20 @@ describe("env", () => {
       /Invalid environment variables/
     )
   })
+
+  // .env.example ships every optional key as KEY="" rather than omitting the
+  // line, so this is the actual shape .env files have in practice — not an
+  // edge case. An optional string field must treat "" the same as unset.
+  it("treats an empty-string optional key (as shipped by .env.example) the same as unset, not a validation failure", async () => {
+    setEnv({})
+    process.env.GEMINI_API_KEY = ""
+    process.env.CLAUDE_BRIDGE_URL = ""
+
+    const { env } = await loadEnvModule()
+
+    expect(env.GEMINI_API_KEY).toBeUndefined()
+    expect(env.CLAUDE_BRIDGE_URL).toBeUndefined()
+  })
 })
 
 // DOMAIN_DNS_VERIFIED is THE hard gate on real send volume (see

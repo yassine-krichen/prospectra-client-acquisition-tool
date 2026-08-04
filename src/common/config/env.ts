@@ -1,5 +1,14 @@
 import { z } from 'zod';
 
+// .env ships every optional key as KEY="" (see .env.example) to document its
+// existence rather than omitting the line. Next.js loads that as the literal
+// empty string, not undefined, so `.optional()` alone never sees the
+// "unset" case it's meant to allow. Preprocess "" -> undefined first so an
+// optional field's own validator (.min(1), .url(), ...) only ever runs
+// against a real value.
+const emptyToUndefined = (value: unknown) => (value === '' ? undefined : value);
+const optionalString = (schema: z.ZodString) => z.preprocess(emptyToUndefined, schema.optional());
+
 // Fail fast on missing/malformed env vars instead of failing later when a
 // feature that needs them is first exercised.
 const envSchema = z.object({
@@ -9,38 +18,38 @@ const envSchema = z.object({
   // Discovery source API keys aren't available yet. Left optional so the app
   // boots without them — the sources that need them report themselves as
   // unavailable at call time instead of crashing the whole discovery run.
-  GOOGLE_PLACES_API_KEY: z.string().min(1).optional(),
-  BUILTWITH_API_KEY: z.string().min(1).optional(),
+  GOOGLE_PLACES_API_KEY: optionalString(z.string().min(1)),
+  BUILTWITH_API_KEY: optionalString(z.string().min(1)),
   // Branch B (startup/SaaS discovery) source keys — same graceful-skip
   // pattern as the Branch A keys above.
-  PRODUCT_HUNT_API_TOKEN: z.string().min(1).optional(),
-  CRUNCHBASE_API_KEY: z.string().min(1).optional(),
+  PRODUCT_HUNT_API_TOKEN: optionalString(z.string().min(1)),
+  CRUNCHBASE_API_KEY: optionalString(z.string().min(1)),
   // Unlike the other source keys, GitHub's API works unauthenticated (at a
   // much lower rate limit), so its source treats a missing token as
   // "reduced rate limit", not "unavailable".
-  GITHUB_TOKEN: z.string().min(1).optional(),
+  GITHUB_TOKEN: optionalString(z.string().min(1)),
   // Branch C (contact enrichment) source keys — same graceful-skip pattern.
-  HUNTER_API_KEY: z.string().min(1).optional(),
-  PEOPLE_DATA_LABS_API_KEY: z.string().min(1).optional(),
+  HUNTER_API_KEY: optionalString(z.string().min(1)),
+  PEOPLE_DATA_LABS_API_KEY: optionalString(z.string().min(1)),
   // Stage 2 drafting LLM keys — same graceful-skip pattern as the source
   // keys above: model-rotation.ts reports a provider unavailable and fails
   // over to another configured one when unset. Each accepts a comma-
   // separated list of keys for random rotation across keys (see
   // model-rotation.ts's provider registry).
-  GEMINI_API_KEY: z.string().min(1).optional(),
-  GROQ_API_KEY: z.string().min(1).optional(),
+  GEMINI_API_KEY: optionalString(z.string().min(1)),
+  GROQ_API_KEY: optionalString(z.string().min(1)),
   // DeepSeek, the third registered drafting provider — same optional/
   // comma-separated-list/graceful-skip pattern as GEMINI_API_KEY/
   // GROQ_API_KEY above.
-  DEEPSEEK_API_KEY: z.string().min(1).optional(),
+  DEEPSEEK_API_KEY: optionalString(z.string().min(1)),
   // Base URL of the local claude-web-bridge sibling app used for the
   // Stage 2 humanizer pass. Optional — claude-bridge.client.ts defaults to
   // http://127.0.0.1:3000 in code when unset, so this only needs setting
   // for a non-local bridge deployment.
-  CLAUDE_BRIDGE_URL: z.string().url().optional(),
+  CLAUDE_BRIDGE_URL: optionalString(z.string().url()),
   // Bearer token for the claude-web-bridge's own optional API_KEY auth.
   // Optional — a local dev bridge instance may not have one configured.
-  CLAUDE_BRIDGE_API_KEY: z.string().min(1).optional(),
+  CLAUDE_BRIDGE_API_KEY: optionalString(z.string().min(1)),
   // Protects the discovery cron route. Required (unlike the source keys
   // above) since the route itself has no safe "disabled" state to fall back
   // to — fail closed at boot rather than at first request.
@@ -50,10 +59,10 @@ const envSchema = z.object({
   // failure instead of crashing (same graceful-skip pattern as every other
   // external client), and — separately — the domain-verification-gate below
   // means no real volume can go out yet regardless.
-  RESEND_API_KEY: z.string().min(1).optional(),
+  RESEND_API_KEY: optionalString(z.string().min(1)),
   // Local part of the outbound `from` address is fixed in resend.client.ts;
   // this only supplies the domain. Optional: no sending domain is owned yet.
-  SENDING_DOMAIN: z.string().min(1).optional(),
+  SENDING_DOMAIN: optionalString(z.string().min(1)),
   // Whether SPF/DKIM/DMARC are actually verified on SENDING_DOMAIN. THE hard
   // gate for send volume — see domain-verification-gate.ts. Deliberately NOT
   // z.coerce.boolean() (which treats any non-empty string, including
@@ -72,7 +81,7 @@ const envSchema = z.object({
   // daily-cap.ts's ramp schedule (only ever consulted once the domain is
   // verified). Optional — unset/malformed is treated as "warmup hasn't
   // started" there, the most conservative reading.
-  DOMAIN_WARMUP_START_DATE: z.string().min(1).optional(),
+  DOMAIN_WARMUP_START_DATE: optionalString(z.string().min(1)),
   // Signing secret for Resend's inbound webhook (app/api/webhooks/resend),
   // in Resend/Svix's `whsec_<base64>` format. Optional: no webhook is
   // provisioned yet. Deliberately NOT treated as "skip verification when
@@ -80,7 +89,7 @@ const envSchema = z.object({
   // verify-resend-signature.ts: an unset secret means the webhook route
   // refuses every event rather than trusting anything unverified, matching
   // this app's fail-closed posture.
-  RESEND_WEBHOOK_SECRET: z.string().min(1).optional(),
+  RESEND_WEBHOOK_SECRET: optionalString(z.string().min(1)),
   // Hourly rate for work beyond a Job's bundled free-revision scope, and for
   // estimating manual-quote services (service-catalog.ts's
   // `getHourlyRateCents`) where the fixed catalog has no price range at all

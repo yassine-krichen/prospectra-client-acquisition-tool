@@ -104,6 +104,19 @@ Write-Host "==> Running migrations" -ForegroundColor Cyan
 npx prisma migrate deploy
 if ($LASTEXITCODE -ne 0) { Write-Error "prisma migrate deploy failed. Check DATABASE_URL in .env." }
 
+if ($hasDocker) {
+    Write-Host "==> Migrating test database" -ForegroundColor Cyan
+    # vitest.setup.ts points integration tests at a separate biz_scraper_test
+    # database (falls back to it whenever DATABASE_URL isn't already set in
+    # the process env) so tests never touch dev data. It needs its own copy
+    # of the schema, migrated independently of the dev DATABASE_URL above.
+    docker compose exec -T postgres psql -U postgres -c "CREATE DATABASE biz_scraper_test" *>$null
+    $env:DATABASE_URL = "postgresql://postgres:postgres@localhost:5433/biz_scraper_test?schema=public"
+    npx prisma migrate deploy
+    if ($LASTEXITCODE -ne 0) { Write-Error "prisma migrate deploy failed against biz_scraper_test." }
+    Remove-Item Env:\DATABASE_URL
+}
+
 Write-Host "==> Running test suite" -ForegroundColor Cyan
 npm test
 if ($LASTEXITCODE -ne 0) {
