@@ -1,18 +1,12 @@
-import { z } from 'zod';
-
 import { env } from '@/common/config/env';
 import type { CompanySize } from '@/features/prospects/prospect.types';
+import { serviceTypeSchema, type ServiceType } from '@/features/pricing/service-type';
 
-// Mirrors the `ServiceType` enum in prisma/schema.prisma. Owned here (rather
-// than duplicated in client.types.ts) since the catalog is this value's
-// natural home — client.types.ts imports it back for `Job.service`.
-export const serviceTypeSchema = z.enum([
-  'landing_page',
-  'full_stack_app',
-  'linkedin_media_management',
-  'infra_hosting_retainer',
-]);
-export type ServiceType = z.infer<typeof serviceTypeSchema>;
+// `serviceTypeSchema`/`ServiceType` live in ./service-type (not here) so
+// prospect.types.ts — imported by client components — doesn't have to pull
+// in this file's `env` import. Re-exported so everything that already
+// imports them from here keeps working unchanged.
+export { serviceTypeSchema, type ServiceType };
 
 export interface PriceRange {
   minCents: number;

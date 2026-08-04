@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { serviceTypeSchema } from '@/features/pricing/service-catalog';
+import { serviceTypeSchema } from '@/features/pricing/service-type';
 
 // Mirrors the enums/models defined in prisma/schema.prisma. Kept in sync by
 // hand since Prisma's generated types describe persistence shape, not the
