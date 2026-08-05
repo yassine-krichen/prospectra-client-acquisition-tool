@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { serviceTypeSchema } from '@/features/pricing/service-catalog';
+import { serviceTypeSchema } from '@/features/pricing/service-type';
 import {
   companySizeSchema,
   industrySchema,
@@ -13,7 +13,7 @@ import {
 // prospect.types.ts.
 
 export { serviceTypeSchema };
-export type { ServiceType } from '@/features/pricing/service-catalog';
+export type { ServiceType } from '@/features/pricing/service-type';
 
 export const jobCadenceSchema = z.enum(['one_off', 'recurring']);
 export type JobCadence = z.infer<typeof jobCadenceSchema>;
@@ -81,3 +81,6 @@ export const clientSchema = z.object({
   jobs: z.array(jobSchema),
 });
 export type Client = z.infer<typeof clientSchema>;
+
+export const listClientsResponseSchema = z.object({ clients: z.array(clientSchema) });
+export type ListClientsResponse = z.infer<typeof listClientsResponseSchema>;

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import {
   type ColumnDef,
   type SortingState,
@@ -30,6 +31,16 @@ import {
   type SignalStrength,
   type SignalType,
 } from '@/features/prospects/prospect.types';
+import {
+  draftProspect,
+  enrichProspect,
+  matchProspect,
+  winProspect,
+  type DraftResult,
+  type EnrichResult,
+  type MatchResult,
+  type WinResult,
+} from '@/features/prospects/prospect-actions';
 
 // Mirrors `ProspectSortField` in `prospects.repository.ts`. Duplicated
 // (rather than imported) because that module pulls in the Prisma client,
@@ -127,6 +138,17 @@ export function ProspectsTable(): React.JSX.Element {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Per-row action state: which prospects have an action in flight, and the
+  // last outcome message for each — mirrors approval-queue-table.tsx's
+  // `pendingDraftIds`/`lastOutcomes` pattern.
+  const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
+  const [lastActionOutcomes, setLastActionOutcomes] = useState<Record<string, { message: string; clientId?: string }>>(
+    {}
+  );
+  // Bumped after any action succeeds to re-trigger the load effect below, so
+  // status/priorityScore/sentAt reflect the change from the server.
+  const [refreshIndex, setRefreshIndex] = useState(0);
+
   const currentCursor = cursorStack[cursorStack.length - 1];
 
   useEffect(() => {
@@ -150,7 +172,72 @@ export function ProspectsTable(): React.JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [filters, sorting, currentCursor]);
+  }, [filters, sorting, currentCursor, refreshIndex]);
+
+  function describeEnrichResult(result: EnrichResult): string {
+    return result.prospect.emailVerified
+      ? `Enriched — ${result.prospect.contactEmail ?? 'no email'} (verified)`
+      : 'Enriched — no verified email found';
+  }
+
+  function describeDraftResult(result: DraftResult): string {
+    return result.ok ? `Drafted ${result.drafts.length} variants` : `Flagged: ${result.flagged}`;
+  }
+
+  function describeMatchResult(result: MatchResult): string {
+    return result.outcome === 'applied'
+      ? `Matched ${result.suggestedServices.length} suggestion(s)`
+      : `Invalid signal: ${result.reason}`;
+  }
+
+  function describeWinResult(result: WinResult): { message: string; clientId?: string } {
+    switch (result.outcome) {
+      case 'converted':
+        return { message: 'Converted to client', clientId: result.clientId };
+      case 'already_converted':
+        return { message: 'Already converted', clientId: result.clientId };
+      case 'blocked_do_not_contact':
+        return { message: 'Blocked — do not contact' };
+      case 'not_found':
+        return { message: 'Prospect not found' };
+    }
+  }
+
+  async function runAction(
+    prospectId: string,
+    action: () => Promise<{ message: string; clientId?: string }>
+  ): Promise<void> {
+    setPendingIds((prev) => new Set(prev).add(prospectId));
+    try {
+      const outcome = await action();
+      setLastActionOutcomes((prev) => ({ ...prev, [prospectId]: outcome }));
+      setRefreshIndex((prev) => prev + 1);
+    } catch {
+      setLastActionOutcomes((prev) => ({ ...prev, [prospectId]: { message: 'Request failed.' } }));
+    } finally {
+      setPendingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(prospectId);
+        return next;
+      });
+    }
+  }
+
+  function handleEnrich(prospectId: string): void {
+    void runAction(prospectId, async () => ({ message: describeEnrichResult(await enrichProspect(prospectId)) }));
+  }
+
+  function handleDraft(prospectId: string): void {
+    void runAction(prospectId, async () => ({ message: describeDraftResult(await draftProspect(prospectId)) }));
+  }
+
+  function handleMatch(prospectId: string): void {
+    void runAction(prospectId, async () => ({ message: describeMatchResult(await matchProspect(prospectId)) }));
+  }
+
+  function handleWin(prospectId: string): void {
+    void runAction(prospectId, async () => describeWinResult(await winProspect(prospectId)));
+  }
 
   function updateFilter<K extends keyof FiltersState>(key: K, value: FiltersState[K]): void {
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -215,8 +302,50 @@ export function ProspectsTable(): React.JSX.Element {
         header: 'Email verified',
         cell: ({ row }) => (row.original.emailVerified ? 'Yes' : 'No'),
       },
+      {
+        id: 'actions',
+        header: 'Actions',
+        cell: ({ row }) => {
+          const prospectId = row.original.id;
+          const isPending = pendingIds.has(prospectId);
+          const outcome = lastActionOutcomes[prospectId];
+
+          return (
+            <div className="flex flex-col gap-1">
+              <div className="flex flex-wrap gap-1">
+                <Button size="sm" variant="outline" disabled={isPending} onClick={() => handleEnrich(prospectId)}>
+                  Enrich
+                </Button>
+                <Button size="sm" variant="outline" disabled={isPending} onClick={() => handleDraft(prospectId)}>
+                  Draft
+                </Button>
+                <Button size="sm" variant="outline" disabled={isPending} onClick={() => handleMatch(prospectId)}>
+                  Match
+                </Button>
+                <Button size="sm" variant="outline" disabled={isPending} onClick={() => handleWin(prospectId)}>
+                  Win
+                </Button>
+              </div>
+              {outcome ? (
+                <p className="text-xs text-muted-foreground">
+                  {outcome.message}
+                  {outcome.clientId ? (
+                    <>
+                      {' '}
+                      —{' '}
+                      <Link href={`/clients/${outcome.clientId}`} className="underline">
+                        view client
+                      </Link>
+                    </>
+                  ) : null}
+                </p>
+              ) : null}
+            </div>
+          );
+        },
+      },
     ],
-    []
+    [pendingIds, lastActionOutcomes]
   );
 
   const table = useReactTable({
