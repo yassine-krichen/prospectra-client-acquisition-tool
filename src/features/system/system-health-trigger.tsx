@@ -63,7 +63,7 @@ export function SystemHealthTrigger(): React.JSX.Element {
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>System Health</DialogTitle>
-          <DialogDescription>Quotas, storage, and pipeline status at a glance.</DialogDescription>
+          
         </DialogHeader>
         <SystemHealthPanel health={health} error={error} />
       </DialogContent>

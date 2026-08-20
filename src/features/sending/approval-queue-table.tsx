@@ -266,7 +266,7 @@ export function ApprovalQueueTable(): React.JSX.Element {
           <Progress value={capPercentUsed} />
           <div className="flex items-center justify-between">
             <Badge variant={capStatus.domainVerified ? 'default' : 'outline'}>
-              {capStatus.domainVerified ? 'Domain verified - warmup ramp cap' : 'Domain not verified - test cap'}
+              {capStatus.domainVerified ? 'Domain verified - warmup ramp cap' : 'DOMAIN NOT VERIFIED'}
             </Badge>
             {remainingToday === 0 ? (
               <span className="text-destructive flex items-center gap-1 text-xs font-medium">

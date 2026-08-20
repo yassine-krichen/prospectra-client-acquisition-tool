@@ -118,7 +118,7 @@ export function DiscoveryTriggerForm(): React.JSX.Element {
           <CardDescription>{BRANCH_HELP[branch]}</CardDescription>
         </CardHeader>
         <form onSubmit={handleSubmit}>
-          <CardContent className="flex flex-wrap items-end gap-3">
+          <CardContent className="flex flex-wrap items-end gap-3 pb-(--card-spacing)">
             <div className="flex flex-col gap-1">
               <label className="text-muted-foreground flex items-center gap-1 text-xs">
                 Category
