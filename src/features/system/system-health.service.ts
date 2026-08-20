@@ -66,7 +66,25 @@ export interface SystemHealth {
   sending: SendingHealth;
   bridgeInCooldown: boolean;
   configuredServices: ConfiguredServices;
+  configuredPercent: number;
   prospectFunnel: Record<string, number>;
+}
+
+// "Configured" here means "has a usable key present" - the same signal
+// every source/client in this app already uses to decide whether to
+// attempt a call at all (see e.g. hunter.source.ts, builtwith.source.ts).
+// Deliberately NOT a live reachability check against each provider: half
+// of these (Hunter, the LLM providers) have hard free-tier request caps,
+// so pinging all 12 just to render a percentage would spend real, scarce
+// quota for no functional benefit. A configured-but-actually-broken
+// service (e.g. GOOGLE_PLACES_API_KEY set but billing disabled - a real
+// case this project hit) still counts as "configured" here; that failure
+// mode shows up in the discovery run's own per-source result, not this
+// number.
+function computeConfiguredPercent(configuredServices: ConfiguredServices): number {
+  const values = Object.values(configuredServices);
+  const configuredCount = values.filter(Boolean).length;
+  return Math.round((configuredCount / values.length) * 100);
 }
 
 async function getDatabaseHealth(): Promise<DatabaseHealth> {
@@ -138,6 +156,21 @@ export async function getSystemHealth(): Promise<SystemHealth> {
     prospectFunnel[row.status] = row._count.status;
   }
 
+  const configuredServices: ConfiguredServices = {
+    googlePlaces: env.GOOGLE_PLACES_API_KEY !== undefined,
+    builtwith: env.BUILTWITH_API_KEY !== undefined,
+    productHunt: env.PRODUCT_HUNT_API_TOKEN !== undefined,
+    crunchbase: env.CRUNCHBASE_API_KEY !== undefined,
+    github: env.GITHUB_TOKEN !== undefined,
+    hunter: env.HUNTER_API_KEY !== undefined,
+    peopleDataLabs: env.PEOPLE_DATA_LABS_API_KEY !== undefined,
+    gemini: env.GEMINI_API_KEY !== undefined,
+    groq: env.GROQ_API_KEY !== undefined,
+    deepseek: env.DEEPSEEK_API_KEY !== undefined,
+    claudeBridge: env.CLAUDE_BRIDGE_URL !== undefined,
+    resend: env.RESEND_API_KEY !== undefined,
+  };
+
   return {
     database,
     hunter,
@@ -147,20 +180,8 @@ export async function getSystemHealth(): Promise<SystemHealth> {
       dailyCap: getEffectiveDailyCap(),
     },
     bridgeInCooldown,
-    configuredServices: {
-      googlePlaces: env.GOOGLE_PLACES_API_KEY !== undefined,
-      builtwith: env.BUILTWITH_API_KEY !== undefined,
-      productHunt: env.PRODUCT_HUNT_API_TOKEN !== undefined,
-      crunchbase: env.CRUNCHBASE_API_KEY !== undefined,
-      github: env.GITHUB_TOKEN !== undefined,
-      hunter: env.HUNTER_API_KEY !== undefined,
-      peopleDataLabs: env.PEOPLE_DATA_LABS_API_KEY !== undefined,
-      gemini: env.GEMINI_API_KEY !== undefined,
-      groq: env.GROQ_API_KEY !== undefined,
-      deepseek: env.DEEPSEEK_API_KEY !== undefined,
-      claudeBridge: env.CLAUDE_BRIDGE_URL !== undefined,
-      resend: env.RESEND_API_KEY !== undefined,
-    },
+    configuredServices,
+    configuredPercent: computeConfiguredPercent(configuredServices),
     prospectFunnel,
   };
 }

@@ -129,6 +129,43 @@ describe('getSystemHealth', () => {
     envMock.RESEND_API_KEY = undefined;
   });
 
+  it('reports configuredPercent as 0 when nothing is configured', async () => {
+    setDefaults();
+    for (const key of Object.keys(envMock) as Array<keyof typeof envMock>) {
+      envMock[key] = undefined;
+    }
+
+    const health = await getSystemHealth();
+
+    expect(health.configuredPercent).toBe(0);
+
+    envMock.HUNTER_API_KEY = 'hunter-key';
+  });
+
+  it('reports configuredPercent as 100 when every optional service has a key', async () => {
+    setDefaults();
+    for (const key of Object.keys(envMock) as Array<keyof typeof envMock>) {
+      envMock[key] = 'some-value';
+    }
+
+    const health = await getSystemHealth();
+
+    expect(health.configuredPercent).toBe(100);
+
+    for (const key of Object.keys(envMock) as Array<keyof typeof envMock>) {
+      envMock[key] = undefined;
+    }
+    envMock.HUNTER_API_KEY = 'hunter-key';
+  });
+
+  it('reports configuredPercent as a rounded percentage of configured services out of the total', async () => {
+    setDefaults();
+    // 1 of 12 tracked services (HUNTER_API_KEY, set by setDefaults) configured.
+    const health = await getSystemHealth();
+
+    expect(health.configuredPercent).toBe(Math.round((1 / 12) * 100));
+  });
+
   it('passes through domain verification, sent-today count, daily cap, and bridge cooldown as-is', async () => {
     setDefaults();
     isDomainVerifiedMock.mockReturnValue(true);

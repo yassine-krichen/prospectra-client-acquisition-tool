@@ -100,6 +100,18 @@ export function SystemHealthPanel({ health, error }: SystemHealthPanelProps): Re
 
   return (
     <div className="flex max-h-[70vh] flex-col gap-5 overflow-y-auto">
+      <div className="flex flex-col gap-1.5 rounded-lg border p-3">
+        <div className="flex items-center justify-between">
+          <span className="text-foreground text-sm font-medium">Services configured</span>
+          <span className="text-foreground text-lg font-semibold tabular-nums">{health.configuredPercent}%</span>
+        </div>
+        <Progress value={health.configuredPercent} />
+        <span className="text-muted-foreground text-[0.7rem]">
+          A service counts once its API key is set, even if that key later turns out to be broken (e.g. billing
+          disabled) - see each source&apos;s own result for that.
+        </span>
+      </div>
+
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
           <span className="text-foreground text-xs font-medium">Database ping</span>

@@ -23,6 +23,7 @@ function baseHealth(overrides: Partial<SystemHealth> = {}): SystemHealth {
       claudeBridge: false,
       resend: false,
     },
+    configuredPercent: Math.round((1 / 12) * 100),
     prospectFunnel: {},
     ...overrides,
   };

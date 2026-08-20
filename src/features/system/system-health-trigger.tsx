@@ -58,6 +58,7 @@ export function SystemHealthTrigger(): React.JSX.Element {
           <span className={`absolute -right-0.5 -top-0.5 size-2 rounded-full ${STATUS_DOT_CLASS[status]}`} />
         </span>
         System Health
+        {health ? <span className="ml-auto text-xs tabular-nums opacity-70">{health.configuredPercent}%</span> : null}
       </Button>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
