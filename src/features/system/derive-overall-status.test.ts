@@ -17,7 +17,7 @@ function baseHealth(overrides: Partial<SystemHealth> = {}): SystemHealth {
       periodEnd: '2026-09-01T00:00:00Z',
       error: null,
     },
-    hunter: { configured: true, used: 5, cap: 25, remaining: 20 },
+    hunter: { configured: true, planName: 'Free', used: 5, available: 25, remaining: 20, resetDate: '2026-08-24', error: null },
     sending: { domainVerified: false, sentToday: 0, dailyCap: 3 },
     bridgeInCooldown: false,
     configuredServices: {
@@ -84,12 +84,22 @@ describe('deriveOverallStatus', () => {
   });
 
   it('returns warning when Hunter quota has 3 or fewer searches remaining', () => {
-    expect(deriveOverallStatus(baseHealth({ hunter: { configured: true, used: 23, cap: 25, remaining: 2 } }))).toBe('warning');
+    expect(
+      deriveOverallStatus(
+        baseHealth({
+          hunter: { configured: true, planName: 'Free', used: 23, available: 25, remaining: 2, resetDate: '2026-08-24', error: null },
+        })
+      )
+    ).toBe('warning');
   });
 
   it('does not warn on Hunter quota when Hunter is not configured at all', () => {
     expect(
-      deriveOverallStatus(baseHealth({ hunter: { configured: false, used: 0, cap: null, remaining: null } }))
+      deriveOverallStatus(
+        baseHealth({
+          hunter: { configured: false, planName: null, used: null, available: null, remaining: null, resetDate: null, error: null },
+        })
+      )
     ).toBe('ok');
   });
 

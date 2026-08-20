@@ -1,33 +1,15 @@
 import { prisma } from '@/common/db/client';
 import { env } from '@/common/config/env';
 import { isBridgeInCooldown } from '@/features/drafting/bridge-budget';
+import { getHunterAccountUsage, type HunterAccountUsage } from '@/features/enrichment/hunter-account.service';
 import { getEffectiveDailyCap, isDomainVerified } from '@/features/sending/domain-verification-gate';
 import { getTodaysSendCount } from '@/features/sending/daily-send-counter';
 import { getNeonUsage, type NeonUsage } from '@/features/system/neon-usage.service';
 import { prospectStatusSchema } from '@/features/prospects/prospect.types';
 
-// Mirrors hunter.source.ts's own MONTHLY_FREE_TIER_CAP - duplicated rather
-// than imported because that constant is private to a module whose only
-// public surface is "run an enrichment attempt", not "report your cap".
-// Keep in sync if hunter.source.ts's cap ever changes.
-const HUNTER_MONTHLY_FREE_TIER_CAP = 25;
-
-function currentYearMonth(referenceDate: Date = new Date()): string {
-  const year = referenceDate.getUTCFullYear();
-  const month = String(referenceDate.getUTCMonth() + 1).padStart(2, '0');
-  return `${year}-${month}`;
-}
-
 export interface DatabaseHealth {
   reachable: boolean;
   sizeMB: number | null;
-}
-
-export interface QuotaStatus {
-  configured: boolean;
-  used: number;
-  cap: number | null;
-  remaining: number | null;
 }
 
 export interface SendingHealth {
@@ -54,7 +36,7 @@ export interface ConfiguredServices {
 export interface SystemHealth {
   database: DatabaseHealth;
   neon: NeonUsage;
-  hunter: QuotaStatus;
+  hunter: HunterAccountUsage;
   sending: SendingHealth;
   bridgeInCooldown: boolean;
   configuredServices: ConfiguredServices;
@@ -103,30 +85,14 @@ async function getDatabaseHealth(): Promise<DatabaseHealth> {
   }
 }
 
-async function getHunterQuota(): Promise<QuotaStatus> {
-  if (!env.HUNTER_API_KEY) {
-    return { configured: false, used: 0, cap: null, remaining: null };
-  }
-
-  const counter = await prisma.apiUsageCounter.findUnique({
-    where: { source_yearMonth: { source: 'hunter', yearMonth: currentYearMonth() } },
-  });
-  const used = counter?.count ?? 0;
-
-  return {
-    configured: true,
-    used,
-    cap: HUNTER_MONTHLY_FREE_TIER_CAP,
-    remaining: Math.max(HUNTER_MONTHLY_FREE_TIER_CAP - used, 0),
-  };
-}
-
 /**
  * Aggregates every "how much do I have left" signal this app can answer:
  * DB storage (our own query) and real Neon usage (storage/compute/transfer,
- * straight from Neon's Management API when configured), Hunter's monthly
- * free-tier quota, today's send-cap usage, claude-bridge's cooldown state,
- * which optional external services actually have a key configured, and a
+ * straight from Neon's Management API when configured), Hunter's real
+ * account usage (straight from Hunter's own /v2/account, not this app's
+ * local call counter - see hunter-account.service.ts for why those two can
+ * disagree), today's send-cap usage, claude-bridge's cooldown state, which
+ * optional external services actually have a key configured, and a
  * status-by-status funnel count of every Prospect on file. Backs the
  * dashboard's system-health panel - never throws, since a health check that
  * itself crashes the page defeats its own purpose.
@@ -135,7 +101,7 @@ export async function getSystemHealth(): Promise<SystemHealth> {
   const [database, neon, hunter, sentToday, bridgeInCooldown, statusCounts] = await Promise.all([
     getDatabaseHealth(),
     getNeonUsage(),
-    getHunterQuota(),
+    getHunterAccountUsage(),
     getTodaysSendCount(),
     isBridgeInCooldown('claude-bridge'),
     prisma.prospect.groupBy({ by: ['status'], _count: { status: true } }),

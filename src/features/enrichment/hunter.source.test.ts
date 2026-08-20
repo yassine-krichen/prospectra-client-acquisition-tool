@@ -30,7 +30,7 @@ import { runHunterEnrichment } from './hunter.source';
 // Postgres evaluating `count: { lt: cap }` as part of the UPDATE itself,
 // which a mocked Prisma client can't meaningfully exercise.
 const USAGE_SOURCE = 'hunter';
-const MONTHLY_FREE_TIER_CAP = 25;
+const MONTHLY_FREE_TIER_CAP = 50;
 
 function currentYearMonth(): string {
   return new Date().toISOString().slice(0, 7);
@@ -110,7 +110,7 @@ describe('runHunterEnrichment quota gate', () => {
     expect(counter).toMatchObject({ source: USAGE_SOURCE, yearMonth: currentYearMonth(), count: 1 });
   });
 
-  it('allows the 25th call of the month through and brings the counter to exactly the cap', async () => {
+  it('allows the last call before the cap through and brings the counter to exactly the cap', async () => {
     await prisma.apiUsageCounter.create({
       data: { source: USAGE_SOURCE, yearMonth: currentYearMonth(), count: MONTHLY_FREE_TIER_CAP - 1 },
     });

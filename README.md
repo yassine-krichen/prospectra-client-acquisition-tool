@@ -52,7 +52,7 @@ Built for a single operator running their own outbound pipeline, not a multi-ten
 
 **Enrichment**
 
-**Hunter → People Data Labs fallback** - contact/email finding with the free-tier call count tracked in Postgres so it stops calling before Hunter's 25/month cap is exceeded rather than after.
+**Hunter → People Data Labs fallback** - contact/email finding with the free-tier call count tracked in Postgres so it stops calling before Hunter's monthly cap is exceeded rather than after.
 
 **Drafting**
 
@@ -227,7 +227,7 @@ Only four variables are required to boot the app. Everything else is a discovery
 | `PRODUCT_HUNT_API_TOKEN` | No | - | Branch B discovery: recently-launched products |
 | `CRUNCHBASE_API_KEY` | No | - | Branch B discovery: recently-funded startups |
 | `GITHUB_TOKEN` | No | - | Branch B discovery: hiring/CI-gap signals; unauthenticated GitHub calls still work at a lower rate limit |
-| `HUNTER_API_KEY` | No | - | Branch C contact enrichment; free tier capped at 25 searches/month, tracked in `ApiUsageCounter` |
+| `HUNTER_API_KEY` | No | - | Branch C contact enrichment; free tier capped at a monthly search quota (50 as of this writing, see `hunter.source.ts`), tracked in `ApiUsageCounter` |
 | `PEOPLE_DATA_LABS_API_KEY` | No | - | Branch C fallback when Hunter is unavailable or exhausted |
 | `GEMINI_API_KEY` | No | - | Drafting rotation pool; comma-separated list rotates across keys |
 | `GROQ_API_KEY` | No | - | Drafting rotation pool; same comma-separated pattern |

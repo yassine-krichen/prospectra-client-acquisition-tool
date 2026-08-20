@@ -169,8 +169,19 @@ export function SystemHealthPanel({ health, error }: SystemHealthPanelProps): Re
         </span>
       </div>
 
-      {health.hunter.configured && health.hunter.cap !== null ? (
-        <QuotaBar label="Hunter.io searches this month" used={health.hunter.used} cap={health.hunter.cap} />
+      {health.hunter.configured && health.hunter.used !== null && health.hunter.available !== null ? (
+        <div className="flex flex-col gap-1.5">
+          <QuotaBar label="Hunter.io searches this month" used={health.hunter.used} cap={health.hunter.available} />
+          <span className="text-muted-foreground text-[0.7rem]">
+            Live from Hunter&apos;s own account ({health.hunter.planName ?? 'unknown plan'}), not a local count - resets{' '}
+            {health.hunter.resetDate ?? 'unknown date'}.
+          </span>
+        </div>
+      ) : health.hunter.configured && health.hunter.error ? (
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-foreground">Hunter.io</span>
+          <NoData label={`NO DATA - ${health.hunter.error}`} />
+        </div>
       ) : (
         <div className="flex items-center justify-between text-xs">
           <span className="text-foreground">Hunter.io</span>

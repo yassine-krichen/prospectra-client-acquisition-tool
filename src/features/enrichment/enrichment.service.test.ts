@@ -109,7 +109,7 @@ describe('enrichProspect', () => {
     findUniqueMock.mockResolvedValue(buildProspectRow());
     runHunterEnrichmentMock.mockResolvedValue({
       ok: false,
-      reason: 'source unavailable: Hunter.io free-tier quota (25/month) already used this month',
+      reason: 'source unavailable: Hunter.io free-tier quota (50/month) already used this month',
     });
     runPeopleDataLabsEnrichmentMock.mockResolvedValue({ ok: true, contact: pdlContact });
 
@@ -119,7 +119,7 @@ describe('enrichProspect', () => {
       {
         source: 'hunter',
         ran: false,
-        reason: 'source unavailable: Hunter.io free-tier quota (25/month) already used this month',
+        reason: 'source unavailable: Hunter.io free-tier quota (50/month) already used this month',
         used: false,
       },
       { source: 'people_data_labs', ran: true, used: true },

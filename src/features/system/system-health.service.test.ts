@@ -17,12 +17,10 @@ const envMock = vi.hoisted(() => ({
 vi.mock('@/common/config/env', () => ({ env: envMock }));
 
 const queryRawMock = vi.fn();
-const findUniqueApiUsageCounterMock = vi.fn();
 const groupByMock = vi.fn();
 vi.mock('@/common/db/client', () => ({
   prisma: {
     $queryRaw: queryRawMock,
-    apiUsageCounter: { findUnique: findUniqueApiUsageCounterMock },
     prospect: { groupBy: groupByMock },
   },
 }));
@@ -43,6 +41,9 @@ vi.mock('@/features/sending/daily-send-counter', () => ({ getTodaysSendCount: ge
 const getNeonUsageMock = vi.fn();
 vi.mock('@/features/system/neon-usage.service', () => ({ getNeonUsage: getNeonUsageMock }));
 
+const getHunterAccountUsageMock = vi.fn();
+vi.mock('@/features/enrichment/hunter-account.service', () => ({ getHunterAccountUsage: getHunterAccountUsageMock }));
+
 const { getSystemHealth } = await import('./system-health.service');
 
 const NOT_CONFIGURED_NEON_USAGE = {
@@ -57,15 +58,25 @@ const NOT_CONFIGURED_NEON_USAGE = {
   error: null,
 };
 
+const CONFIGURED_HUNTER_USAGE = {
+  configured: true,
+  planName: 'Free',
+  used: 5,
+  available: 50,
+  remaining: 45,
+  resetDate: '2026-08-24',
+  error: null,
+};
+
 function setDefaults(): void {
   queryRawMock.mockResolvedValue([{ size_bytes: BigInt(10 * 1024 * 1024) }]);
-  findUniqueApiUsageCounterMock.mockResolvedValue({ count: 5 });
   groupByMock.mockResolvedValue([{ status: 'new', _count: { status: 3 } }]);
   isBridgeInCooldownMock.mockResolvedValue(false);
   getEffectiveDailyCapMock.mockReturnValue(3);
   isDomainVerifiedMock.mockReturnValue(false);
   getTodaysSendCountMock.mockResolvedValue(0);
   getNeonUsageMock.mockResolvedValue(NOT_CONFIGURED_NEON_USAGE);
+  getHunterAccountUsageMock.mockResolvedValue(CONFIGURED_HUNTER_USAGE);
 }
 
 describe('getSystemHealth', () => {
@@ -108,34 +119,29 @@ describe('getSystemHealth', () => {
     expect(health.neon).toEqual(realUsage);
   });
 
-  it('reports Hunter as unconfigured (not zero-used) when HUNTER_API_KEY is unset', async () => {
+  it('passes through Hunter account usage as-is, straight from the live account service', async () => {
     setDefaults();
-    envMock.HUNTER_API_KEY = undefined;
 
     const health = await getSystemHealth();
 
-    expect(health.hunter).toEqual({ configured: false, used: 0, cap: null, remaining: null });
-    expect(findUniqueApiUsageCounterMock).not.toHaveBeenCalled();
-
-    envMock.HUNTER_API_KEY = 'hunter-key';
+    expect(health.hunter).toEqual(CONFIGURED_HUNTER_USAGE);
   });
 
-  it('computes Hunter remaining quota against the 25/month free-tier cap', async () => {
+  it('passes through Hunter as unconfigured when the account service reports it unconfigured', async () => {
     setDefaults();
-    findUniqueApiUsageCounterMock.mockResolvedValue({ count: 25 });
+    getHunterAccountUsageMock.mockResolvedValue({
+      configured: false,
+      planName: null,
+      used: null,
+      available: null,
+      remaining: null,
+      resetDate: null,
+      error: null,
+    });
 
     const health = await getSystemHealth();
 
-    expect(health.hunter).toEqual({ configured: true, used: 25, cap: 25, remaining: 0 });
-  });
-
-  it('treats a missing ApiUsageCounter row as zero used, not an error', async () => {
-    setDefaults();
-    findUniqueApiUsageCounterMock.mockResolvedValue(null);
-
-    const health = await getSystemHealth();
-
-    expect(health.hunter).toEqual({ configured: true, used: 0, cap: 25, remaining: 25 });
+    expect(health.hunter.configured).toBe(false);
   });
 
   it('fills every ProspectStatus with 0 by default, not just statuses with rows', async () => {
