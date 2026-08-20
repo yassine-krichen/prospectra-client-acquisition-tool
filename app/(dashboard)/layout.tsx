@@ -6,9 +6,9 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }>): React.JSX.Element {
   return (
-    <div className="flex min-h-screen">
+    <div className="bg-muted/30 flex min-h-screen">
       <DashboardNav />
-      <div className="flex-1">{children}</div>
+      <div className="min-w-0 flex-1">{children}</div>
     </div>
   );
 }

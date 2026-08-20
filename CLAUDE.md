@@ -13,8 +13,10 @@ prospect to a paying Client with Jobs → retention touches on delivered/active 
 Single-operator app — dashboard sits behind one shared password by design, not multi-tenant.
 
 Stack: Next.js 16 (App Router, Turbopack), TypeScript strict, Prisma 7 + Postgres, Zod, Vitest,
-TanStack Table, Tailwind (shadcn primitives: button/input/select/table only — no Card/Badge/etc.,
-new UI should stay consistent with that minimal set rather than pulling in more).
+TanStack Table, Tailwind (shadcn primitives — as of the pro-UI redesign: button, input, select,
+table, badge, card, checkbox, dialog, progress, tabs, separator, skeleton, sonner (toasts). Added
+deliberately for a richer/more "product" feeling dashboard — reuse these before reaching for a new
+one, and prefer `npx shadcn add <name>` over hand-rolling a component this registry already has).
 
 ## Current git state
 

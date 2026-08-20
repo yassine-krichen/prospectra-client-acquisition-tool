@@ -40,6 +40,7 @@ const LIST_ITEM_SELECT = {
   priorityScore: true,
   status: true,
   sentAt: true,
+  seen: true,
 } as const satisfies Prisma.ProspectSelect;
 
 type ProspectListRow = Prisma.ProspectGetPayload<{ select: typeof LIST_ITEM_SELECT }>;
@@ -72,6 +73,7 @@ export interface ListProspectsFilters {
   priorityScoreMin?: number;
   priorityScoreMax?: number;
   hasVerifiedEmail?: boolean;
+  seen?: boolean;
 }
 
 export interface ListProspectsOptions {
@@ -171,6 +173,7 @@ function buildWhere(
   if (filters.projectFit) where.projectFit = filters.projectFit;
   if (filters.status) where.status = filters.status;
   if (filters.hasVerifiedEmail !== undefined) where.emailVerified = filters.hasVerifiedEmail;
+  if (filters.seen !== undefined) where.seen = filters.seen;
 
   if (filters.priorityScoreMin !== undefined || filters.priorityScoreMax !== undefined) {
     where.priorityScore = {

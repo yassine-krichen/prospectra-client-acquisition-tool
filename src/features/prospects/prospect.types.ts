@@ -154,6 +154,9 @@ export const prospectSchema = z.object({
   priorityScore: z.number().int(),
   status: prospectStatusSchema,
   statusHistory: z.array(statusHistoryEntrySchema),
+  // Dashboard-only read marker — see the doc comment on `Prospect.seen` in
+  // prisma/schema.prisma. Not part of the outreach pipeline's own state.
+  seen: z.boolean(),
   drafts: z.array(draftSchema),
   activeDraftId: z.string().nullable(),
   sentAt: z.coerce.date().nullable(),

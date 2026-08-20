@@ -161,6 +161,13 @@ model Prospect {
   // Array of { status, timestamp } — no query pattern needs it normalized.
   statusHistory Json           @default("[]")
 
+  // Dashboard-only read marker, toggled by the user from the prospects table
+  // (`PATCH /api/prospects/[id]/seen`). Purely a "don't make me re-scan
+  // stuff I've already reviewed" UX aid — has no bearing on the outreach
+  // pipeline itself (unlike `status`, nothing reads this to decide whether
+  // to enrich/draft/send).
+  seen Boolean @default(false)
+
   drafts         Draft[]
   activeDraftId  String?
   sentAt         DateTime?
