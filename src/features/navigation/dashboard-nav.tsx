@@ -31,7 +31,7 @@ export function DashboardNav(): React.JSX.Element {
   return (
     <nav className="bg-sidebar text-sidebar-foreground border-sidebar-border flex w-60 shrink-0 flex-col gap-1 border-r p-4">
       <div className="mb-4 px-2">
-        <span className="text-base font-semibold tracking-tight">Backstop</span>
+        <span className="text-base font-semibold tracking-tight">Biz Scraper</span>
       </div>
 
       {NAV_ITEMS.map((item) => {

@@ -1,7 +1,7 @@
 <div align="center">
-  <img src="docs/cover.png" alt="Backstop cover" width="100%" />
+  <img src="docs/cover.png" alt="Biz Scraper cover" width="100%" />
   <h1>
-    Backstop <sup><sub>v0.0.1</sub></sup>
+    Biz Scraper <sup><sub>v0.0.1</sub></sup>
   </h1>
   <p>
     <em>Finds companies whose own website reveals technical debt, drafts the outreach, and refuses to send anything a human hasn't approved.</em>
@@ -30,7 +30,7 @@
 
 ## Pitch
 
-Cold outreach usually means either buying a static list or paying per-lookup for "intent data" that's really just a keyword match. Backstop instead scores a company by what its own public surface already reveals - an unencrypted site, a stack that hasn't shipped in years, a funding round, a hiring post for a role the company can't yet support - and treats that as the one legitimate signal worth writing an email about.
+Cold outreach usually means either buying a static list or paying per-lookup for "intent data" that's really just a keyword match. Biz Scraper instead scores a company by what its own public surface already reveals - an unencrypted site, a stack that hasn't shipped in years, a funding round, a hiring post for a role the company can't yet support - and treats that as the one legitimate signal worth writing an email about.
 
 Discovery runs across two branches: local/SMB sources (Google Places, a Playwright-driven yellowpages.com scrape) and startup/SaaS sources (Product Hunt, Crunchbase, GitHub, Indie Hackers), with BuiltWith layered on top as a tech-staleness enrichment pass. Contact enrichment falls back from Hunter.io to People Data Labs when the free-tier quota runs out. Drafting samples three distinct copywriting frameworks per prospect from a swappable provider registry - Gemini, Groq, and DeepSeek rotated at random - with a local claude-web-bridge sibling app as a scarce tier-2 fallback and humanizer pass for high-priority leads only.
 
@@ -278,7 +278,7 @@ Built by [yassine krichen](https://github.com/) · 2026
 
 ## Before You Publish
 
-- [ ] Add `docs/cover.png` - generate with: *"Backstop - a dark, high-contrast dashboard showing a sortable prospects table with signal badges (outdated site, no HTTPS, funding event) and priority scores. Professional software screenshot aesthetic. Wide banner format, 1400×600px. No people. No text overlays."* in Midjourney or DALL-E, then commit it.
+- [ ] Add `docs/cover.png` - generate with: *"Biz Scraper - a dark, high-contrast dashboard showing a sortable prospects table with signal badges (outdated site, no HTTPS, funding event) and priority scores. Professional software screenshot aesthetic. Wide banner format, 1400×600px. No people. No text overlays."* in Midjourney or DALL-E, then commit it.
 - [ ] Add real screenshots to `docs/demo/prospects.png` and `docs/demo/queue.png` - referenced in the Demo section above.
 - [ ] Add a `LICENSE` file at the repo root - full text below, chosen as MIT since this is a single-author project with no `CONTRIBUTORS` file or multi-owner signal.
 - [ ] Delete `yellowpages_scraper.py` and `venv/` - a tracked leftover from the original Python/BeautifulSoup prototype that `src/features/discovery/sources/yellowpages.source.ts` already fully replaced (see that file's own doc comment). Keeping a dead, unreferenced scraper script in a TypeScript project reads as unfinished cleanup to anyone skimming the tree.

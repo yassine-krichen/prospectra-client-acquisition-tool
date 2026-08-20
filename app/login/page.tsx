@@ -53,7 +53,7 @@ export default function LoginPage(): React.JSX.Element {
             <HugeiconsIcon icon={SquareLock02Icon} strokeWidth={2} className="size-5" />
           </div>
           <div className="flex flex-col gap-1">
-            <CardTitle className="text-lg">Backstop</CardTitle>
+            <CardTitle className="text-lg">Biz Scraper</CardTitle>
             <CardDescription>Enter the dashboard password to continue.</CardDescription>
           </div>
         </CardHeader>

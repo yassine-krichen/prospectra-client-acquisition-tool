@@ -1,4 +1,4 @@
-# Backstop (biz-scraper) - project context
+# Biz Scraper - project context
 
 Read this first in any new session on this repo. Written 2026-08-05 to survive a context clear.
 
