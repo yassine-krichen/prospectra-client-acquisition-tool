@@ -1,8 +1,16 @@
+'use client';
+
+import { useState } from 'react';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { Loading03Icon } from '@hugeicons/core-free-icons';
+
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Separator } from '@/components/ui/separator';
 import type { SystemHealth } from '@/features/system/system-health.service';
+import type { DbPingResult } from '@/app/api/system/db-ping/route';
 
 interface SystemHealthPanelProps {
   health: SystemHealth | null;
@@ -54,7 +62,25 @@ function QuotaBar({ label, used, cap }: { label: string; used: number; cap: numb
   );
 }
 
+const GOOD_PING_MS = 100;
+
 export function SystemHealthPanel({ health, error }: SystemHealthPanelProps): React.JSX.Element {
+  const [ping, setPing] = useState<DbPingResult | null>(null);
+  const [isPinging, setIsPinging] = useState(false);
+
+  async function handlePing(): Promise<void> {
+    setIsPinging(true);
+    try {
+      const response = await fetch('/api/system/db-ping');
+      const result: DbPingResult = await response.json();
+      setPing(result);
+    } catch {
+      setPing({ ok: false, latencyMs: null, good: false, error: 'Request failed.' });
+    } finally {
+      setIsPinging(false);
+    }
+  }
+
   if (error) {
     return <p className="text-destructive text-sm">{error}</p>;
   }
@@ -74,6 +100,34 @@ export function SystemHealthPanel({ health, error }: SystemHealthPanelProps): Re
 
   return (
     <div className="flex max-h-[70vh] flex-col gap-5 overflow-y-auto">
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <span className="text-foreground text-xs font-medium">Database ping</span>
+          <Button variant="outline" size="sm" onClick={() => void handlePing()} disabled={isPinging}>
+            {isPinging ? <HugeiconsIcon icon={Loading03Icon} strokeWidth={2} className="size-3.5 animate-spin" /> : null}
+            {isPinging ? 'Pinging...' : 'Ping database'}
+          </Button>
+        </div>
+        {ping ? (
+          <div className="flex items-center gap-2 text-xs">
+            <span
+              className={`size-2.5 shrink-0 rounded-full ${
+                !ping.ok ? 'bg-destructive' : ping.good ? 'bg-emerald-500' : 'bg-destructive'
+              }`}
+              aria-hidden
+            />
+            {ping.ok ? (
+              <span className="text-foreground">{ping.latencyMs}ms</span>
+            ) : (
+              <span className="text-destructive">{ping.error ?? 'Ping failed.'}</span>
+            )}
+            <span className="text-muted-foreground">(good is under {GOOD_PING_MS}ms)</span>
+          </div>
+        ) : (
+          <span className="text-muted-foreground text-xs">Not pinged yet this session.</span>
+        )}
+      </div>
+
       <div className="flex flex-col gap-1.5">
         <div className="flex items-center justify-between text-xs">
           <span className="text-foreground">Database storage</span>
