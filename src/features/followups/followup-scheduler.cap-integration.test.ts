@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { prisma } from '@/common/db/client';
+import { assertDestructiveTestsAllowed } from '@/common/testing/require-destructive-test-guard';
 import { getEffectiveDailyCap } from '@/features/sending/domain-verification-gate';
 import { FOLLOWUP_INTERVAL_DAYS, runFollowupScheduler } from '@/features/followups/followup-scheduler';
 
@@ -14,6 +15,10 @@ import { FOLLOWUP_INTERVAL_DAYS, runFollowupScheduler } from '@/features/followu
 // must also recognize a today `lastFollowupAt`, not just `sentAt`) actually
 // takes effect in the real send path, not just in the counter's own unit
 // tests.
+beforeAll(() => {
+  assertDestructiveTestsAllowed('followup-scheduler.cap-integration.test.ts');
+});
+
 beforeEach(async () => {
   await prisma.prospect.deleteMany();
 });

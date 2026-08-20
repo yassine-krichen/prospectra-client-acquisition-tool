@@ -62,7 +62,9 @@ function QuotaBar({ label, used, cap }: { label: string; used: number; cap: numb
   );
 }
 
-const GOOD_PING_MS = 100;
+function NoData({ label }: { label?: string }): React.JSX.Element {
+  return <span className="text-muted-foreground text-xs">{label ?? 'NO DATA'}</span>;
+}
 
 export function SystemHealthPanel({ health, error }: SystemHealthPanelProps): React.JSX.Element {
   const [ping, setPing] = useState<DbPingResult | null>(null);
@@ -133,7 +135,6 @@ export function SystemHealthPanel({ health, error }: SystemHealthPanelProps): Re
             ) : (
               <span className="text-destructive">{ping.error ?? 'Ping failed.'}</span>
             )}
-            <span className="text-muted-foreground">(good is under {GOOD_PING_MS}ms)</span>
           </div>
         ) : (
           <span className="text-muted-foreground text-xs">Not pinged yet this session.</span>
@@ -142,23 +143,30 @@ export function SystemHealthPanel({ health, error }: SystemHealthPanelProps): Re
 
       <div className="flex flex-col gap-1.5">
         <div className="flex items-center justify-between text-xs">
-          <span className="text-foreground">Database storage</span>
-          <span className="text-muted-foreground">
-            {health.database.reachable
-              ? `${health.database.sizeMB ?? '?'} MB / ${health.database.limitMB} MB`
-              : 'unreachable'}
-          </span>
+          <span className="text-foreground">Neon storage</span>
+          {health.neon.configured && health.neon.storagePercentUsed !== null ? (
+            <span className="text-muted-foreground">
+              {health.neon.storageUsedMB} MB / {health.neon.storageLimitMB} MB
+            </span>
+          ) : null}
         </div>
-        {health.database.reachable ? (
-          <Progress value={health.database.percentUsed ?? 0} />
+        {health.neon.configured && health.neon.storagePercentUsed !== null ? (
+          <Progress value={health.neon.storagePercentUsed} />
+        ) : health.neon.configured && health.neon.error ? (
+          <NoData label={`NO DATA - ${health.neon.error}`} />
         ) : (
-          <Badge variant="destructive">Database unreachable</Badge>
+          <NoData label="NO DATA - set NEON_API_KEY and NEON_PROJECT_ID to enable" />
         )}
-        {health.database.reachable && (
+        {health.neon.configured && health.neon.computeSecondsUsed !== null ? (
           <span className="text-muted-foreground text-[0.7rem]">
-            Estimated against Neon&apos;s free-tier limit - not a live quota from Neon itself.
+            Compute used this period: {health.neon.computeSecondsUsed}s · Data transfer:{' '}
+            {health.neon.dataTransferMB} MB (Neon doesn&apos;t report a cap for either, so no percentage is shown for
+            them)
           </span>
-        )}
+        ) : null}
+        <span className="text-muted-foreground text-[0.7rem]">
+          Live connection check: {health.database.reachable ? `reachable, ${health.database.sizeMB ?? '?'} MB` : 'unreachable'}
+        </span>
       </div>
 
       {health.hunter.configured && health.hunter.cap !== null ? (
@@ -185,13 +193,22 @@ export function SystemHealthPanel({ health, error }: SystemHealthPanelProps): Re
 
       <div className="flex flex-col gap-2">
         <span className="text-foreground text-xs font-medium">Configured services</span>
-        <div className="flex flex-wrap gap-1.5">
-          {(Object.keys(SERVICE_LABELS) as Array<keyof typeof SERVICE_LABELS>).map((key) => (
-            <Badge key={key} variant={health.configuredServices[key] ? 'secondary' : 'outline'} className="opacity-90">
-              {SERVICE_LABELS[key]}
-            </Badge>
-          ))}
-        </div>
+        <ul className="flex flex-col gap-1">
+          {(Object.keys(SERVICE_LABELS) as Array<keyof typeof SERVICE_LABELS>).map((key) => {
+            const configured = health.configuredServices[key];
+            return (
+              <li key={key} className="flex items-center gap-2 text-xs">
+                <span className={`shrink-0 ${configured ? 'text-emerald-600 dark:text-emerald-500' : 'text-muted-foreground'}`}>
+                  •
+                </span>
+                <span className="text-foreground flex-1">{SERVICE_LABELS[key]}</span>
+                <span className={configured ? 'text-emerald-600 dark:text-emerald-500' : 'text-muted-foreground'}>
+                  {configured ? 'Configured' : 'Not configured'}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
       </div>
 
       <Separator />

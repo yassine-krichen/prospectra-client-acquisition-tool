@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { prisma } from '@/common/db/client';
+import { assertDestructiveTestsAllowed } from '@/common/testing/require-destructive-test-guard';
 import { toPrismaCompanySize } from '@/features/prospects/company-size.mapper';
 import { listProspects } from '@/features/prospects/prospects.repository';
 import type {
@@ -19,7 +20,12 @@ import type {
 // before every test rather than tagged/rolled back: deleteMany is simpler
 // than threading a transaction through `listProspects`'s own `prisma`
 // import. Deliberate tradeoff: don't run `npm test` against a DATABASE_URL
-// holding data you care about.
+// holding data you care about - and see require-destructive-test-guard.ts
+// for the explicit opt-in this file now refuses to run without.
+beforeAll(() => {
+  assertDestructiveTestsAllowed('prospects.repository.test.ts');
+});
+
 beforeEach(async () => {
   await prisma.prospect.deleteMany();
 });

@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { assertDestructiveTestsAllowed } from '@/common/testing/require-destructive-test-guard';
 
 // Integration test against the real Postgres DB (same pattern as
 // daily-send-counter.test.ts / prospects.repository.test.ts) - the guarantee
@@ -42,6 +44,10 @@ const { prisma } = await import('@/common/db/client');
 const { runDiscovery } = await import('./discovery.service');
 
 const query = { category: 'plumber', geography: 'Austin, TX' };
+
+beforeAll(() => {
+  assertDestructiveTestsAllowed('discovery.service.dnc-preservation.test.ts');
+});
 
 beforeEach(async () => {
   await prisma.prospect.deleteMany();

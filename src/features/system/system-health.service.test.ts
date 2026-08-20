@@ -40,7 +40,22 @@ vi.mock('@/features/sending/domain-verification-gate', () => ({
 const getTodaysSendCountMock = vi.fn();
 vi.mock('@/features/sending/daily-send-counter', () => ({ getTodaysSendCount: getTodaysSendCountMock }));
 
+const getNeonUsageMock = vi.fn();
+vi.mock('@/features/system/neon-usage.service', () => ({ getNeonUsage: getNeonUsageMock }));
+
 const { getSystemHealth } = await import('./system-health.service');
+
+const NOT_CONFIGURED_NEON_USAGE = {
+  configured: false,
+  storageUsedMB: null,
+  storageLimitMB: null,
+  storagePercentUsed: null,
+  computeSecondsUsed: null,
+  dataTransferMB: null,
+  periodStart: null,
+  periodEnd: null,
+  error: null,
+};
 
 function setDefaults(): void {
   queryRawMock.mockResolvedValue([{ size_bytes: BigInt(10 * 1024 * 1024) }]);
@@ -50,6 +65,7 @@ function setDefaults(): void {
   getEffectiveDailyCapMock.mockReturnValue(3);
   isDomainVerifiedMock.mockReturnValue(false);
   getTodaysSendCountMock.mockResolvedValue(0);
+  getNeonUsageMock.mockResolvedValue(NOT_CONFIGURED_NEON_USAGE);
 }
 
 describe('getSystemHealth', () => {
@@ -57,12 +73,12 @@ describe('getSystemHealth', () => {
     vi.clearAllMocks();
   });
 
-  it('reports database size in MB and percent of the free-tier limit used', async () => {
+  it('reports database size in MB from its own query', async () => {
     setDefaults();
 
     const health = await getSystemHealth();
 
-    expect(health.database).toEqual({ reachable: true, sizeMB: 10, limitMB: 512, percentUsed: 2 });
+    expect(health.database).toEqual({ reachable: true, sizeMB: 10 });
   });
 
   it('reports reachable: false without throwing when the DB query fails', async () => {
@@ -71,7 +87,25 @@ describe('getSystemHealth', () => {
 
     const health = await getSystemHealth();
 
-    expect(health.database).toEqual({ reachable: false, sizeMB: null, limitMB: 512, percentUsed: null });
+    expect(health.database).toEqual({ reachable: false, sizeMB: null });
+  });
+
+  it('passes through Neon usage as-is, including when not configured', async () => {
+    setDefaults();
+
+    const health = await getSystemHealth();
+
+    expect(health.neon).toEqual(NOT_CONFIGURED_NEON_USAGE);
+  });
+
+  it('passes through real Neon usage data when configured', async () => {
+    setDefaults();
+    const realUsage = { ...NOT_CONFIGURED_NEON_USAGE, configured: true, storageUsedMB: 38.23, storageLimitMB: 512 };
+    getNeonUsageMock.mockResolvedValue(realUsage);
+
+    const health = await getSystemHealth();
+
+    expect(health.neon).toEqual(realUsage);
   });
 
   it('reports Hunter as unconfigured (not zero-used) when HUNTER_API_KEY is unset', async () => {

@@ -158,8 +158,16 @@ daily-send-counter.test.ts, followup-scheduler.cap-integration.test.ts,
 retention-scheduler.cap-integration.test.ts) hit the real Postgres DB at whatever `DATABASE_URL`
 points at - **there is only one database, shared with the app**, so `npm test` writes/deletes real
 rows there (`fileParallelism: false` in `vitest.config.ts` - these run sequentially, not racing each
-other). Deliberate tradeoff, not an oversight: keep this in mind before running tests against a
-`DATABASE_URL` holding data you care about.
+other). Deliberate tradeoff, not an oversight.
+
+**This already cost real data once** (a full set of discovered prospects, wiped by a routine
+`npx vitest run` during the pro-UI-redesign session). All 7 of the files above now call
+`assertDestructiveTestsAllowed()` (`src/common/testing/require-destructive-test-guard.ts`) in a
+`beforeAll`, which throws immediately unless `CONFIRM_DESTRUCTIVE_TESTS=true` is set in the
+environment - plain `npm test` / `npx vitest run` now fails those 7 files loudly (skipping their
+tests, touching nothing) instead of silently wiping data. Only set that env var when you actually
+mean to run them against a database you're fine losing data from - e.g.
+`CONFIRM_DESTRUCTIVE_TESTS=true npx vitest run`.
 
 `npm run typecheck` and `npx eslint .` should both be clean before committing anything.
 

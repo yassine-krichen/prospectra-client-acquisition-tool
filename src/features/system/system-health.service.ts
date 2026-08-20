@@ -3,15 +3,8 @@ import { env } from '@/common/config/env';
 import { isBridgeInCooldown } from '@/features/drafting/bridge-budget';
 import { getEffectiveDailyCap, isDomainVerified } from '@/features/sending/domain-verification-gate';
 import { getTodaysSendCount } from '@/features/sending/daily-send-counter';
+import { getNeonUsage, type NeonUsage } from '@/features/system/neon-usage.service';
 import { prospectStatusSchema } from '@/features/prospects/prospect.types';
-
-// Neon's free tier caps a project at 0.5 GiB of storage. There's no API call
-// this app can make to ask Neon "what's my plan's limit" (that needs a Neon
-// API key, which is a separate, unrelated credential from DATABASE_URL) - so
-// this is a soft, hardcoded assumption, not a fact read from Neon itself.
-// Correct as of the free tier at the time this was written; if the project
-// is ever upgraded to a paid Neon plan, update this constant.
-const NEON_FREE_TIER_LIMIT_MB = 512;
 
 // Mirrors hunter.source.ts's own MONTHLY_FREE_TIER_CAP - duplicated rather
 // than imported because that constant is private to a module whose only
@@ -28,8 +21,6 @@ function currentYearMonth(referenceDate: Date = new Date()): string {
 export interface DatabaseHealth {
   reachable: boolean;
   sizeMB: number | null;
-  limitMB: number;
-  percentUsed: number | null;
 }
 
 export interface QuotaStatus {
@@ -62,6 +53,7 @@ export interface ConfiguredServices {
 
 export interface SystemHealth {
   database: DatabaseHealth;
+  neon: NeonUsage;
   hunter: QuotaStatus;
   sending: SendingHealth;
   bridgeInCooldown: boolean;
@@ -87,6 +79,11 @@ function computeConfiguredPercent(configuredServices: ConfiguredServices): numbe
   return Math.round((configuredCount / values.length) * 100);
 }
 
+// Real query against the actual configured database - not Neon's storage
+// limit (this app has no way to know that without the Neon API; see
+// neon-usage.service.ts, which reports the real limit when NEON_API_KEY/
+// NEON_PROJECT_ID are configured, or "not configured" rather than a
+// guessed cap when they aren't).
 async function getDatabaseHealth(): Promise<DatabaseHealth> {
   try {
     const rows = await prisma.$queryRaw<Array<{ size_bytes: bigint }>>`
@@ -94,20 +91,15 @@ async function getDatabaseHealth(): Promise<DatabaseHealth> {
     `;
     const sizeBytes = rows[0]?.size_bytes;
     if (sizeBytes === undefined) {
-      return { reachable: true, sizeMB: null, limitMB: NEON_FREE_TIER_LIMIT_MB, percentUsed: null };
+      return { reachable: true, sizeMB: null };
     }
     const sizeMB = Number(sizeBytes) / (1024 * 1024);
-    return {
-      reachable: true,
-      sizeMB: Math.round(sizeMB * 100) / 100,
-      limitMB: NEON_FREE_TIER_LIMIT_MB,
-      percentUsed: Math.round((sizeMB / NEON_FREE_TIER_LIMIT_MB) * 1000) / 10,
-    };
+    return { reachable: true, sizeMB: Math.round(sizeMB * 100) / 100 };
   } catch {
     // A failed query here means the database itself is unreachable - worth
     // surfacing as a top-level "reachable: false" rather than throwing and
     // taking the whole health check down with it.
-    return { reachable: false, sizeMB: null, limitMB: NEON_FREE_TIER_LIMIT_MB, percentUsed: null };
+    return { reachable: false, sizeMB: null };
   }
 }
 
@@ -130,19 +122,19 @@ async function getHunterQuota(): Promise<QuotaStatus> {
 }
 
 /**
- * Aggregates every "how much do I have left" signal this app can answer
- * without calling out to a third party just to ask (Neon's own storage
- * quota isn't queryable this way - see `NEON_FREE_TIER_LIMIT_MB`'s doc
- * comment): DB storage headroom, Hunter's monthly free-tier quota, today's
- * send-cap usage, claude-bridge's cooldown state, which optional external
- * services actually have a key configured, and a status-by-status funnel
- * count of every Prospect on file. Backs the dashboard's system-health
- * panel - never throws, since a health check that itself crashes the page
- * defeats its own purpose.
+ * Aggregates every "how much do I have left" signal this app can answer:
+ * DB storage (our own query) and real Neon usage (storage/compute/transfer,
+ * straight from Neon's Management API when configured), Hunter's monthly
+ * free-tier quota, today's send-cap usage, claude-bridge's cooldown state,
+ * which optional external services actually have a key configured, and a
+ * status-by-status funnel count of every Prospect on file. Backs the
+ * dashboard's system-health panel - never throws, since a health check that
+ * itself crashes the page defeats its own purpose.
  */
 export async function getSystemHealth(): Promise<SystemHealth> {
-  const [database, hunter, sentToday, bridgeInCooldown, statusCounts] = await Promise.all([
+  const [database, neon, hunter, sentToday, bridgeInCooldown, statusCounts] = await Promise.all([
     getDatabaseHealth(),
+    getNeonUsage(),
     getHunterQuota(),
     getTodaysSendCount(),
     isBridgeInCooldown('claude-bridge'),
@@ -173,6 +165,7 @@ export async function getSystemHealth(): Promise<SystemHealth> {
 
   return {
     database,
+    neon,
     hunter,
     sending: {
       domainVerified: isDomainVerified(),

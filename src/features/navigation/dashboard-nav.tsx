@@ -30,10 +30,7 @@ export function DashboardNav(): React.JSX.Element {
 
   return (
     <nav className="bg-sidebar text-sidebar-foreground border-sidebar-border flex w-60 shrink-0 flex-col gap-1 border-r p-4">
-      <div className="mb-4 flex items-center gap-2 px-2">
-        <div className="bg-sidebar-primary text-sidebar-primary-foreground flex size-7 items-center justify-center rounded-md text-sm font-bold">
-          B
-        </div>
+      <div className="mb-4 px-2">
         <span className="text-base font-semibold tracking-tight">Backstop</span>
       </div>
 
@@ -61,9 +58,7 @@ export function DashboardNav(): React.JSX.Element {
         );
       })}
 
-      <div className="mt-auto pt-4">
-        <SystemHealthTrigger />
-      </div>
+      <SystemHealthTrigger />
     </nav>
   );
 }

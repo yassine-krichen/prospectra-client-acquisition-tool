@@ -15,9 +15,9 @@ export function deriveOverallStatus(health: SystemHealth | null): OverallStatus 
   if (!health) return 'unknown';
 
   if (!health.database.reachable) return 'critical';
-  if (health.database.percentUsed !== null && health.database.percentUsed >= DB_CRITICAL_PERCENT) return 'critical';
+  if (health.neon.storagePercentUsed !== null && health.neon.storagePercentUsed >= DB_CRITICAL_PERCENT) return 'critical';
 
-  if (health.database.percentUsed !== null && health.database.percentUsed >= DB_WARNING_PERCENT) return 'warning';
+  if (health.neon.storagePercentUsed !== null && health.neon.storagePercentUsed >= DB_WARNING_PERCENT) return 'warning';
   if (health.hunter.configured && health.hunter.remaining !== null && health.hunter.remaining <= QUOTA_WARNING_REMAINING) {
     return 'warning';
   }

@@ -1,4 +1,6 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { assertDestructiveTestsAllowed } from '@/common/testing/require-destructive-test-guard';
 
 // Only `HUNTER_API_KEY` is overridden per test below - `DATABASE_URL` and
 // everything else must stay real, since this suite makes real Prisma calls
@@ -56,6 +58,10 @@ const input = { domain: 'acme.com', companyName: 'Acme Inc', contactName: null a
 const domainSearchSuccessBody = {
   data: { emails: [{ value: 'jane@acme.com', confidence: 90, first_name: 'Jane', last_name: 'Doe' }] },
 };
+
+beforeAll(() => {
+  assertDestructiveTestsAllowed('hunter.source.test.ts');
+});
 
 beforeEach(async () => {
   envMock.HUNTER_API_KEY = 'test-hunter-key';

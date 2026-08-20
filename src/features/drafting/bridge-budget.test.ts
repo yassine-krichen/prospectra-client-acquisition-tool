@@ -1,6 +1,7 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { prisma } from '@/common/db/client';
+import { assertDestructiveTestsAllowed } from '@/common/testing/require-destructive-test-guard';
 
 import { isBridgeInCooldown, recordBridgeRateLimit } from './bridge-budget';
 
@@ -9,6 +10,10 @@ import { isBridgeInCooldown, recordBridgeRateLimit } from './bridge-budget';
 // state read/written across separate serverless invocations, so it's worth
 // exercising against real Postgres rather than a mocked Prisma client.
 const SOURCE = 'claude-bridge';
+
+beforeAll(() => {
+  assertDestructiveTestsAllowed('bridge-budget.test.ts');
+});
 
 beforeEach(async () => {
   await prisma.bridgeCooldown.deleteMany();

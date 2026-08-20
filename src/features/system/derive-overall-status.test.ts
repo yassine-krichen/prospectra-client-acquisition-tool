@@ -5,7 +5,18 @@ import type { SystemHealth } from './system-health.service';
 
 function baseHealth(overrides: Partial<SystemHealth> = {}): SystemHealth {
   return {
-    database: { reachable: true, sizeMB: 10, limitMB: 512, percentUsed: 2 },
+    database: { reachable: true, sizeMB: 10 },
+    neon: {
+      configured: true,
+      storageUsedMB: 10,
+      storageLimitMB: 512,
+      storagePercentUsed: 2,
+      computeSecondsUsed: 100,
+      dataTransferMB: 1,
+      periodStart: '2026-08-01T00:00:00Z',
+      periodEnd: '2026-09-01T00:00:00Z',
+      error: null,
+    },
     hunter: { configured: true, used: 5, cap: 25, remaining: 20 },
     sending: { domainVerified: false, sentToday: 0, dailyCap: 3 },
     bridgeInCooldown: false,
@@ -39,21 +50,37 @@ describe('deriveOverallStatus', () => {
   });
 
   it('returns critical when the database is unreachable', () => {
+    expect(deriveOverallStatus(baseHealth({ database: { reachable: false, sizeMB: null } }))).toBe('critical');
+  });
+
+  it('returns critical when Neon-reported storage is at or above 95%', () => {
     expect(
-      deriveOverallStatus(baseHealth({ database: { reachable: false, sizeMB: null, limitMB: 512, percentUsed: null } }))
+      deriveOverallStatus(baseHealth({ neon: { ...baseHealth().neon, storagePercentUsed: 95.7 } }))
     ).toBe('critical');
   });
 
-  it('returns critical when database storage is at or above 95%', () => {
-    expect(deriveOverallStatus(baseHealth({ database: { reachable: true, sizeMB: 490, limitMB: 512, percentUsed: 95.7 } }))).toBe(
-      'critical'
-    );
+  it('returns warning (not critical) when Neon-reported storage is at 75-94%', () => {
+    expect(deriveOverallStatus(baseHealth({ neon: { ...baseHealth().neon, storagePercentUsed: 78 } }))).toBe('warning');
   });
 
-  it('returns warning (not critical) when database storage is at 75-94%', () => {
-    expect(deriveOverallStatus(baseHealth({ database: { reachable: true, sizeMB: 400, limitMB: 512, percentUsed: 78 } }))).toBe(
-      'warning'
-    );
+  it('does not warn on storage when Neon usage is not configured (percent is null)', () => {
+    expect(
+      deriveOverallStatus(
+        baseHealth({
+          neon: {
+            configured: false,
+            storageUsedMB: null,
+            storageLimitMB: null,
+            storagePercentUsed: null,
+            computeSecondsUsed: null,
+            dataTransferMB: null,
+            periodStart: null,
+            periodEnd: null,
+            error: null,
+          },
+        })
+      )
+    ).toBe('ok');
   });
 
   it('returns warning when Hunter quota has 3 or fewer searches remaining', () => {

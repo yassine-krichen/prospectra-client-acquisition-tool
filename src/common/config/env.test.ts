@@ -244,4 +244,54 @@ describe("env DAILY_SEND_CAP_TEST parsing", () => {
 
     await expect(loadEnvModule()).rejects.toThrow(/Invalid environment variables/)
   })
+
+  it("defaults to 3 when set to an empty string, same as when unset (KEY=\"\" in .env.example)", async () => {
+    setEnv({})
+    process.env.DAILY_SEND_CAP_TEST = ""
+
+    const { env } = await loadEnvModule()
+
+    expect(env.DAILY_SEND_CAP_TEST).toBe(3)
+  })
+})
+
+describe("env HOURLY_RATE_CENTS parsing", () => {
+  afterEach(() => {
+    process.env = { ...originalEnv }
+    vi.resetModules()
+  })
+
+  it("defaults to 5000 when unset", async () => {
+    setEnv({})
+    delete process.env.HOURLY_RATE_CENTS
+
+    const { env } = await loadEnvModule()
+
+    expect(env.HOURLY_RATE_CENTS).toBe(5000)
+  })
+
+  it("defaults to 5000 when set to an empty string, same as when unset (KEY=\"\" in .env.example)", async () => {
+    setEnv({})
+    process.env.HOURLY_RATE_CENTS = ""
+
+    const { env } = await loadEnvModule()
+
+    expect(env.HOURLY_RATE_CENTS).toBe(5000)
+  })
+
+  it("coerces a numeric string to a number", async () => {
+    setEnv({})
+    process.env.HOURLY_RATE_CENTS = "7500"
+
+    const { env } = await loadEnvModule()
+
+    expect(env.HOURLY_RATE_CENTS).toBe(7500)
+  })
+
+  it("throws at load time when HOURLY_RATE_CENTS is zero or negative", async () => {
+    setEnv({})
+    process.env.HOURLY_RATE_CENTS = "0"
+
+    await expect(loadEnvModule()).rejects.toThrow(/Invalid environment variables/)
+  })
 })

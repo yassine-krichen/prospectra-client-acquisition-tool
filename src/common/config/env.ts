@@ -8,6 +8,14 @@ import { z } from 'zod';
 // against a real value.
 const emptyToUndefined = (value: unknown) => (value === '' ? undefined : value);
 const optionalString = (schema: z.ZodString) => z.preprocess(emptyToUndefined, schema.optional());
+// Same "" -> undefined preprocessing applies below to DAILY_SEND_CAP_TEST/
+// HOURLY_RATE_CENTS (via inline `z.preprocess(emptyToUndefined, ...)`, not a
+// shared helper - Zod 4's `.default()` overload resolution doesn't infer
+// cleanly through a generic passthrough): without it, KEY="" coerces to 0
+// (Number('') === 0) before `.default()` ever gets a chance to apply, since
+// `.default()` only fires on undefined, not on a present-but-empty value -
+// failing `.positive()` instead of quietly falling back to the default like
+// an absent key does.
 
 // Fail fast on missing/malformed env vars instead of failing later when a
 // feature that needs them is first exercised.
@@ -76,7 +84,7 @@ const envSchema = z.object({
   // Daily send cap enforced ONLY while DOMAIN_DNS_VERIFIED is false - see
   // getEffectiveDailyCap() in domain-verification-gate.ts. Small default
   // keeps pre-verification volume trivial even if this var is never set.
-  DAILY_SEND_CAP_TEST: z.coerce.number().int().positive().default(3),
+  DAILY_SEND_CAP_TEST: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().default(3)),
   // ISO date string marking when domain warmup began, used by
   // daily-cap.ts's ramp schedule (only ever consulted once the domain is
   // verified). Optional - unset/malformed is treated as "warmup hasn't
@@ -91,11 +99,20 @@ const envSchema = z.object({
   // this app's fail-closed posture.
   RESEND_WEBHOOK_SECRET: optionalString(z.string().min(1)),
   // Hourly rate for work beyond a Job's bundled free-revision scope, and for
-  // estimating manual-quote services (service-catalog.ts's
+  // estimating manual-quote services (pricing/hourly-rate.ts's
   // `getHourlyRateCents`) where the fixed catalog has no price range at all
   // (e.g. the 201+ company-size tier). Has a sane default so the app boots
   // without a business decision on file yet; override once a real rate is set.
-  HOURLY_RATE_CENTS: z.coerce.number().int().positive().default(5000),
+  HOURLY_RATE_CENTS: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().default(5000)),
+  // Neon Management API (console.neon.tech/api/v2) - a separate credential
+  // from DATABASE_URL, used only to show real storage/compute/transfer
+  // usage in the System Health panel. Optional: without it, that panel
+  // shows "NO DATA" for these rather than a guessed number. Both required
+  // together for this feature to activate - NEON_PROJECT_ID isn't
+  // discoverable from DATABASE_URL alone (find it at console.neon.tech,
+  // Project Settings > General, or via GET /api/v2/projects).
+  NEON_API_KEY: optionalString(z.string().min(1)),
+  NEON_PROJECT_ID: optionalString(z.string().min(1)),
 });
 
 export type Env = z.infer<typeof envSchema>;

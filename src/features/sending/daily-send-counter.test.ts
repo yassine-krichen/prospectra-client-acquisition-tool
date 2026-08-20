@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { prisma } from '@/common/db/client';
+import { assertDestructiveTestsAllowed } from '@/common/testing/require-destructive-test-guard';
 import { getTodaysSendCount } from '@/features/sending/daily-send-counter';
 
 // Integration test against the real Postgres DB (DATABASE_URL - the same
@@ -11,6 +12,10 @@ import { getTodaysSendCount } from '@/features/sending/daily-send-counter';
 // the daily-cap enforcement's own read path, so the UTC day boundary math is
 // exercised for real rather than mocked - an off-by-one here would let a
 // bulk-approve batch quietly exceed the daily cap.
+beforeAll(() => {
+  assertDestructiveTestsAllowed('daily-send-counter.test.ts');
+});
+
 beforeEach(async () => {
   await prisma.job.deleteMany();
   await prisma.client.deleteMany();

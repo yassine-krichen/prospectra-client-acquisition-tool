@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { prisma } from '@/common/db/client';
+import { assertDestructiveTestsAllowed } from '@/common/testing/require-destructive-test-guard';
 import { getEffectiveDailyCap } from '@/features/sending/domain-verification-gate';
 import { runRetentionScheduler } from '@/features/retention/retention-scheduler';
 
@@ -22,6 +23,10 @@ import { runRetentionScheduler } from '@/features/retention/retention-scheduler'
 // a successful retention send is itself counted by a later run (that would
 // need a real `RESEND_API_KEY` for `sendEmail` to succeed rather than roll
 // back the claim) - same limitation the followups cap-integration test has.
+beforeAll(() => {
+  assertDestructiveTestsAllowed('retention-scheduler.cap-integration.test.ts');
+});
+
 beforeEach(async () => {
   await prisma.prospect.deleteMany();
   await prisma.job.deleteMany();
