@@ -14,11 +14,12 @@ import type {
   Signal,
 } from '@/features/prospects/prospect.types';
 
-// Integration tests against the real Postgres test DB (docker-compose's
-// `postgres` service on port 5433, `biz_scraper_test` database — see
-// vitest.setup.ts). The Prospect table is wiped before every test rather than
-// tagged/rolled back: this DB has no other purpose, and deleteMany is simpler
-// than threading a transaction through `listProspects`'s own `prisma` import.
+// Integration tests against the real Postgres DB (DATABASE_URL — the same
+// database the app uses, see vitest.setup.ts). The Prospect table is wiped
+// before every test rather than tagged/rolled back: deleteMany is simpler
+// than threading a transaction through `listProspects`'s own `prisma`
+// import. Deliberate tradeoff: don't run `npm test` against a DATABASE_URL
+// holding data you care about.
 beforeEach(async () => {
   await prisma.prospect.deleteMany();
 });

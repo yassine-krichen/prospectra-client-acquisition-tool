@@ -4,7 +4,7 @@ import { prisma } from '@/common/db/client';
 
 import { isBridgeInCooldown, recordBridgeRateLimit } from './bridge-budget';
 
-// Integration test against the real Postgres test DB (same pattern as
+// Integration test against the real Postgres DB (same pattern as
 // hunter.source.test.ts's ApiUsageCounter tests) — this is genuinely shared
 // state read/written across separate serverless invocations, so it's worth
 // exercising against real Postgres rather than a mocked Prisma client.

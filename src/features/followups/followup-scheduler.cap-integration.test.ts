@@ -6,9 +6,8 @@ import { prisma } from '@/common/db/client';
 import { getEffectiveDailyCap } from '@/features/sending/domain-verification-gate';
 import { FOLLOWUP_INTERVAL_DAYS, runFollowupScheduler } from '@/features/followups/followup-scheduler';
 
-// Integration test against the real Postgres test DB (docker-compose's
-// `postgres` service on port 5433, `biz_scraper_test` database — see
-// vitest.setup.ts). Unlike followup-scheduler.test.ts (which mocks
+// Integration test against the real Postgres DB (DATABASE_URL — the same
+// database the app uses, see vitest.setup.ts). Unlike followup-scheduler.test.ts (which mocks
 // `getTodaysSendCount` directly for fast, isolated orchestration coverage),
 // this exercises the REAL `daily-send-counter.ts` wired through the
 // scheduler's cap check end to end — proving Finding 2's fix (the counter

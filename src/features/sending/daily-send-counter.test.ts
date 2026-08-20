@@ -5,9 +5,9 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { prisma } from '@/common/db/client';
 import { getTodaysSendCount } from '@/features/sending/daily-send-counter';
 
-// Integration test against the real Postgres test DB (docker-compose's
-// `postgres` service on port 5433, `biz_scraper_test` database — see
-// vitest.setup.ts), same pattern as prospects.repository.test.ts. This is
+// Integration test against the real Postgres DB (DATABASE_URL — the same
+// database the app uses, see vitest.setup.ts), same pattern as
+// prospects.repository.test.ts. This is
 // the daily-cap enforcement's own read path, so the UTC day boundary math is
 // exercised for real rather than mocked — an off-by-one here would let a
 // bulk-approve batch quietly exceed the daily cap.

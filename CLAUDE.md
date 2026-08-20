@@ -27,12 +27,14 @@ new UI should stay consistent with that minimal set rather than pulling in more)
 
 ## How to run it
 
-`./setup.ps1` from repo root (PowerShell) does everything: checks Node/npm/Docker, creates `.env`
-from `.env.example` with generated secrets if missing, starts Postgres via `docker compose up -d`,
-`npm install`, `npx prisma generate`, migrates both the dev DB (`biz_scraper`) AND the test DB
-(`biz_scraper_test` — vitest.setup.ts points integration tests at a separate database that needs
-its own migration pass, easy to forget), runs the full test suite. **Docker Desktop must already be
-running** before this script — it doesn't start Docker itself, only `docker compose up -d`.
+The database moved off local Docker Postgres onto Neon (hosted Postgres) — `docker-compose.yml` is
+deleted, and there's no local DB to start. `./setup.ps1` from repo root (PowerShell) does the rest:
+checks Node/npm, creates `.env` from `.env.example` with generated secrets if missing, `npm install`,
+`npx prisma generate`, migrates the DB (`DATABASE_URL`), runs the full test suite. **You must create
+the Neon database yourself first** (free project at https://neon.tech) and paste its connection
+string into `.env` before running the script — it has no way to provision it for you. There's a
+single database, shared by the app and the test suite — see the Testing section below on what that
+means for `npm test`.
 
 Then `npm run dev`, open `http://localhost:3000`, log in with `DASHBOARD_PASSWORD` from `.env`.
 
@@ -148,15 +150,22 @@ directly rather than trusting this number.
 `npm test -- --run` (Vitest). 747 tests passing as of commit `c792420`. Convention: route handlers
 and services get colocated `*.test.ts` files; React components do NOT get test files in this
 codebase (verified — no `.tsx` test files exist anywhere) — don't add them unless the user asks or
-the convention changes. Integration tests hit the real `biz_scraper_test` Postgres DB
-(`fileParallelism: false` in `vitest.config.ts` — these run sequentially, not racing each other).
+the convention changes. Integration tests (discovery.service.dnc-preservation.test.ts,
+bridge-budget.test.ts, hunter.source.test.ts, prospects.repository.test.ts,
+daily-send-counter.test.ts, followup-scheduler.cap-integration.test.ts,
+retention-scheduler.cap-integration.test.ts) hit the real Postgres DB at whatever `DATABASE_URL`
+points at — **there is only one database, shared with the app**, so `npm test` writes/deletes real
+rows there (`fileParallelism: false` in `vitest.config.ts` — these run sequentially, not racing each
+other). Deliberate tradeoff, not an oversight: keep this in mind before running tests against a
+`DATABASE_URL` holding data you care about.
 
 `npm run typecheck` and `npx eslint .` should both be clean before committing anything.
 
 ## Working-style notes for this repo specifically
 
-- User runs Docker Desktop manually — it's not always up, check before assuming Postgres is
-  reachable.
+- Database is Neon (hosted Postgres), not local Docker — Docker is no longer part of this project at
+  all (`docker-compose.yml` removed, `setup.ps1` no longer touches it). One `DATABASE_URL` in `.env`
+  (never committed), shared by the app and the test suite — see Testing above.
 - User is caveman-mode-terse in chat but expects normal prose in code/commits/PRs (per their global
   CLAUDE.md).
 - Delegation policy (user's global CLAUDE.md): planner before non-trivial features, plan approval

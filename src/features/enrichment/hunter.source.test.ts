@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 
 // Only `HUNTER_API_KEY` is overridden per test below — `DATABASE_URL` and
 // everything else must stay real, since this suite makes real Prisma calls
-// against the Postgres test DB (via the un-mocked `prisma` import below,
+// against the real Postgres DB (via the un-mocked `prisma` import below,
 // which itself reads `env.DATABASE_URL` to connect).
 const envMock = vi.hoisted(() => ({ HUNTER_API_KEY: 'test-hunter-key' as string | undefined }));
 vi.mock('@/common/config/env', async (importOriginal) => {
@@ -21,7 +21,7 @@ import { prisma } from '@/common/db/client';
 
 import { runHunterEnrichment } from './hunter.source';
 
-// Integration test against the real Postgres test DB (see
+// Integration test against the real Postgres DB (see
 // prospects.repository.test.ts's own doc comment) — only the external
 // Hunter.io API call itself is mocked. This is the one piece of Branch C
 // worth a real-DB test: the quota reservation race-safety comes from

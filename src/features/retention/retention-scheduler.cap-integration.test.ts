@@ -6,9 +6,8 @@ import { prisma } from '@/common/db/client';
 import { getEffectiveDailyCap } from '@/features/sending/domain-verification-gate';
 import { runRetentionScheduler } from '@/features/retention/retention-scheduler';
 
-// Integration test against the real Postgres test DB (docker-compose's
-// `postgres` service on port 5433, `biz_scraper_test` database — see
-// vitest.setup.ts), same pattern/style as
+// Integration test against the real Postgres DB (DATABASE_URL — the same
+// database the app uses, see vitest.setup.ts), same pattern/style as
 // followup-scheduler.cap-integration.test.ts. Unlike retention-scheduler.test.ts
 // (which mocks `getTodaysSendCount` directly for fast, isolated orchestration
 // coverage), this exercises the REAL `daily-send-counter.ts` wired through

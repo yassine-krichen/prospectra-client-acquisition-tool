@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 // `vi.resetModules()` + a dynamic import, rather than mocking the module.
 
 const BASE_ENV = {
-  DATABASE_URL: 'postgresql://postgres:postgres@localhost:5433/biz_scraper_test?schema=public',
+  DATABASE_URL: 'postgresql://user:pass@example.neon.tech/biz_scraper?sslmode=require',
   DASHBOARD_PASSWORD: 'test-password',
   SESSION_SECRET: 'test-session-secret-32-characters',
   CRON_SECRET: 'test-cron-secret-32-characters-long',

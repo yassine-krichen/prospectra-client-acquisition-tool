@@ -162,7 +162,7 @@ sequenceDiagram
 | Next.js 16 | App Router: dashboard, API routes, cron endpoints | Route-based middleware is now `proxy.ts`/`proxy()`, not `middleware.ts` — a Next 16 convention change, not a project quirk |
 | TypeScript | Language, `strict: true` | — |
 | Prisma 7 + `@prisma/adapter-pg` | ORM, migrations | Prisma 7 requires a driver adapter instead of a bare datasource URL |
-| PostgreSQL | Primary datastore | — |
+| PostgreSQL (Neon) | Primary datastore | Hosted, no local DB to run or maintain |
 | Playwright | yellowpages.com scraping, website signal detection | Needs real DOM rendering; the sources it replaced (a standalone BeautifulSoup script) couldn't handle JS-rendered listings |
 | Zod 4 | Env validation, request/webhook schema parsing | Fails the app at boot on a malformed env var instead of at first use |
 | Radix UI / shadcn, TanStack Table | Dashboard components, prospects/queue tables | — |
@@ -177,7 +177,7 @@ sequenceDiagram
 
 - Node.js ≥ 20
 - npm
-- Docker (for local Postgres via `docker-compose.yml`) — or your own Postgres connection string
+- A [Neon](https://neon.tech) account (free tier is fine) — create a project and grab its connection string
 
 ### One command
 
@@ -185,7 +185,7 @@ sequenceDiagram
 ./setup.ps1
 ```
 
-This creates `.env` with fresh secrets, starts Postgres, installs dependencies, generates the Prisma client, runs migrations, and runs the test suite. See what it does below if you'd rather run the steps yourself.
+This creates `.env` with fresh secrets (you still need to paste in your Neon connection string), installs dependencies, generates the Prisma client, runs migrations against your Neon database, and runs the test suite. See what it does below if you'd rather run the steps yourself.
 
 ### Manual steps
 
@@ -194,8 +194,8 @@ git clone <this-repo-url>
 cd biz-scraper
 npm install
 cp .env.example .env
-# fill in DASHBOARD_PASSWORD, SESSION_SECRET, CRON_SECRET at minimum — see Configuration below
-docker compose up -d
+# fill in DATABASE_URL (your Neon connection string), plus
+# DASHBOARD_PASSWORD, SESSION_SECRET, CRON_SECRET at minimum — see Configuration below
 npx prisma generate
 npx prisma migrate deploy
 npm run dev
@@ -218,7 +218,7 @@ Only four variables are required to boot the app. Everything else is a discovery
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `DATABASE_URL` | Yes | — | Postgres connection string |
+| `DATABASE_URL` | Yes | — | Postgres connection string (Neon) — also used by the test suite, so a handful of test files write/delete real rows here |
 | `DASHBOARD_PASSWORD` | Yes | — | Shared password gating the dashboard (Phase 0 placeholder auth) |
 | `SESSION_SECRET` | Yes | — | ≥32 chars; signs the dashboard session cookie |
 | `CRON_SECRET` | Yes | — | ≥32 chars; required in the `x-cron-secret` header on every cron route |

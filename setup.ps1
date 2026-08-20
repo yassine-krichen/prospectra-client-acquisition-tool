@@ -1,8 +1,9 @@
-<#
+﻿<#
 .SYNOPSIS
     Sets up biz-scraper for local development: verifies prerequisites, creates
-    .env with generated secrets, starts Postgres, installs dependencies,
-    generates the Prisma client, runs migrations, and runs the test suite.
+    .env with generated secrets, installs dependencies, generates the Prisma
+    client, runs migrations against your Neon database(s), and runs the test
+    suite.
 
 .EXAMPLE
     ./setup.ps1
@@ -40,13 +41,6 @@ if (-not (Test-CommandExists npm)) {
 }
 Write-Host "  npm OK"
 
-$hasDocker = Test-CommandExists docker
-if (-not $hasDocker) {
-    Write-Host "  Docker not found — DATABASE_URL in .env must point at a Postgres instance you provide yourself." -ForegroundColor Yellow
-} else {
-    Write-Host "  Docker OK"
-}
-
 Write-Host "==> Configuring environment" -ForegroundColor Cyan
 
 if (-not (Test-Path .env)) {
@@ -66,30 +60,12 @@ if (-not (Test-Path .env)) {
     Write-Host "  Generated SESSION_SECRET, CRON_SECRET, and DASHBOARD_PASSWORD"
     Write-Host ""
     Write-Host "  Dashboard password: $dashboardPassword" -ForegroundColor Green
-    Write-Host "  (also saved in .env — this is printed once)" -ForegroundColor Green
+    Write-Host "  (also saved in .env - this is printed once)" -ForegroundColor Green
     Write-Host ""
+    Write-Host "  DATABASE_URL still needs your Neon connection string" -ForegroundColor Yellow
+    Write-Host "  (create a free project at https://neon.tech) before continuing." -ForegroundColor Yellow
 } else {
-    Write-Host "  .env already exists — leaving it untouched"
-}
-
-if ($hasDocker) {
-    Write-Host "==> Starting Postgres (docker compose)" -ForegroundColor Cyan
-    docker compose up -d
-
-    Write-Host "  Waiting for Postgres to accept connections..."
-    $ready = $false
-    for ($i = 0; $i -lt 30; $i++) {
-        docker compose exec -T postgres pg_isready -U postgres *>$null
-        if ($LASTEXITCODE -eq 0) {
-            $ready = $true
-            break
-        }
-        Start-Sleep -Seconds 1
-    }
-    if (-not $ready) {
-        Write-Error "Postgres did not become ready in time. Check 'docker compose logs postgres'."
-    }
-    Write-Host "  Postgres is ready"
+    Write-Host "  .env already exists - leaving it untouched"
 }
 
 Write-Host "==> Installing dependencies" -ForegroundColor Cyan
@@ -104,23 +80,10 @@ Write-Host "==> Running migrations" -ForegroundColor Cyan
 npx prisma migrate deploy
 if ($LASTEXITCODE -ne 0) { Write-Error "prisma migrate deploy failed. Check DATABASE_URL in .env." }
 
-if ($hasDocker) {
-    Write-Host "==> Migrating test database" -ForegroundColor Cyan
-    # vitest.setup.ts points integration tests at a separate biz_scraper_test
-    # database (falls back to it whenever DATABASE_URL isn't already set in
-    # the process env) so tests never touch dev data. It needs its own copy
-    # of the schema, migrated independently of the dev DATABASE_URL above.
-    docker compose exec -T postgres psql -U postgres -c "CREATE DATABASE biz_scraper_test" *>$null
-    $env:DATABASE_URL = "postgresql://postgres:postgres@localhost:5433/biz_scraper_test?schema=public"
-    npx prisma migrate deploy
-    if ($LASTEXITCODE -ne 0) { Write-Error "prisma migrate deploy failed against biz_scraper_test." }
-    Remove-Item Env:\DATABASE_URL
-}
-
 Write-Host "==> Running test suite" -ForegroundColor Cyan
 npm test
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "Tests failed — setup finished but something's off. Check output above." -ForegroundColor Yellow
+    Write-Host "Tests failed - setup finished but something's off. Check output above." -ForegroundColor Yellow
 } else {
     Write-Host "  All tests passing"
 }
@@ -129,4 +92,4 @@ Write-Host ""
 Write-Host "Setup complete." -ForegroundColor Green
 Write-Host "  Run 'npm run dev' and open http://localhost:3000"
 Write-Host "  Only DATABASE_URL / DASHBOARD_PASSWORD / SESSION_SECRET / CRON_SECRET are required."
-Write-Host "  Everything else in .env (Gemini, Groq, Resend, Hunter, ...) is optional — add keys as you provision each service. See README.md > Configuration."
+Write-Host "  Everything else in .env (Gemini, Groq, Resend, Hunter, ...) is optional - add keys as you provision each service. See README.md > Configuration."

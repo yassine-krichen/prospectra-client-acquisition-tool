@@ -6,8 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 // import, rather than mocking the module itself.
 
 const VALID_ENV = {
-  DATABASE_URL:
-    "postgresql://postgres:postgres@localhost:5433/biz_scraper_test?schema=public",
+  DATABASE_URL: "postgresql://user:pass@example.neon.tech/biz_scraper?sslmode=require",
   DASHBOARD_PASSWORD: "a-real-password",
   SESSION_SECRET: "a-secret-that-is-at-least-32-characters-long",
   CRON_SECRET: "a-cron-secret-that-is-at-least-32-characters-long",
