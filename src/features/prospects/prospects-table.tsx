@@ -2,13 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import {
-  type ColumnDef,
-  type SortingState,
-  flexRender,
-  getCoreRowModel,
-  useReactTable,
-} from '@tanstack/react-table';
+import { type ColumnDef, type SortingState, type VisibilityState, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { z } from 'zod';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Compass01Icon } from '@hugeicons/core-free-icons';
@@ -17,9 +11,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge, type badgeVariants } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { DataTable } from '@/components/data-table/data-table';
+import { DataTableColumnHeader } from '@/components/data-table/data-table-column-header';
+import { DataTableViewOptions } from '@/components/data-table/data-table-view-options';
+import { DataTableSkeleton } from '@/components/data-table/data-table-skeleton';
+import { DataTableCursorPagination } from '@/components/data-table/data-table-pagination';
 import { toastError, toastInfo, toastSourceResults, toastSuccess } from '@/lib/toast';
 import {
   industrySchema,
@@ -100,8 +97,16 @@ function isSortField(id: string): id is SortField {
   return (SORT_FIELDS as readonly string[]).includes(id);
 }
 
-function buildQueryParams(filters: FiltersState, sorting: SortingState, cursor: string | undefined): URLSearchParams {
+const DEFAULT_LIMIT = 25;
+
+function buildQueryParams(
+  filters: FiltersState,
+  sorting: SortingState,
+  cursor: string | undefined,
+  limit: number
+): URLSearchParams {
   const params = new URLSearchParams();
+  params.set('limit', String(limit));
 
   if (filters.source !== ALL) params.set('source', filters.source);
   if (filters.signalType !== ALL) params.set('signalType', filters.signalType);
@@ -173,6 +178,8 @@ const SIGNAL_BADGE_VARIANT: Record<SignalStrength, BadgeVariant> = {
 export function ProspectsTable(): React.JSX.Element {
   const [filters, setFilters] = useState<FiltersState>(DEFAULT_FILTERS);
   const [sorting, setSorting] = useState<SortingState>(DEFAULT_SORTING);
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+  const [limit, setLimit] = useState(DEFAULT_LIMIT);
   // History of cursors used to reach the current page. Empty = first page.
   const [cursorStack, setCursorStack] = useState<string[]>([]);
   const [prospects, setProspects] = useState<ProspectListItem[]>([]);
@@ -197,7 +204,7 @@ export function ProspectsTable(): React.JSX.Element {
     setIsLoading(true);
     setError(null);
 
-    fetchProspects(buildQueryParams(filters, sorting, currentCursor))
+    fetchProspects(buildQueryParams(filters, sorting, currentCursor, limit))
       .then((result) => {
         if (cancelled) return;
         setProspects(result.prospects);
@@ -213,7 +220,7 @@ export function ProspectsTable(): React.JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [filters, sorting, currentCursor, refreshIndex]);
+  }, [filters, sorting, currentCursor, limit, refreshIndex]);
 
   const runAction = useCallback(async (prospectId: string, action: () => Promise<void>): Promise<void> => {
     setPendingIds((prev) => new Set(prev).add(prospectId));
@@ -339,11 +346,17 @@ export function ProspectsTable(): React.JSX.Element {
     setCursorStack((prev) => prev.slice(0, -1));
   }
 
+  function handlePageSizeChange(nextLimit: number): void {
+    setLimit(nextLimit);
+    setCursorStack([]);
+  }
+
   const columns = useMemo<ColumnDef<ProspectListItem>[]>(
     () => [
       {
         id: 'seen',
         header: 'Seen',
+        enableHiding: false,
         cell: ({ row }) => (
           <Checkbox
             checked={row.original.seen}
@@ -352,17 +365,31 @@ export function ProspectsTable(): React.JSX.Element {
           />
         ),
       },
-      { accessorKey: 'companyName', header: 'Company' },
+      {
+        accessorKey: 'companyName',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Company" />,
+        meta: { label: 'Company' },
+      },
       {
         accessorKey: 'domain',
-        header: 'Domain',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Domain" />,
+        meta: { label: 'Domain' },
         cell: ({ row }) => row.original.domain ?? 'None',
       },
-      { accessorKey: 'industry', header: 'Industry' },
-      { accessorKey: 'source', header: 'Source' },
+      {
+        accessorKey: 'industry',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Industry" />,
+        meta: { label: 'Industry' },
+      },
+      {
+        accessorKey: 'source',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Source" />,
+        meta: { label: 'Source' },
+      },
       {
         id: 'signal',
-        header: 'Signal',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Signal" />,
+        meta: { label: 'Signal' },
         cell: ({ row }) => (
           <div className="flex items-center gap-1.5">
             <Badge variant={SIGNAL_BADGE_VARIANT[row.original.signal.strength]}>{row.original.signal.strength}</Badge>
@@ -370,32 +397,41 @@ export function ProspectsTable(): React.JSX.Element {
           </div>
         ),
       },
-      { accessorKey: 'projectFit', header: 'Project fit' },
+      {
+        accessorKey: 'projectFit',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Project fit" />,
+        meta: { label: 'Project fit' },
+      },
       {
         accessorKey: 'priorityScore',
-        header: 'Priority',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Priority" />,
+        meta: { label: 'Priority' },
         enableSorting: true,
       },
       {
         accessorKey: 'status',
-        header: 'Status',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Status" />,
+        meta: { label: 'Status' },
         cell: ({ row }) => <Badge variant={STATUS_BADGE_VARIANT[row.original.status]}>{row.original.status}</Badge>,
       },
       {
         accessorKey: 'discoveredAt',
-        header: 'Discovered',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Discovered" />,
+        meta: { label: 'Discovered' },
         enableSorting: true,
         cell: ({ row }) => formatDate(row.original.discoveredAt),
       },
       {
         accessorKey: 'sentAt',
-        header: 'Sent',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Sent" />,
+        meta: { label: 'Sent' },
         enableSorting: true,
         cell: ({ row }) => formatDate(row.original.sentAt),
       },
       {
         id: 'emailVerified',
-        header: 'Email verified',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Email verified" />,
+        meta: { label: 'Email verified' },
         cell: ({ row }) => (
           <Badge variant={row.original.emailVerified ? 'default' : 'outline'}>
             {row.original.emailVerified ? 'Yes' : 'No'}
@@ -405,6 +441,7 @@ export function ProspectsTable(): React.JSX.Element {
       {
         id: 'actions',
         header: 'Actions',
+        enableHiding: false,
         cell: ({ row }) => {
           const prospectId = row.original.id;
           const isPending = pendingIds.has(prospectId);
@@ -442,8 +479,9 @@ export function ProspectsTable(): React.JSX.Element {
   const table = useReactTable({
     data: prospects,
     columns,
-    state: { sorting },
+    state: { sorting, columnVisibility },
     onSortingChange: handleSortingChange,
+    onColumnVisibilityChange: setColumnVisibility,
     getCoreRowModel: getCoreRowModel(),
     manualSorting: true,
     manualPagination: true,
@@ -525,90 +563,45 @@ export function ProspectsTable(): React.JSX.Element {
         <Button variant="outline" onClick={resetFilters}>
           Clear filters
         </Button>
+        <DataTableViewOptions table={table} />
       </div>
 
-      {error ? (
-        <p className="text-destructive text-sm">Couldn&apos;t load prospects: {error}</p>
-      ) : null}
+      {error ? <p className="text-destructive text-sm">Couldn&apos;t load prospects: {error}</p> : null}
 
-      <Table>
-        <TableHeader>
-          {table.getHeaderGroups().map((headerGroup) => (
-            <TableRow key={headerGroup.id}>
-              {headerGroup.headers.map((header) => {
-                const canSort = header.column.getCanSort();
-                const sortDirection = header.column.getIsSorted();
-
-                return (
-                  <TableHead key={header.id}>
-                    {header.isPlaceholder ? null : canSort ? (
-                      <button
-                        type="button"
-                        className="flex items-center gap-1"
-                        onClick={header.column.getToggleSortingHandler()}
-                      >
-                        {flexRender(header.column.columnDef.header, header.getContext())}
-                        {sortDirection === 'asc' ? '↑' : sortDirection === 'desc' ? '↓' : null}
-                      </button>
-                    ) : (
-                      flexRender(header.column.columnDef.header, header.getContext())
-                    )}
-                  </TableHead>
-                );
-              })}
-            </TableRow>
-          ))}
-        </TableHeader>
-        <TableBody>
-          {isLoading ? (
-            Array.from({ length: 6 }).map((_, index) => (
-              <TableRow key={`skeleton-${index}`}>
-                {columns.map((column, columnIndex) => (
-                  <TableCell key={column.id ?? columnIndex}>
-                    <Skeleton className="h-4 w-full" />
-                  </TableCell>
-                ))}
-              </TableRow>
-            ))
-          ) : prospects.length === 0 ? (
-            <TableRow>
-              <TableCell colSpan={columns.length}>
-                <div className="flex flex-col items-center gap-3 py-10 text-center">
-                  <HugeiconsIcon icon={Compass01Icon} strokeWidth={1.5} className="text-muted-foreground size-8" />
-                  <div className="flex flex-col gap-1">
-                    <p className="text-sm font-medium">No prospects found</p>
-                    <p className="text-muted-foreground text-sm">
-                      {isDefaultFilters(filters)
-                        ? 'Nothing discovered yet.'
-                        : 'No prospects match the current filters - try clearing them.'}
-                    </p>
-                  </div>
-                  <Button asChild size="sm" variant="outline">
-                    <Link href="/discovery">Run Discovery</Link>
-                  </Button>
-                </div>
-              </TableCell>
-            </TableRow>
-          ) : (
-            table.getRowModel().rows.map((row) => (
-              <TableRow key={row.id} className={row.original.seen ? 'opacity-50' : undefined}>
-                {row.getVisibleCells().map((cell) => (
-                  <TableCell key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>
-                ))}
-              </TableRow>
-            ))
-          )}
-        </TableBody>
-      </Table>
-
-      <div className="flex items-center justify-end gap-2">
-        <Button variant="outline" disabled={cursorStack.length === 0 || isLoading} onClick={goToPreviousPage}>
-          Previous
-        </Button>
-        <Button variant="outline" disabled={!nextCursor || isLoading} onClick={goToNextPage}>
-          Next
-        </Button>
-      </div>
+      {isLoading ? (
+        <DataTableSkeleton columnCount={columns.length} rowCount={6} withViewOptions={false} />
+      ) : (
+        <DataTable
+          table={table}
+          getRowClassName={(row) => (row.original.seen ? 'opacity-50' : undefined)}
+          pagination={
+            <DataTableCursorPagination
+              pageNumber={cursorStack.length + 1}
+              canGoPrevious={cursorStack.length > 0}
+              canGoNext={Boolean(nextCursor)}
+              onPrevious={goToPreviousPage}
+              onNext={goToNextPage}
+              pageSize={limit}
+              onPageSizeChange={handlePageSizeChange}
+              rowCount={prospects.length}
+            />
+          }
+          emptyState={
+            <div className="flex flex-col items-center gap-3 py-10 text-center">
+              <HugeiconsIcon icon={Compass01Icon} strokeWidth={1.5} className="text-muted-foreground size-8" />
+              <div className="flex flex-col gap-1">
+                <p className="text-sm font-medium">No prospects found</p>
+                <p className="text-muted-foreground text-sm">
+                  {isDefaultFilters(filters) ? 'Nothing discovered yet.' : 'No prospects match the current filters - try clearing them.'}
+                </p>
+              </div>
+              <Button asChild size="sm" variant="outline">
+                <Link href="/discovery">Run Discovery</Link>
+              </Button>
+            </div>
+          }
+        />
+      )}
     </div>
   );
 }

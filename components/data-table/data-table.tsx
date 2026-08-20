@@ -1,4 +1,4 @@
-import { flexRender, type Table as TanstackTable } from '@tanstack/react-table';
+import { flexRender, type Row, type Table as TanstackTable } from '@tanstack/react-table';
 import type * as React from 'react';
 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -7,18 +7,25 @@ import { cn } from '@/lib/utils';
 
 // Ported from tablecn (https://github.com/sadmann7/tablecn) and adapted for
 // this app's cursor-based server pagination - see data-table-pagination.tsx's
-// header comment for what changed and why.
+// header comment for what changed and why. `getRowClassName` is also an
+// addition tablecn doesn't have: this app dims rows in a data-driven way
+// (e.g. prospects-table.tsx already-seen rows) which tablecn's row-selection-
+// only `data-state` styling has no hook for.
 
 interface DataTableProps<TData> extends React.ComponentProps<'div'> {
   table: TanstackTable<TData>;
   pagination?: React.ReactNode;
   actionBar?: React.ReactNode;
+  emptyState?: React.ReactNode;
+  getRowClassName?: (row: Row<TData>) => string | undefined;
 }
 
 export function DataTable<TData>({
   table,
   pagination,
   actionBar,
+  emptyState,
+  getRowClassName,
   children,
   className,
   ...props
@@ -42,7 +49,7 @@ export function DataTable<TData>({
           <TableBody>
             {table.getRowModel().rows?.length ? (
               table.getRowModel().rows.map((row) => (
-                <TableRow key={row.id} data-state={row.getIsSelected() && 'selected'}>
+                <TableRow key={row.id} data-state={row.getIsSelected() && 'selected'} className={getRowClassName?.(row)}>
                   {row.getVisibleCells().map((cell) => (
                     <TableCell key={cell.id} style={getColumnPinningStyle({ column: cell.column })}>
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
@@ -53,7 +60,7 @@ export function DataTable<TData>({
             ) : (
               <TableRow>
                 <TableCell colSpan={table.getAllColumns().length} className="h-24 text-center">
-                  No results.
+                  {emptyState ?? 'No results.'}
                 </TableCell>
               </TableRow>
             )}
