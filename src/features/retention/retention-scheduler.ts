@@ -9,7 +9,7 @@ import type { RetentionTouchNumber, RetentionVariant } from '@/features/retentio
 // Phase 8 retention scheduler. Mirrors followup-scheduler.ts file-for-file:
 // the same shared daily-cap gate (`getEffectiveDailyCap()`/
 // `getTodaysSendCount()`, re-checked fresh immediately before every
-// individual send, never cached across the batch — a retention send is
+// individual send, never cached across the batch - a retention send is
 // still a send, protecting the same sending-domain reputation as cold
 // outreach/follow-ups), and the same atomic-claim-via-`updateMany` race
 // safety, substituting `Job`/`Client` for `Prospect`.
@@ -23,11 +23,11 @@ export const RETENTION_BATCH_SIZE = 20;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 // Day offsets from delivery for a one-off Job's first three touches (review,
-// referral, check-in+upsell) — 3, 14, 30. Expressed here as the GAP since
+// referral, check-in+upsell) - 3, 14, 30. Expressed here as the GAP since
 // the previous touch (or delivery, for touch 1), since staleness is always
 // measured from `lastRetentionTouchAt ?? deliveredAt`, not a cumulative
 // offset from delivery. Touch 4 onward is the indefinite quarterly cadence
-// (`QUARTERLY_REPEAT_DAYS`) — its first occurrence (day 90) has a 60-day gap
+// (`QUARTERLY_REPEAT_DAYS`) - its first occurrence (day 90) has a 60-day gap
 // from the day-30 touch; every occurrence after that repeats every 90 days.
 const ONE_OFF_TOUCH_GAP_DAYS: Record<1 | 2 | 3, number> = {
   1: 3,
@@ -38,7 +38,7 @@ const ONE_OFF_TOUCH_GAP_DAYS: Record<1 | 2 | 3, number> = {
 // The first quarterly touch on a one-off Job lands on day 90 (60 days after
 // the day-30 touch); every quarterly touch on a recurring (`monthly`) Job
 // (including its very first) is also spaced 90 days apart, starting 90 days
-// from `soldAt` — a retainer never "delivers" in the terminal sense the
+// from `soldAt` - a retainer never "delivers" in the terminal sense the
 // first three one-off touches assume, so it only ever gets this one cadence.
 const FIRST_QUARTERLY_GAP_DAYS = 60; // day 30 -> day 90, one-off Jobs only
 export const QUARTERLY_REPEAT_DAYS = 90;
@@ -56,7 +56,7 @@ function gapDaysUntilNextTouch(cadence: string, retentionTouchCount: number): nu
 }
 
 /** Which named touch kind (see retention-templates.ts) a Job's NEXT touch
- * is. A recurring Job's every touch is `4` (quarterly) — it never gets the
+ * is. A recurring Job's every touch is `4` (quarterly) - it never gets the
  * one-off-only review/referral/check-in-30 touches. */
 function nextTouchNumber(cadence: string, retentionTouchCount: number): RetentionTouchNumber {
   if (cadence === JobCadence.recurring) return 4;
@@ -95,7 +95,7 @@ function isStale(referenceDate: Date, now: Date, gapDays: number): boolean {
  * natural starting point: `deliveredAt` for a one-off Job, `soldAt` for a
  * recurring one. `null` means this candidate isn't actually in a touchable
  * state yet (e.g. a one-off `delivered` Job somehow missing `deliveredAt`)
- * — the caller skips it rather than guessing a reference point. */
+ * - the caller skips it rather than guessing a reference point. */
 function referenceTouchDate(candidate: CandidateJob): Date | null {
   if (candidate.cadence === JobCadence.recurring) {
     return candidate.lastRetentionTouchAt ?? candidate.soldAt;
@@ -105,7 +105,7 @@ function referenceTouchDate(candidate: CandidateJob): Date | null {
 
 /**
  * Day-30-or-later touches (`checkin_30`/`quarterly`) suppress the upsell ask
- * when a sibling `monthly` Job already exists on the same Client — no point
+ * when a sibling `monthly` Job already exists on the same Client - no point
  * pitching a retainer this Client already bought. Day-3/day-14 touches
  * (review/referral) never check this and always render `checkin_only`
  * (unused by those two templates in any case).
@@ -128,7 +128,7 @@ async function resolveVariant(
  * Attempts one retention touch for a candidate already confirmed stale and
  * eligible for `touchNumber`/`variant`. The atomic claim below closes the
  * same race followup-scheduler.ts's `attemptFollowupSend` closes, adapted to
- * the fact that a retention touch — unlike a follow-up — never changes
+ * the fact that a retention touch - unlike a follow-up - never changes
  * `Job.status`: there is no "next status" to use as the optimistic-lock key,
  * so the claim's WHERE instead pins `lastRetentionTouchAt` and
  * `retentionTouchCount` to the exact values just read, on top of `status`
@@ -174,7 +174,7 @@ async function attemptRetentionSend(
   if (claim.count !== 1) {
     // Lost the race: doNotContact flipped true, the Job's status changed
     // concurrently, or a concurrent scheduler run already claimed this exact
-    // touch. Fail closed — never send.
+    // touch. Fail closed - never send.
     return { jobId: candidate.id, outcome: 'skipped_not_eligible' };
   }
 
@@ -185,12 +185,12 @@ async function attemptRetentionSend(
   });
 
   if (!sendResult.ok) {
-    // Roll back the claim so a later scheduler run can legitimately retry —
+    // Roll back the claim so a later scheduler run can legitimately retry -
     // a failed send must never permanently strand a Job mid-sequence.
     // Conditioned on `lastRetentionTouchAt`/`retentionTouchCount` equalling
     // the exact values THIS call's claim just set (rather than an
     // unconditional update), mirroring attemptFollowupSend's rollback
-    // fingerprint — just keyed to these fields instead of `status`, since a
+    // fingerprint - just keyed to these fields instead of `status`, since a
     // retention touch never changes `status`.
     await prisma.job.updateMany({
       where: { id: candidate.id, lastRetentionTouchAt: now, retentionTouchCount: priorRetentionTouchCount + 1 },
@@ -214,11 +214,11 @@ async function attemptRetentionSend(
  *   - its Client's `doNotContact` is `false`
  *   - stale by the touch's gap (see `gapDaysUntilNextTouch`) from
  *     `lastRetentionTouchAt` (or the Job's natural starting point if no
- *     touch has gone out yet — see `referenceTouchDate`)
+ *     touch has gone out yet - see `referenceTouchDate`)
  *
  * The daily send cap (`getEffectiveDailyCap()`/`getTodaysSendCount()`) is
  * re-checked fresh immediately before each send attempt, exactly like
- * followup-scheduler.ts — once the cap is hit, every remaining due Job in
+ * followup-scheduler.ts - once the cap is hit, every remaining due Job in
  * this batch is reported `skipped_cap` without an atomic claim ever being
  * attempted for it.
  */

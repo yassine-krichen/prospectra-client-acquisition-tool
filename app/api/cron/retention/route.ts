@@ -22,7 +22,7 @@ async function isAuthorized(request: NextRequest): Promise<boolean> {
 /**
  * Batch endpoint for Phase 8 retention touches, meant to be triggered on a
  * schedule: finds Jobs due for their next retention touch and processes a
- * bounded batch of them — `runRetentionScheduler`'s `RETENTION_BATCH_SIZE` —
+ * bounded batch of them - `runRetentionScheduler`'s `RETENTION_BATCH_SIZE` -
  * re-checking the same daily send cap every send path in this app respects.
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {

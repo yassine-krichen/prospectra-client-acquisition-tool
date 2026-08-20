@@ -2,12 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // This is the single riskiest orchestration test in the repo: approveDrafts
 // is the ONLY function in the codebase permitted to call sendEmail, and it
-// carries the core project invariant — "no code path may send an email
-// without a human clicking approve first" — plus the daily-cap and
+// carries the core project invariant - "no code path may send an email
+// without a human clicking approve first" - plus the daily-cap and
 // do-not-contact fail-closed guarantees. Prisma and resend.client.ts are
 // both mocked (this is an orchestration test, not a real-send test); the
 // daily-cap gate and send-count reader each have their own dedicated
-// suites, so they're mocked here too — only send-queue.service.ts's own
+// suites, so they're mocked here too - only send-queue.service.ts's own
 // ordering, cap re-check, and success/failure persistence logic is under
 // test.
 const { findManyDraftMock, updateDraftMock, updateManyDraftMock, findUniqueDraftMock, updateProspectMock } =
@@ -167,7 +167,7 @@ describe('approveDrafts daily cap enforcement', () => {
 
     // A "computed once at batch start" regression would see sentSoFar=2 < 3
     // for every iteration (since it would never re-read the count after a
-    // send) and would send all 3 instead of 1 — this assertion on the exact
+    // send) and would send all 3 instead of 1 - this assertion on the exact
     // call count is what would catch that regression.
     expect(sendEmailMock).toHaveBeenCalledTimes(1);
     expect(results).toEqual([
@@ -285,8 +285,8 @@ describe('approveDrafts missing contact email', () => {
   });
 });
 
-describe('approveDrafts send outcome persistence — the core safety boundary', () => {
-  it('claims the draft (approved:true) before sending, then rolls the claim back to approved:false when the send fails — never leaving Prospect.status/sentAt set', async () => {
+describe('approveDrafts send outcome persistence - the core safety boundary', () => {
+  it('claims the draft (approved:true) before sending, then rolls the claim back to approved:false when the send fails - never leaving Prospect.status/sentAt set', async () => {
     sendEmailMock.mockResolvedValue({ ok: false, reason: 'resend responded with 422' });
     findManyDraftMock.mockResolvedValue([buildDraftRow({ id: 'draft-1' })]);
 
@@ -365,7 +365,7 @@ describe('approveDrafts editedBody handling', () => {
     expect(sendEmailMock).toHaveBeenCalledWith(expect.objectContaining({ body: 'human-edited body' }));
   });
 
-  it('keeps the editedBody applied to Draft.body even when the subsequent send attempt fails — only approved is rolled back', async () => {
+  it('keeps the editedBody applied to Draft.body even when the subsequent send attempt fails - only approved is rolled back', async () => {
     sendEmailMock.mockResolvedValue({ ok: false, reason: 'network error' });
     findManyDraftMock.mockResolvedValue([buildDraftRow({ id: 'draft-1' })]);
 
@@ -376,7 +376,7 @@ describe('approveDrafts editedBody handling', () => {
       where: { id: 'draft-1', approved: false, prospect: { doNotContact: false } },
       data: { approved: true, body: 'edited body', edited: true },
     });
-    // The rollback only resets `approved` — it must not also revert the
+    // The rollback only resets `approved` - it must not also revert the
     // body edit, or a human's edit would be silently lost on a failed send.
     expect(updateDraftMock).toHaveBeenCalledWith({ where: { id: 'draft-1' }, data: { approved: false } });
     expect(updateDraftMock).not.toHaveBeenCalledWith(
@@ -443,7 +443,7 @@ describe('approveDrafts duplicate draftId within one batch (defense in depth)', 
     findManyDraftMock.mockResolvedValue([buildDraftRow({ id: 'draft-1' })]);
     // Models what an atomic `UPDATE ... WHERE approved = false` would do in
     // a real database across three attempts against the same row: only the
-    // first succeeds (count 1), every later attempt matches zero rows —
+    // first succeeds (count 1), every later attempt matches zero rows -
     // this is what makes a second real send for this draftId impossible,
     // regardless of what the request layer does or doesn't de-duplicate.
     updateManyDraftMock
@@ -458,7 +458,7 @@ describe('approveDrafts duplicate draftId within one batch (defense in depth)', 
     expect(sendEmailMock).toHaveBeenCalledTimes(1);
     expect(updateManyDraftMock).toHaveBeenCalledTimes(3);
     // Outcomes are keyed by draftId, so every requested item resolves to
-    // whichever outcome was recorded last for that shared draftId — never
+    // whichever outcome was recorded last for that shared draftId - never
     // a second `sent`.
     expect(results).toHaveLength(3);
     expect(results.every((r) => r.draftId === 'draft-1')).toBe(true);
@@ -471,7 +471,7 @@ describe('approveDrafts duplicate draftId within one batch (defense in depth)', 
 // the same single draftId (double-click before the button disables, a
 // network retry, two open tabs). Each "request" is its own call to
 // approveDrafts with its own findMany snapshot (both showing approved:
-// false, since neither has seen the other's write yet) — the only thing
+// false, since neither has seen the other's write yet) - the only thing
 // that can possibly serialize them is the atomic claim's WHERE clause,
 // modeled here via a stateful updateMany mock.
 describe('approveDrafts concurrent requests for the same draftId (cross-request race)', () => {
@@ -495,7 +495,7 @@ describe('approveDrafts concurrent requests for the same draftId (cross-request 
 
     const firstAttempt = await approveDrafts([{ draftId: 'draft-1' }]);
     expect(firstAttempt).toEqual([{ draftId: 'draft-1', outcome: 'failed', reason: 'network error' }]);
-    // Rolled back — a second, later approval of the same draft is not
+    // Rolled back - a second, later approval of the same draft is not
     // permanently blocked by the failed first attempt.
     expect(updateDraftMock).toHaveBeenCalledWith({ where: { id: 'draft-1' }, data: { approved: false } });
 

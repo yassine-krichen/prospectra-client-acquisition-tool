@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-// `dns.lookup` is a real network/OS call — mocked at the module level so
+// `dns.lookup` is a real network/OS call - mocked at the module level so
 // every test controls exactly what a hostname "resolves" to, the same
 // boundary `signal-detection.test.ts` mocks `fetch` at.
 vi.mock('node:dns/promises', () => ({

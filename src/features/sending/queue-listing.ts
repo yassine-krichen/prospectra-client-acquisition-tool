@@ -4,7 +4,7 @@ import { getEffectiveDailyCap, isDomainVerified } from '@/features/sending/domai
 import { getTodaysSendCount } from '@/features/sending/daily-send-counter';
 import type { QueueItemView, QueueListResult } from '@/features/sending/sending.types';
 
-// Explicit projection — the queue view only needs enough of each prospect
+// Explicit projection - the queue view only needs enough of each prospect
 // and its drafts to render a preview and let a human approve/edit, same
 // "explicit data selection" pattern as prospects.repository.ts's
 // LIST_ITEM_SELECT.
@@ -37,8 +37,8 @@ type QueueDraftRow = QueueProspectRow['drafts'][number];
  * priority order:
  *   1. The prospect's `activeDraftId` draft, if set (e.g. it was already
  *      approved/sent once before, or a human previously picked a variant).
- *   2. Whichever variant has a `humanizedBody` — normally variant 1, since
- *      only variant 1 is ever humanized (see drafting.service.ts) — since a
+ *   2. Whichever variant has a `humanizedBody` - normally variant 1, since
+ *      only variant 1 is ever humanized (see drafting.service.ts) - since a
  *      humanized draft reads more naturally than a raw LLM draft.
  *   3. Variant 1, the default "primary" variant every prospect gets.
  *   4. Whatever variant has the lowest variant number, as a last resort for

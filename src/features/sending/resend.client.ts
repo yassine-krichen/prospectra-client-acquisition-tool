@@ -5,7 +5,7 @@ import type { SendEmailInput, SendEmailResult } from '@/features/sending/sending
 
 const RESEND_URL = 'https://api.resend.com/emails';
 
-// Fixed local part for the outbound `from` address — this app only ever
+// Fixed local part for the outbound `from` address - this app only ever
 // sends from one mailbox purpose (cold outreach), so there's no need for a
 // configurable local part on top of the configurable SENDING_DOMAIN.
 const FROM_LOCAL_PART = 'outreach';
@@ -17,8 +17,8 @@ const resendErrorSchema = z.object({ message: z.string() });
 
 /**
  * Builds the outbound `from` address, e.g. `outreach@example.com`. Returns
- * `null` when `SENDING_DOMAIN` isn't configured — no sending domain is owned
- * yet as of this phase — so callers must treat that as "can't send", never
+ * `null` when `SENDING_DOMAIN` isn't configured - no sending domain is owned
+ * yet as of this phase - so callers must treat that as "can't send", never
  * synthesize a fallback domain.
  */
 export function buildFromAddress(): string | null {
@@ -30,11 +30,11 @@ export function buildFromAddress(): string | null {
  * Sends a single email via the Resend API. Never throws: a missing
  * `RESEND_API_KEY`, an unbuildable `from` address (no `SENDING_DOMAIN`), a
  * network error, a non-2xx response, or a response that doesn't match the
- * expected shape all degrade to a typed `ok:false` result — the same
+ * expected shape all degrade to a typed `ok:false` result - the same
  * graceful-degradation pattern as every other external client in this
  * codebase (gemini.client.ts, hunter.source.ts, etc).
  *
- * This client has no opinion on whether sending is currently *allowed* — the
+ * This client has no opinion on whether sending is currently *allowed* - the
  * daily cap and do-not-contact checks live in send-queue.service.ts, which
  * is the only caller of this function. Nothing here checks
  * `DOMAIN_DNS_VERIFIED` or any cap; it just attempts one send.

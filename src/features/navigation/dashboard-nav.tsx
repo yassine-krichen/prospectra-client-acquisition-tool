@@ -13,7 +13,7 @@ import {
 
 import { SystemHealthTrigger } from '@/features/system/system-health-trigger';
 
-// Trivially safe by design — no server-only imports, ever. Every dashboard
+// Trivially safe by design - no server-only imports, ever. Every dashboard
 // page renders inside a layout that includes this component, so it must
 // never risk pulling in `@/common/config/env`, `@/common/db/client`, or any
 // `.service`/`.repository` module.

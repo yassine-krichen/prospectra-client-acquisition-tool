@@ -10,7 +10,7 @@ interface RouteParams {
 const bodySchema = z.object({ seen: z.boolean() });
 
 /**
- * Toggles a Prospect's `seen` flag — a dashboard-only read marker (see the
+ * Toggles a Prospect's `seen` flag - a dashboard-only read marker (see the
  * doc comment on `Prospect.seen` in prisma/schema.prisma), not part of the
  * outreach pipeline's own state. `updateMany` (rather than `update`) so a
  * missing id is a normal "0 rows touched" outcome instead of a thrown

@@ -20,7 +20,7 @@ const TIERED_SERVICES: ReadonlyArray<
  * (or `'manual_quote'`) plus its cadence, and the flat
  * `infra_hosting_retainer` range. Server-only route handler, so it's safe to
  * import `service-catalog.ts` directly (which pulls in `@/common/config/env`)
- * — that import must never reach a `'use client'` file.
+ * - that import must never reach a `'use client'` file.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const parsed = companySizeSchema.safeParse(request.nextUrl.searchParams.get('companySize'));

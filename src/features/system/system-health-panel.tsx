@@ -90,7 +90,7 @@ export function SystemHealthPanel({ health, error }: SystemHealthPanelProps): Re
         )}
         {health.database.reachable && (
           <span className="text-muted-foreground text-[0.7rem]">
-            Estimated against Neon&apos;s free-tier limit — not a live quota from Neon itself.
+            Estimated against Neon&apos;s free-tier limit - not a live quota from Neon itself.
           </span>
         )}
       </div>

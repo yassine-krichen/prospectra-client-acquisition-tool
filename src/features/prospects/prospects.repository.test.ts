@@ -14,7 +14,7 @@ import type {
   Signal,
 } from '@/features/prospects/prospect.types';
 
-// Integration tests against the real Postgres DB (DATABASE_URL — the same
+// Integration tests against the real Postgres DB (DATABASE_URL - the same
 // database the app uses, see vitest.setup.ts). The Prospect table is wiped
 // before every test rather than tagged/rolled back: deleteMany is simpler
 // than threading a transaction through `listProspects`'s own `prisma`
@@ -289,7 +289,7 @@ describe('listProspects cursor pagination', () => {
 
     const seededIds = seeded.map((s) => s.id);
     expect(new Set(collected).size).toBe(collected.length); // no repeats
-    expect(collected.sort()).toEqual(seededIds.sort()); // no skips — same set of ids
+    expect(collected.sort()).toEqual(seededIds.sort()); // no skips - same set of ids
   });
 
   it('does not repeat or skip items when paging with a non-default sortField (priorityScore)', async () => {

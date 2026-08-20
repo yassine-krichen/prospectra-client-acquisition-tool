@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // markJobDelivered/markJobRecurringActive are the sole entry points allowed
-// to flip a Job `active -> delivered`/`active -> monthly` — same "one atomic
+// to flip a Job `active -> delivered`/`active -> monthly` - same "one atomic
 // claim, conditioned on exactly the state just read" pattern as
 // convert-to-client.service.ts. Prisma is mocked (orchestration test, not a
 // real-DB test).

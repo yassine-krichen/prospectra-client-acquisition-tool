@@ -6,7 +6,7 @@ interface RouteParams {
   params: Promise<{ clientId: string }>;
 }
 
-/** Single Client with its full Job history — backs the dashboard Client detail page. */
+/** Single Client with its full Job history - backs the dashboard Client detail page. */
 export async function GET(_request: NextRequest, { params }: RouteParams): Promise<NextResponse> {
   const { clientId } = await params;
 

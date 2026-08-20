@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // Orchestration test for the route itself: signature verification and reply
 // processing each have their own dedicated suites
 // (verify-resend-signature.test.ts, reply-detection.service.test.ts), so both
-// are mocked here — this only exercises the route's own auth gate,
+// are mocked here - this only exercises the route's own auth gate,
 // event-type filtering, and from-address extraction/wiring.
 const verifyResendWebhookSignatureMock = vi.fn();
 vi.mock('@/features/followups/verify-resend-signature', () => ({

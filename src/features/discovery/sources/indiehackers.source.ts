@@ -14,7 +14,7 @@ const JOBS_URL = `${INDIE_HACKERS_BASE_URL}/jobs`;
 // approach as yellowpages.source.ts, then parses the rendered HTML with
 // cheerio (rather than Playwright's own `$$eval`) because these pages'
 // structure is less uniform. The selectors below are a best-effort read of
-// the live site's markup at the time of writing — like yellowpages.source.ts,
+// the live site's markup at the time of writing - like yellowpages.source.ts,
 // they may need updating if Indie Hackers changes its DOM.
 interface ScrapedLaunch {
   name: string | null;
@@ -79,7 +79,7 @@ function scrapeJobs(html: string): ScrapedJob[] {
  * Scrapes Indie Hackers' public "Products" (recent launches) and "Jobs"
  * pages. Any discovered external website URL is passed to
  * `detectWebsiteSignals` (which internally uses `fetchSafely`) rather than
- * fetched directly — these URLs come from scraped, attacker-writable page
+ * fetched directly - these URLs come from scraped, attacker-writable page
  * content, same SSRF concern as yellowpages.source.ts.
  */
 export async function runIndieHackersSource(_query: DiscoveryQuery): Promise<SourceResult> {

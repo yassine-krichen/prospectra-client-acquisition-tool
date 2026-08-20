@@ -9,7 +9,7 @@ import {
 
 // Mirrors the enums/models defined in prisma/schema.prisma. Kept in sync by
 // hand since Prisma's generated types describe persistence shape, not the
-// validated shape of data crossing API boundaries — same convention as
+// validated shape of data crossing API boundaries - same convention as
 // prospect.types.ts.
 
 export { serviceTypeSchema };
@@ -46,7 +46,7 @@ export const jobSchema = z.object({
 });
 export type Job = z.infer<typeof jobSchema>;
 
-// Request DTO for creating a Job. `cadence` is deliberately absent — it's
+// Request DTO for creating a Job. `cadence` is deliberately absent - it's
 // derived from `service` (see `getServiceCadence` in service-catalog.ts), not
 // a free-form field a caller could mismatch against the service. `status`,
 // `soldAt`, `statusHistory` are likewise not caller-supplied: every new Job
@@ -54,7 +54,7 @@ export type Job = z.infer<typeof jobSchema>;
 export const createJobRequestSchema = z.object({
   service: serviceTypeSchema,
   agreedPriceCents: z.number().int().positive(),
-  // Only meaningful for `infra_hosting_retainer` sold alongside a delivery —
+  // Only meaningful for `infra_hosting_retainer` sold alongside a delivery -
   // see the catalog's "3 months free/half-price hosting" lock-in rule.
   // Validated against `service` in create-job.service.ts, not here (a
   // cross-field rule, not a shape rule).

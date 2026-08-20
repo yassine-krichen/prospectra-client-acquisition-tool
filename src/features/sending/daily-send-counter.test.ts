@@ -5,11 +5,11 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { prisma } from '@/common/db/client';
 import { getTodaysSendCount } from '@/features/sending/daily-send-counter';
 
-// Integration test against the real Postgres DB (DATABASE_URL — the same
+// Integration test against the real Postgres DB (DATABASE_URL - the same
 // database the app uses, see vitest.setup.ts), same pattern as
 // prospects.repository.test.ts. This is
 // the daily-cap enforcement's own read path, so the UTC day boundary math is
-// exercised for real rather than mocked — an off-by-one here would let a
+// exercised for real rather than mocked - an off-by-one here would let a
 // bulk-approve batch quietly exceed the daily cap.
 beforeEach(async () => {
   await prisma.job.deleteMany();
@@ -130,7 +130,7 @@ describe('getTodaysSendCount', () => {
 
   // A follow-up send (followup-scheduler.ts) only ever sets `lastFollowupAt`,
   // never `sentAt` (which must keep meaning "when the ORIGINAL send went
-  // out" — see the module doc comment). Without this, follow-up sends were
+  // out" - see the module doc comment). Without this, follow-up sends were
   // invisible to the daily cap entirely.
   it('counts a prospect whose ONLY today-timestamp is lastFollowupAt (a follow-up send with no sentAt change today)', async () => {
     await seedProspect(new Date('2026-01-01T00:00:00.000Z'), new Date('2026-06-15T10:00:00.000Z'));
@@ -165,7 +165,7 @@ describe('getTodaysSendCount', () => {
   });
 
   // A retention touch (retention-scheduler.ts) sets Job.lastRetentionTouchAt,
-  // a separate table from Prospect — without this, retention sends were
+  // a separate table from Prospect - without this, retention sends were
   // invisible to the shared daily cap entirely, letting a busy retention day
   // exceed sending-domain volume limits alongside cold outreach.
   it('counts a Job whose lastRetentionTouchAt falls within the reference UTC day', async () => {

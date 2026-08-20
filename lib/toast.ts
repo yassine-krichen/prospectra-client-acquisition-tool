@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 // toast rather than each action handler formatting its own. The specific
 // problem this exists to fix: several API responses (discovery's per-source
 // summary, enrichment's Hunter -> PDL -> pattern-guess chain) already carry
-// a detailed, per-source reason for why something didn't happen — action
+// a detailed, per-source reason for why something didn't happen - action
 // handlers were discarding it and showing a generic one-liner instead. This
 // module makes showing the real reason the path of least resistance.
 
@@ -52,14 +52,14 @@ function sourceLabel(source: string): string {
 
 function describeSourceLine(outcome: SourceOutcome): string {
   const label = sourceLabel(outcome.source);
-  if (!outcome.ran) return `${label}: skipped — ${outcome.reason ?? 'unavailable'}`;
+  if (!outcome.ran) return `${label}: skipped - ${outcome.reason ?? 'unavailable'}`;
   if (outcome.used === false) return `${label}: ran, not used (an earlier source already succeeded)`;
   if (outcome.count !== undefined) return `${label}: ${outcome.count} found`;
   return `${label}: ran`;
 }
 
 /**
- * Shows one toast whose description lists every source's exact outcome —
+ * Shows one toast whose description lists every source's exact outcome -
  * used for discovery runs and the enrichment chain, the two places this app
  * tries several sources in sequence and previously only surfaced a single
  * collapsed "it didn't work" message.

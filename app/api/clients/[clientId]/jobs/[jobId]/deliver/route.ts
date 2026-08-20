@@ -9,8 +9,8 @@ interface RouteParams {
 
 /**
  * Marks a one-off Job `active -> delivered` (see `markJobDelivered`).
- * Verifies the Job actually belongs to `clientId` from the route — not just
- * that the Job exists — before delegating, since `jobId` alone would
+ * Verifies the Job actually belongs to `clientId` from the route - not just
+ * that the Job exists - before delegating, since `jobId` alone would
  * otherwise let a caller deliver a Job under the wrong Client's URL. Returns
  * 200 with the outcome in the body for every "can't do this right now" case
  * (`already_delivered`, `not_eligible`), matching this app's established

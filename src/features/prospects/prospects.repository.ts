@@ -14,7 +14,7 @@ import type {
   SignalType,
 } from '@/features/prospects/prospect.types';
 
-// Explicit projection matching `ProspectListItem` — the list view never
+// Explicit projection matching `ProspectListItem` - the list view never
 // needs drafts, statusHistory, contact details, or follow-up/reply
 // tracking, so those columns aren't selected (see "Explicit data
 // selection" in engineering standards).
@@ -46,7 +46,7 @@ const LIST_ITEM_SELECT = {
 type ProspectListRow = Prisma.ProspectGetPayload<{ select: typeof LIST_ITEM_SELECT }>;
 
 // `location`/`signal`/`suggestedServices` are untyped `Json` columns in the
-// schema — this app only ever writes them in the `Location`/`Signal`/
+// schema - this app only ever writes them in the `Location`/`Signal`/
 // `ServiceSuggestion[]` shape, so it's safe to assert that shape back on
 // read. Kept in sync by hand with `prospect.types.ts`, same as that file's
 // own header comment describes.
@@ -95,11 +95,11 @@ const MAX_LIMIT = 100;
 // The cursor is keyed on the CURRENT `sortField`'s value (+ `id` as a
 // tiebreak for equal values), not hardcoded to `createdAt`. Cursor-based
 // pagination is only sound when the WHERE clause filters on the same field
-// the results are ordered by — filtering on `createdAt` while sorting by
+// the results are ordered by - filtering on `createdAt` while sorting by
 // `priorityScore`/`sentAt`/a `discoveredAt` that diverges from insertion
 // order silently skips or repeats rows across pages. Callers aren't expected
-// to change `sortField`/`sortDirection` mid-pagination — changing sort
-// resets to page 1 in the UI — so a cursor is only ever re-decoded against
+// to change `sortField`/`sortDirection` mid-pagination - changing sort
+// resets to page 1 in the UI - so a cursor is only ever re-decoded against
 // the same sort it was encoded under.
 interface DecodedCursor {
   sortValue: string | number | null;
@@ -125,7 +125,7 @@ function decodeCursor(raw: string): DecodedCursor | null {
 
 // `sentAt` is nullable and ordered with `nulls: 'last'` (see `listProspects`)
 // regardless of sort direction, so a null-valued cursor row means "already
-// in the trailing null bucket" — the next page is the rest of that bucket,
+// in the trailing null bucket" - the next page is the rest of that bucket,
 // tie-broken by `id` only. A non-null cursor value still needs an explicit
 // `OR sentAt IS NULL` branch, since every null row sorts after it either way.
 function buildCursorWhere(
@@ -214,9 +214,9 @@ function extractSortValue(row: ProspectListRow, sortField: ProspectSortField): s
 /**
  * Cursor-paginated, filterable, sortable prospect listing. Cursor is opaque
  * to callers (base64url-encoded `{ sortValue, id }` for whatever `sortField`
- * was in effect) — pass back the `nextCursor` from the previous response
+ * was in effect) - pass back the `nextCursor` from the previous response
  * unmodified to fetch the next page. Changing `sortField`/`sortDirection`
- * mid-pagination is unsupported — the caller must reset to page 1 first.
+ * mid-pagination is unsupported - the caller must reset to page 1 first.
  */
 export async function listProspects(options: ListProspectsOptions = {}): Promise<ListProspectsResult> {
   const limit = Math.min(options.limit ?? DEFAULT_LIMIT, MAX_LIMIT);

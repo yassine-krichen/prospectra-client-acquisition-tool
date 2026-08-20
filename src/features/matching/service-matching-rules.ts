@@ -3,7 +3,7 @@ import type { ServiceType } from '@/features/pricing/service-catalog';
 import type { CompanySize, EstimatedBudget, Industry, ProjectFit, Signal } from '@/features/prospects/prospect.types';
 
 // Pure rules engine mapping a single discovered `Signal` (+ companySize/
-// industry context) to a set of service suggestions. No I/O — every
+// industry context) to a set of service suggestions. No I/O - every
 // suggestion's pricing comes from `service-catalog.ts`'s fixed lookup, never
 // duplicated here. `source: 'rules'` is a literal today, widening later if
 // an LLM-suggestion overlay is layered on top (see `suggestedServices`'s
@@ -83,13 +83,13 @@ function linkedinMediaManagementCrossSell(companySize: CompanySize): ServiceSugg
     'linkedin_media_management',
     companySize,
     'cross_sell',
-    'Actively hiring — a good fit for ongoing LinkedIn/media management to support recruiting and employer brand.'
+    'Actively hiring - a good fit for ongoing LinkedIn/media management to support recruiting and employer brand.'
   );
 }
 
 /**
  * Computes service suggestions for a single discovered signal. Rules are
- * dispatched on `signal.type` (the sole signal object a Prospect carries —
+ * dispatched on `signal.type` (the sole signal object a Prospect carries -
  * see the "known gap" note on `hiring_post` below), then cross-sells are
  * appended independently of whatever primary logic produced.
  */
@@ -105,7 +105,7 @@ export function computeServiceSuggestions(input: ComputeServiceSuggestionsInput)
           'landing_page',
           companySize,
           'primary',
-          `No usable live site (${signal.type} signal) — a landing page establishes an initial web presence.`
+          `No usable live site (${signal.type} signal) - a landing page establishes an initial web presence.`
         )
       );
       break;
@@ -120,13 +120,13 @@ export function computeServiceSuggestions(input: ComputeServiceSuggestionsInput)
               'full_stack_app',
               companySize,
               'primary',
-              `${signal.type} signal on a larger and/or product-oriented company — warrants a full rebuild rather than a refresh.`
+              `${signal.type} signal on a larger and/or product-oriented company - warrants a full rebuild rather than a refresh.`
             )
           : tieredSuggestion(
               'landing_page',
               companySize,
               'primary',
-              `${signal.type} signal — a landing page refresh fits this company's size/industry better than a full rebuild.`
+              `${signal.type} signal - a landing page refresh fits this company's size/industry better than a full rebuild.`
             )
       );
       break;
@@ -139,7 +139,7 @@ export function computeServiceSuggestions(input: ComputeServiceSuggestionsInput)
           'full_stack_app',
           companySize,
           'primary',
-          `${signal.type} signal (budget signal) — recently launched/funded companies typically need a full build.`
+          `${signal.type} signal (budget signal) - recently launched/funded companies typically need a full build.`
         )
       );
       break;
@@ -147,7 +147,7 @@ export function computeServiceSuggestions(input: ComputeServiceSuggestionsInput)
     case 'hiring_post':
       // KNOWN GAP, resolved: Prospect.signal is a single object, not an
       // array, so there's no co-occurring signal to derive a primary from
-      // when hiring_post is the only signal on file. Don't fabricate one —
+      // when hiring_post is the only signal on file. Don't fabricate one -
       // this leaves `suggestions` with zero `primary` entries, which
       // `deriveProjectFitAndBudget` resolves to `projectFit: 'unclear'`.
       break;
@@ -194,7 +194,7 @@ function bucketFromPriceRange(service: ServiceType, priceRangeCents: PriceRangeC
 function mapPrimaryServiceToProjectFit(service: ServiceType): ProjectFit {
   if (service === 'landing_page') return 'landing_page';
   if (service === 'full_stack_app') return 'full_stack_app';
-  // 'backend_api' has no rule producing it yet — reachable only by future
+  // 'backend_api' has no rule producing it yet - reachable only by future
   // rules. Any other service (the cross-sell-only ones) can never be a
   // primary today, but is mapped to 'unclear' defensively rather than
   // throwing.
@@ -213,7 +213,7 @@ export interface MatchingDerivation {
  * primary's price range via the one-off/monthly threshold tables above,
  * bumped up one bucket (capped at 'high') when the triggering signal was
  * `new_launch`/`funding_event`, then overridden to 'high' if the primary
- * requires a manual quote — never a fabricated number for that case.
+ * requires a manual quote - never a fabricated number for that case.
  */
 export function deriveProjectFitAndBudget(suggestions: ServiceSuggestion[], signal: Signal): MatchingDerivation {
   const primary = suggestions.find((suggestion) => suggestion.role === 'primary') ?? null;

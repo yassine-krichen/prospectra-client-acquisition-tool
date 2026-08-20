@@ -25,7 +25,7 @@ export type MatchingOutcome =
  * Recomputes and persists a Prospect's service suggestions. Called at
  * discovery/enrichment time and via the manual `/match` route (a dashboard
  * "Recompute suggestions" button). Never throws on a malformed stored
- * `signal` — returns `invalid_signal` instead, since `signal` is an
+ * `signal` - returns `invalid_signal` instead, since `signal` is an
  * untyped `Json` column this app only ever writes in the validated shape,
  * but never assumes that on read (see prospect.types.ts's header comment).
  */

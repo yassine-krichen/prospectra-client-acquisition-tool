@@ -7,8 +7,8 @@ import type { ApprovalOutcome, ApprovalRequestItem } from '@/features/sending/se
 
 // This module is the one place in the codebase where a code path can
 // actually cause an email to leave the system. The core safety invariant
-// carried through every earlier phase — "no code path may send an email
-// without a human clicking approve first" — means `approveDrafts` below is
+// carried through every earlier phase - "no code path may send an email
+// without a human clicking approve first" - means `approveDrafts` below is
 // the ONLY function that may call `sendEmail`, and it is only ever reached
 // via a human-initiated approval request (the /api/queue/approve route).
 
@@ -38,20 +38,20 @@ type DraftWithProspect = Prisma.DraftGetPayload<{ select: typeof DRAFT_SELECT }>
  * request order):
  *
  *   1. Refuses (fails closed) if the draft doesn't exist, was already
- *      approved (see the atomic claim in step 4 — this also covers a
+ *      approved (see the atomic claim in step 4 - this also covers a
  *      draft named more than once in the same batch), or its prospect has
- *      `doNotContact: true` — never sent, no matter what a bulk-approve
+ *      `doNotContact: true` - never sent, no matter what a bulk-approve
  *      request asked for.
  *   2. Re-checks the effective daily cap (`getEffectiveDailyCap()`) against
- *      today's actual send count immediately before every send — not once
- *      at batch start — so a bulk-approve can't blow through the cap
+ *      today's actual send count immediately before every send - not once
+ *      at batch start - so a bulk-approve can't blow through the cap
  *      mid-batch. Once the cap is hit, every remaining item in the batch is
  *      reported `skipped_cap` without attempting to send.
  *   3. Refuses if the prospect has no `contactEmail` on file (checked once
  *      from the batch snapshot, then re-checked fresh in step 4).
  *   4. Immediately before sending, atomically claims the draft with a
- *      single conditional update — `UPDATE ... WHERE id = ? AND approved =
- *      false` — that also applies any human edit (`editedBody`) to
+ *      single conditional update - `UPDATE ... WHERE id = ? AND approved =
+ *      false` - that also applies any human edit (`editedBody`) to
  *      `Draft.body` (`edited: true`). Only the caller whose update actually
  *      matches a row (`count === 1`) proceeds to send; this is the one
  *      real guard against two concurrent approvals (two tabs, a
@@ -62,7 +62,7 @@ type DraftWithProspect = Prisma.DraftGetPayload<{ select: typeof DRAFT_SELECT }>
  *      atomic update, so it can never land on a draft that's concurrently
  *      being (or already was) sent.
  *   5. Sends via Resend. On success, advances the prospect to `sent`
- *      (`sentAt`, `statusHistory`, `activeDraftId`) — the claim from step 4
+ *      (`sentAt`, `statusHistory`, `activeDraftId`) - the claim from step 4
  *      already persisted `Draft.approved = true`, so a crash between the
  *      send succeeding and this step can never cause a resend, only a
  *      (recoverable) prospect-status lag. On failure, the claim is rolled
@@ -104,7 +104,7 @@ export async function approveDrafts(items: ApprovalRequestItem[]): Promise<Appro
     }
 
     // A draft already approved before this batch even started (e.g. a
-    // prior request, or an earlier row in this same result set) — fail
+    // prior request, or an earlier row in this same result set) - fail
     // closed without ever touching the cap or doNotContact logic below.
     // The narrower race (approved concurrently between this read and this
     // item's send attempt) is caught by the atomic claim further down.
@@ -145,7 +145,7 @@ export async function approveDrafts(items: ApprovalRequestItem[]): Promise<Appro
 
     // The one real concurrency guard: a single conditional update that only
     // matches (and only sends) if the draft is *still* unapproved at the
-    // instant this statement runs, and — in the same atomic statement —
+    // instant this statement runs, and - in the same atomic statement -
     // re-checks doNotContact hasn't flipped true since our initial read
     // (matching the cap's "re-check immediately before sending" standard).
     // Any human edit is applied in this same statement so it can never land
@@ -187,7 +187,7 @@ export async function approveDrafts(items: ApprovalRequestItem[]): Promise<Appro
 
     if (!sendResult.ok) {
       // Roll back the claim so a legitimate retry can re-approve this
-      // draft later — a failed send must never permanently lock a draft
+      // draft later - a failed send must never permanently lock a draft
       // out of ever being sent. The edited body (if any) is kept: it was
       // applied above regardless of send outcome, so a human's edit is
       // never lost just because the send attempt failed.
@@ -201,7 +201,7 @@ export async function approveDrafts(items: ApprovalRequestItem[]): Promise<Appro
 
     // Draft.approved is already committed (via the claim above) by the
     // time the email actually goes out, so this is just advancing the
-    // prospect's status — it does not need to be transactional with the
+    // prospect's status - it does not need to be transactional with the
     // claim (which must complete, and stay committed, before the external
     // send call, not alongside it).
     await prisma.prospect.update({

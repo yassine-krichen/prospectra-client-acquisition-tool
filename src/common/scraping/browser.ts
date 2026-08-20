@@ -3,7 +3,7 @@ import { chromium, type Browser, type BrowserContext } from 'playwright';
 // Sites like yellowpages.com block plain `fetch()` requests as bot traffic.
 // A real headless-Chromium context (with a realistic user agent) reliably
 // gets through where a bare HTTP client doesn't. Ported from the Python
-// prototype's `sync_playwright()` usage — see the removed
+// prototype's `sync_playwright()` usage - see the removed
 // `app/scraper/yellowpages.py` in git history for the original approach.
 const DEFAULT_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';

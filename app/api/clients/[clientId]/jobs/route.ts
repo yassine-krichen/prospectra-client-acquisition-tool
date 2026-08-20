@@ -8,7 +8,7 @@ interface RouteParams {
 }
 
 /**
- * Records a sold service against a Client — the one write path for `Job`
+ * Records a sold service against a Client - the one write path for `Job`
  * creation (see `createJob`'s doc comment for why this route exists). Body
  * shape is validated here (controller boundary); the cross-field
  * `retainerDiscount`/`service` rule is a business rule, validated in the

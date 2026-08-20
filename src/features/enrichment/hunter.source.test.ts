@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Only `HUNTER_API_KEY` is overridden per test below — `DATABASE_URL` and
+// Only `HUNTER_API_KEY` is overridden per test below - `DATABASE_URL` and
 // everything else must stay real, since this suite makes real Prisma calls
 // against the real Postgres DB (via the un-mocked `prisma` import below,
 // which itself reads `env.DATABASE_URL` to connect).
@@ -22,7 +22,7 @@ import { prisma } from '@/common/db/client';
 import { runHunterEnrichment } from './hunter.source';
 
 // Integration test against the real Postgres DB (see
-// prospects.repository.test.ts's own doc comment) — only the external
+// prospects.repository.test.ts's own doc comment) - only the external
 // Hunter.io API call itself is mocked. This is the one piece of Branch C
 // worth a real-DB test: the quota reservation race-safety comes from
 // Postgres evaluating `count: { lt: cap }` as part of the UPDATE itself,
@@ -146,9 +146,9 @@ describe('runHunterEnrichment quota gate', () => {
   });
 
   // The implementation reserves quota (increments the counter) *before*
-  // making the Hunter API call. If the `fetch` call itself throws — a
+  // making the Hunter API call. If the `fetch` call itself throws - a
   // network-level failure, meaning the request never reached Hunter's
-  // servers — the reservation is rolled back, since Hunter could not
+  // servers - the reservation is rolled back, since Hunter could not
   // possibly have counted a request it never received against the real
   // account quota.
   it('rolls back the reserved quota unit when the Hunter API request itself throws (network failure)', async () => {
@@ -161,8 +161,8 @@ describe('runHunterEnrichment quota gate', () => {
   });
 
   // A non-2xx response means Hunter's API did receive and process the
-  // request — per Hunter's own billing, it was likely already counted
-  // against the real account quota — so the reservation must NOT be rolled
+  // request - per Hunter's own billing, it was likely already counted
+  // against the real account quota - so the reservation must NOT be rolled
   // back here, unlike the network-failure case above.
   it('still consumes the reserved quota unit when Hunter responds with a non-2xx status', async () => {
     mockFetchJson({}, { ok: false, status: 500 });

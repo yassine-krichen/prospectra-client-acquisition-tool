@@ -4,7 +4,7 @@ import { BANNED_PHRASES, MAX_WORDS, MIN_WORDS, renderFollowupTemplate } from '@/
 import type { FollowupTemplateInput } from '@/features/followups/followup-templates';
 import type { Signal } from '@/features/prospects/prospect.types';
 
-// Pure-function tests: no LLM, no DB, no mocking needed — renderFollowupTemplate
+// Pure-function tests: no LLM, no DB, no mocking needed - renderFollowupTemplate
 // is template interpolation plus a call into the real validateDraftOutput.
 
 function buildSignal(overrides: Partial<Signal> = {}): Signal {
@@ -111,13 +111,13 @@ describe('renderFollowupTemplate subject', () => {
     expect(rendered.template.subject).toBe('Re: Quick idea for Acme Plumbing');
   });
 
-  it('falls back to a "Following up — <company>" subject when no original subject is on file', () => {
+  it('falls back to a "Following up - <company>" subject when no original subject is on file', () => {
     const input = buildInput({ originalSubject: null });
 
     const rendered = renderFollowupTemplate(3, input);
     if (!rendered.ok) throw new Error('expected render to succeed');
 
-    expect(rendered.template.subject).toBe('Following up — Acme Plumbing');
+    expect(rendered.template.subject).toBe('Following up - Acme Plumbing');
   });
 
   it('renders the same subject for every touch number given the same input', () => {

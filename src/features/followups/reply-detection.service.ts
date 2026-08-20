@@ -4,7 +4,7 @@ import { Prisma, ProspectStatus as PrismaProspectStatus, ReplySentiment as Prism
 import { prisma } from '@/common/db/client';
 
 // Processes one verified inbound-reply event (already signature-verified by
-// the caller — see verify-resend-signature.ts / app/api/webhooks/resend —
+// the caller - see verify-resend-signature.ts / app/api/webhooks/resend -
 // this module never trusts a payload on its own). The webhook body is the
 // least-trusted input in this app, so its shape is re-validated here with
 // zod regardless of whatever shape the route already extracted it into.
@@ -16,9 +16,9 @@ export const inboundReplySchema = z.object({
 });
 export type InboundReply = z.infer<typeof inboundReplySchema>;
 
-// Prospects still "in flight" toward a follow-up — the only statuses a
+// Prospects still "in flight" toward a follow-up - the only statuses a
 // reply is allowed to transition out of. A reply for a prospect already
-// `replied`/`dead`/`won`/`unsubscribed` is a no-op (idempotent — e.g. a
+// `replied`/`dead`/`won`/`unsubscribed` is a no-op (idempotent - e.g. a
 // duplicate webhook delivery), never a re-trigger of anything.
 const REPLYABLE_STATUSES = [
   PrismaProspectStatus.sent,
@@ -27,7 +27,7 @@ const REPLYABLE_STATUSES = [
   PrismaProspectStatus.followup_3,
 ] as const;
 
-// Simple keyword heuristic, NOT machine learning — a small, readable,
+// Simple keyword heuristic, NOT machine learning - a small, readable,
 // deliberately conservative starter list. Negative/unsubscribe-intent
 // keywords are checked first and take priority over positive ones (fail
 // toward "stop contacting this person" on any ambiguity, matching this app's
@@ -88,15 +88,15 @@ const PROSPECT_SELECT = {
 /**
  * Processes one already-signature-verified inbound reply event.
  *
- *   1. Validates `payload`'s shape with zod — fails closed (`invalid_payload`,
+ *   1. Validates `payload`'s shape with zod - fails closed (`invalid_payload`,
  *      never a crash) on anything malformed.
  *   2. Matches the sender to a `Prospect` by exact `contactEmail`. No match
- *      is logged and ignored (`no_match`) — this never guesses at a fuzzy
+ *      is logged and ignored (`no_match`) - this never guesses at a fuzzy
  *      match, and never creates a prospect from an inbound email.
  *   3. On a match: applies sentiment via `detectSentiment` (subject + body
- *      text combined), then atomically transitions the prospect —
+ *      text combined), then atomically transitions the prospect -
  *      `status: 'replied'`, `repliedAt`, `replySentiment`, appended
- *      `statusHistory`, and — on negative/unsubscribe-intent sentiment —
+ *      `statusHistory`, and - on negative/unsubscribe-intent sentiment -
  *      `doNotContact: true` + `unsubscribedAt` in the SAME update.
  *
  * The atomic update's `WHERE status IN REPLYABLE_STATUSES` is what actually
@@ -165,18 +165,18 @@ const CLIENT_SELECT = {
 /**
  * The `Client`-side counterpart to `processInboundReply` above. Retention
  * emails (`src/features/retention/`) go out against `Client.contactEmail`,
- * not `Prospect.contactEmail` — a converted prospect's `status` is `won`
+ * not `Prospect.contactEmail` - a converted prospect's `status` is `won`
  * (outside `REPLYABLE_STATUSES`), so `processInboundReply` alone can never
  * observe a reply to a retention email, meaning `Client.doNotContact` (the
- * one guard that halts the otherwise-indefinite retention cadence — see its
+ * one guard that halts the otherwise-indefinite retention cadence - see its
  * schema comment) would otherwise be unreachable. This function matches the
  * same inbound event against `Client` independently, so both this and
- * `processInboundReply` should be called for every inbound webhook event —
+ * `processInboundReply` should be called for every inbound webhook event -
  * they check different tables and neither excludes the other.
  *
  * Only a negative/unsubscribe-intent reply changes anything: there's no
  * Client-side notion of "replied"/sentiment history to track (unlike
- * Prospect), just the one opt-out flag. Idempotent — a Client already
+ * Prospect), just the one opt-out flag. Idempotent - a Client already
  * `doNotContact: true` stays `opted_out` on a repeat/duplicate webhook
  * delivery rather than erroring or double-appending history.
  */
@@ -210,7 +210,7 @@ export async function processInboundReplyForClient(payload: unknown): Promise<Cl
   const now = new Date();
 
   // Atomic claim conditioned on the exact state just read, same principle as
-  // every other claim in this codebase — a race against a concurrent
+  // every other claim in this codebase - a race against a concurrent
   // retention send or a second duplicate webhook delivery can't double-apply
   // or lose this.
   await prisma.client.updateMany({

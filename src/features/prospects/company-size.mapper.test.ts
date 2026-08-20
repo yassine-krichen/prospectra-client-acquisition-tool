@@ -5,7 +5,7 @@ import { fromPrismaCompanySize, toPrismaCompanySize } from './company-size.mappe
 import type { CompanySize } from '@/features/prospects/prospect.types';
 
 // Every domain value (the human-readable "1-10" form used across the app)
-// paired with the Prisma enum member name it must map to ("size_1_10" — the
+// paired with the Prisma enum member name it must map to ("size_1_10" - the
 // `@map`'d DB storage value is "1-10", but Prisma's generated client always
 // exposes the enum member name at the TS/runtime boundary, never the mapped
 // value). See the header comment in company-size.mapper.ts.

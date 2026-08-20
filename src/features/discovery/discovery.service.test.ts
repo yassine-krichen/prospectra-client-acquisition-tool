@@ -133,7 +133,7 @@ describe('runDiscovery', () => {
 
   it('recomputes suggestedServices/projectFit/estimatedBudget on the update path too, not just on insert', async () => {
     // no_https signal (default buildSignal type below) drives a landing_page
-    // primary via the matching engine — asserting the actual values here
+    // primary via the matching engine - asserting the actual values here
     // (not just "some object") is what proves this is genuinely recomputed
     // on re-discovery, not a stale carry-over from the prior scrape.
     runGooglePlacesSourceMock.mockResolvedValue({

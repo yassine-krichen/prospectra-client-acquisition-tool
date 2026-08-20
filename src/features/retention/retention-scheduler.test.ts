@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // This is the highest-stakes orchestration test in this phase: the atomic
 // claim inside `attemptRetentionSend` is what makes the
 // concurrent-scheduler-run / concurrent-status-change race impossible to
-// lose — a status change (or a second scheduler run claiming the same
+// lose - a status change (or a second scheduler run claiming the same
 // touch) landing between this module's read and its claim must make the
 // claim match zero rows and abort before `sendEmail` is ever called. Prisma,
 // the daily-cap gate, the send-count reader, and `sendEmail` are all mocked

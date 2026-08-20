@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // atomic `updateMany` (WHERE status IN REPLYABLE_STATUSES) is what makes a
 // reply always win over an in-flight follow-up claim, and what makes a
 // duplicate/late-arriving webhook event a no-op rather than a re-trigger.
-// Prisma is mocked (this is an orchestration test, not a DB test) —
+// Prisma is mocked (this is an orchestration test, not a DB test) -
 // `followup-scheduler.test.ts` covers the scheduler's half of the same race.
 const {
   findFirstMock,
@@ -96,7 +96,7 @@ describe('processInboundReply no matching prospect', () => {
   });
 });
 
-describe('processInboundReply matched prospect — status transition', () => {
+describe('processInboundReply matched prospect - status transition', () => {
   it('transitions a matched prospect to replied and sets repliedAt on a neutral reply', async () => {
     findFirstMock.mockResolvedValue(buildProspectRow({ id: 'prospect-1', status: 'sent' }));
 
@@ -218,7 +218,7 @@ describe('processInboundReply matched prospect — status transition', () => {
 
 // This is the reply side of the reply-vs-follow-up race: the atomic
 // updateMany's WHERE clause (status IN REPLYABLE_STATUSES) is the only thing
-// that decides whether this reply is applied — there's no earlier "is this
+// that decides whether this reply is applied - there's no earlier "is this
 // prospect still in flight" read-then-write gap for a concurrent follow-up
 // send to land in between.
 describe('processInboundReply idempotency / already-terminal prospects', () => {
@@ -272,7 +272,7 @@ describe('processInboundReply idempotency / already-terminal prospects', () => {
 // The Client-side counterpart: retention emails go out against
 // Client.contactEmail, a converted Prospect's status ('won') sits outside
 // REPLYABLE_STATUSES, so this is the only path that can ever set
-// Client.doNotContact — the one guard that halts the otherwise-indefinite
+// Client.doNotContact - the one guard that halts the otherwise-indefinite
 // retention cadence (see retention-scheduler.ts).
 describe('processInboundReplyForClient', () => {
   it('returns invalid_payload without touching the database for a malformed payload', async () => {

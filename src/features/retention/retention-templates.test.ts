@@ -8,7 +8,7 @@ import {
 } from '@/features/retention/retention-templates';
 import type { RetentionTemplateInput, RetentionTouchNumber } from '@/features/retention/retention-templates';
 
-// Pure-function tests: no LLM, no DB, no mocking needed — renderRetentionTemplate
+// Pure-function tests: no LLM, no DB, no mocking needed - renderRetentionTemplate
 // is template interpolation plus a call into the real validateDraftOutput.
 
 function buildInput(overrides: Partial<RetentionTemplateInput> = {}): RetentionTemplateInput {

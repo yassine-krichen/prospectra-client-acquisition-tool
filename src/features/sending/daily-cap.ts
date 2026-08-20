@@ -3,14 +3,14 @@ import { env } from '@/common/config/env';
 // Warmup ramp schedule for a freshly-verified sending domain: one cap per
 // week of warmup, [week 1, week 2, week 3, week 4, week 5+]. Roughly doubles
 // each week (a conservative, commonly-recommended cold-domain warmup curve)
-// before leveling off at a steady-state ceiling — the last entry, held
+// before leveling off at a steady-state ceiling - the last entry, held
 // indefinitely from week 5 onward until a later phase makes that ceiling
 // itself a product decision. Hardcoded rather than env-configurable per the
 // spec: this doesn't need to change without a code change, and a fixed
 // table is simpler than a formula for a 5-step curve.
 //
 // IMPORTANT: this schedule only ever takes effect once
-// `DOMAIN_DNS_VERIFIED` is true — domain-verification-gate.ts's
+// `DOMAIN_DNS_VERIFIED` is true - domain-verification-gate.ts's
 // `getEffectiveDailyCap()` overrides it down to `DAILY_SEND_CAP_TEST` while
 // unverified, and that gate is the only function any send path may call.
 const WEEKLY_RAMP_CAP: readonly number[] = [12, 25, 40, 60, 100];
@@ -25,7 +25,7 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
  * in the future all count as "not warming up yet" rather than erroring.
  *
  * This is a scheduling input only, not the cap a send path should ever
- * enforce directly — see `getEffectiveDailyCap()` in
+ * enforce directly - see `getEffectiveDailyCap()` in
  * domain-verification-gate.ts, which is the single source of truth for that.
  */
 export function getWarmupRampCap(referenceDate: Date = new Date()): number {

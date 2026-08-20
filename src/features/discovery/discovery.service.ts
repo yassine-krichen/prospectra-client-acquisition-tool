@@ -16,14 +16,14 @@ import type { Signal, SignalStrength } from '@/features/prospects/prospect.types
 
 // Branch A = local/SMB discovery (category+geography search: Google Places,
 // yellowpages). Branch B = startup/SaaS discovery (topic/recency-based:
-// Product Hunt, Crunchbase, GitHub, Indie Hackers) — same `DiscoveryQuery`
+// Product Hunt, Crunchbase, GitHub, Indie Hackers) - same `DiscoveryQuery`
 // shape is reused (`category` doubles as a topic/keyword filter, and
-// `geography` is mostly ignored by Branch B sources — see each source's own
+// `geography` is mostly ignored by Branch B sources - see each source's own
 // doc comment), so both branches share one orchestrator and one query type
 // rather than duplicating the discovery pipeline.
 export type DiscoveryBranch = 'a' | 'b' | 'both';
 
-// Stub scoring for this phase — real weighting arrives in Phase 7. For now,
+// Stub scoring for this phase - real weighting arrives in Phase 7. For now,
 // priority is just the strength of the single strongest signal found.
 const SIGNAL_STRENGTH_SCORE: Record<SignalStrength, number> = {
   weak: 1,
@@ -50,7 +50,7 @@ export interface DiscoveryRunSummary {
   inserted: number;
   updated: number;
   /** Existing prospects re-discovered by domain that were left untouched
-   * because `doNotContact` is already `true` — see `persistProspect`'s doc
+   * because `doNotContact` is already `true` - see `persistProspect`'s doc
    * comment. */
   skippedDoNotContact: number;
 }
@@ -62,7 +62,7 @@ function computePriorityScore(signal: Signal): number {
 /**
  * Enriches a discovered prospect's signal with BuiltWith's tech-stack
  * staleness rules, but only when BuiltWith's signal is at least as strong as
- * whatever the source already found — BuiltWith adds evidence, it shouldn't
+ * whatever the source already found - BuiltWith adds evidence, it shouldn't
  * downgrade a stronger signal a source already detected.
  */
 async function enrichWithStaleStack(
@@ -99,7 +99,7 @@ function dedupeByDomain(prospects: DiscoveredProspect[]): DiscoveredProspect[] {
  * by `domain`. Per the spec's "doNotContact checked before every send
  * including future re-scraping of the same source": a prospect already
  * marked `doNotContact` (e.g. it previously unsubscribed or replied
- * negatively) is left completely untouched by re-discovery — its
+ * negatively) is left completely untouched by re-discovery - its
  * `doNotContact` flag is never overwritten back to `false`, and nothing
  * about it (signal, priorityScore, status) is refreshed, so a routine
  * re-scrape can never pull a permanently-opted-out prospect back into the
@@ -117,7 +117,7 @@ async function persistProspect(prospect: DiscoveredProspect): Promise<'inserted'
   }
 
   // Computed centrally (rather than supplied by each discovery source) so
-  // every source shares one matching engine — see service-matching-rules.ts.
+  // every source shares one matching engine - see service-matching-rules.ts.
   // Recomputed on every persist, insert or update: a re-scrape can upgrade a
   // prospect's signal (e.g. weak -> strong, or a different signal type
   // entirely), and stale suggestions left over from a prior scrape would
@@ -138,7 +138,7 @@ async function persistProspect(prospect: DiscoveredProspect): Promise<'inserted'
         signal: prospect.signal,
         priorityScore,
         location: prospect.location,
-        // Cast needed: see the identical cast on the create() call below —
+        // Cast needed: see the identical cast on the create() call below -
         // an array of a plain interface doesn't structurally satisfy
         // Prisma's `InputJsonValue`.
         suggestedServices: suggestedServices as unknown as Prisma.InputJsonValue,
@@ -167,7 +167,7 @@ async function persistProspect(prospect: DiscoveredProspect): Promise<'inserted'
       estimatedBudget,
       // Cast needed: an array of a plain interface (no string index
       // signature) doesn't structurally satisfy Prisma's `InputJsonValue`
-      // even though it's valid JSON at runtime — same non-issue `Signal`
+      // even though it's valid JSON at runtime - same non-issue `Signal`
       // avoids only because it's a single object, not an array.
       suggestedServices: suggestedServices as unknown as Prisma.InputJsonValue,
       priorityScore,
@@ -181,7 +181,7 @@ async function persistProspect(prospect: DiscoveredProspect): Promise<'inserted'
  * whatever sources are configured for the requested `branch`, dedupes by
  * domain, computes a stub priority score, and persists new/updated
  * prospects. Never fails the whole run because one source lacks an API
- * key — each source's availability and outcome is reported in `sources`.
+ * key - each source's availability and outcome is reported in `sources`.
  *
  * `branch` selects which sources run: `'a'` (default) = local/SMB discovery
  * (Google Places, yellowpages), `'b'` = startup/SaaS discovery (Product

@@ -4,7 +4,7 @@ import { isIP } from 'node:net';
 // Guards against SSRF when a URL comes from attacker-writable data (e.g. a
 // scraped listing's "website" field). Anyone can set that field to
 // http://169.254.169.254/... (cloud metadata) or http://localhost:PORT/admin,
-// so every such URL must be validated — including every hop of a redirect —
+// so every such URL must be validated - including every hop of a redirect -
 // before it's ever fetched.
 
 const ALLOWED_PROTOCOLS = new Set(['http:', 'https:']);
@@ -67,20 +67,20 @@ function isBlockedIpv6(address: string): boolean {
 
 /**
  * Rejects an IP address if it falls in a private/loopback/link-local/reserved
- * range — the ranges an attacker-supplied URL could use to reach internal
+ * range - the ranges an attacker-supplied URL could use to reach internal
  * infrastructure or the cloud metadata endpoint.
  */
 function isBlockedIpAddress(address: string): boolean {
   const version = isIP(address);
   if (version === 4) return isBlockedIpv4(address);
   if (version === 6) return isBlockedIpv6(address);
-  return true; // Not a recognizable IP — fail closed.
+  return true; // Not a recognizable IP - fail closed.
 }
 
 /**
  * Validates a single URL as a safe fetch target: only `http`/`https`
  * schemes, and the hostname must not resolve to a private/loopback/
- * link-local/reserved IP address. Does not follow redirects — callers
+ * link-local/reserved IP address. Does not follow redirects - callers
  * fetching with redirects must re-validate each hop's URL with this same
  * function (see `fetchSafely`).
  */
@@ -98,7 +98,7 @@ export async function isSafeFetchTarget(url: string): Promise<boolean> {
     const { address } = await dnsLookup(parsed.hostname);
     return !isBlockedIpAddress(address);
   } catch {
-    return false; // DNS resolution failure — fail closed.
+    return false; // DNS resolution failure - fail closed.
   }
 }
 
@@ -106,8 +106,8 @@ const MAX_REDIRECTS = 3;
 
 /**
  * Fetches a URL that may come from attacker-writable data (scraped listings,
- * user-editable business profiles), validating the URL — and every redirect
- * hop — against `isSafeFetchTarget` before it's followed. Returns `null` if
+ * user-editable business profiles), validating the URL - and every redirect
+ * hop - against `isSafeFetchTarget` before it's followed. Returns `null` if
  * the initial URL or any hop fails validation, or after `MAX_REDIRECTS` hops
  * without landing on a final response.
  */

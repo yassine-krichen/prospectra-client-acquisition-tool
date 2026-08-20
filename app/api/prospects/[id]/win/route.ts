@@ -9,8 +9,8 @@ interface RouteParams {
 /**
  * Marks a Prospect as won and converts it into a Client (see
  * `convertProspectToClient`). Returns 200 with the outcome in the body for
- * every "can't do this right now" case — `already_converted`,
- * `blocked_do_not_contact` — matching this app's established per-item-
+ * every "can't do this right now" case - `already_converted`,
+ * `blocked_do_not_contact` - matching this app's established per-item-
  * outcome convention (`queue/approve/route.ts`) rather than encoding those
  * as HTTP error statuses. Only a genuinely missing Prospect is a 404.
  */

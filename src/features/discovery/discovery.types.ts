@@ -22,7 +22,7 @@ export type DiscoverRequest = z.infer<typeof discoverRequestSchema>;
 
 // The subset of the `Prospect` shape a discovery source can populate on its
 // own. The orchestrator fills in the rest (id, priorityScore persistence,
-// status, etc) once results are deduped — including `projectFit`/
+// status, etc) once results are deduped - including `projectFit`/
 // `estimatedBudget`, which are computed centrally from `signal`/
 // `companySize`/`industry` by the matching engine at persist time
 // (`service-matching-rules.ts`) rather than supplied by each source.

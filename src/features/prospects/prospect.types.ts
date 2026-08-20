@@ -154,7 +154,7 @@ export const prospectSchema = z.object({
   priorityScore: z.number().int(),
   status: prospectStatusSchema,
   statusHistory: z.array(statusHistoryEntrySchema),
-  // Dashboard-only read marker — see the doc comment on `Prospect.seen` in
+  // Dashboard-only read marker - see the doc comment on `Prospect.seen` in
   // prisma/schema.prisma. Not part of the outreach pipeline's own state.
   seen: z.boolean(),
   drafts: z.array(draftSchema),
@@ -174,7 +174,7 @@ export type Prospect = z.infer<typeof prospectSchema>;
 // Narrower projection returned by the prospect list/dashboard view
 // (`listProspects` in `prospects.repository.ts`). Excludes heavier fields
 // the list UI doesn't render (drafts, statusHistory, notes, tags, contact
-// details, follow-up/reply tracking) — a full prospect detail view can
+// details, follow-up/reply tracking) - a full prospect detail view can
 // fetch the rest by id later. Keeping this explicit (rather than reusing
 // the full `prospectSchema`) also means the list query only ever selects
 // the columns it actually needs.

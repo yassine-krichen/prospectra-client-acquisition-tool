@@ -93,7 +93,7 @@ Filler and hedging patterns:
   state the point directly
 
 Hard rule: never invent facts. The rewrite must contain no fact, name,
-number, date, quote, or citation absent from the original text — only
+number, date, quote, or citation absent from the original text - only
 wording, structure, and phrasing may change. Swap a vague phrase for a
 specific one only when that specific detail already exists in the source;
 if a sentence would need invented real-world detail to read naturally,

@@ -19,8 +19,8 @@ const MODERN_FRAMEWORK_PATTERN = /(react|vue\.?js|next\.?js|angular|svelte|nuxt)
 
 // EOL/outdated framework signals a BuiltWith tech-stack response can surface.
 // Each rule inspects the full technology-name list (not just one entry)
-// because some signals — e.g. "WordPress with nothing modern layered on
-// top" — depend on what's absent as much as what's present.
+// because some signals - e.g. "WordPress with nothing modern layered on
+// top" - depend on what's absent as much as what's present.
 const STALE_STACK_RULES: readonly StaleStackRule[] = [
   {
     id: 'eol-jquery',
@@ -36,11 +36,11 @@ const STALE_STACK_RULES: readonly StaleStackRule[] = [
       if (major !== null && major <= 1) {
         return {
           strength: 'strong',
-          description: `jQuery ${major}.x detected — EOL major version`,
+          description: `jQuery ${major}.x detected - EOL major version`,
         };
       }
       if (major === 2) {
-        return { strength: 'medium', description: 'jQuery 2.x detected — EOL major version' };
+        return { strength: 'medium', description: 'jQuery 2.x detected - EOL major version' };
       }
       if (major === null) {
         return {
@@ -61,7 +61,7 @@ const STALE_STACK_RULES: readonly StaleStackRule[] = [
       if (hasWordpress && !hasModernFramework) {
         return {
           strength: 'weak',
-          description: 'WordPress detected with no modern JS framework layered on top — likely a dated theme-based site',
+          description: 'WordPress detected with no modern JS framework layered on top - likely a dated theme-based site',
         };
       }
 

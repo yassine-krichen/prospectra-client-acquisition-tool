@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // convertProspectToClient is the sole entry point allowed to flip a Prospect
-// to `won` and create its Client — same "one atomic claim, conditioned on
+// to `won` and create its Client - same "one atomic claim, conditioned on
 // exactly the state just read" pattern as send-queue.service.ts/
 // followup-scheduler.ts. Prisma is mocked (this is an orchestration test,
 // not a real-DB test), including `$transaction`, which is modeled as simply
-// invoking the given callback with a mocked `tx` client — matching how the
+// invoking the given callback with a mocked `tx` client - matching how the
 // real Prisma client behaves for an interactive transaction.
 const { findUniqueProspectMock, updateManyProspectMock, findUniqueClientMock, createClientMock } = vi.hoisted(() => ({
   findUniqueProspectMock: vi.fn(),

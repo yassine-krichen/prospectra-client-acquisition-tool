@@ -5,7 +5,7 @@ import { getWarmupRampCap } from '@/features/sending/daily-cap';
 // real sending domain yet (as of this phase), so this module's job is to
 // make it structurally impossible to send real volume until
 // `DOMAIN_DNS_VERIFIED` is flipped to "true" by a human who has actually
-// verified those DNS records — not a suggestion, a gate.
+// verified those DNS records - not a suggestion, a gate.
 //
 // `env.DOMAIN_DNS_VERIFIED` and `env.DAILY_SEND_CAP_TEST` must never be read
 // directly by any other module in this codebase. Every send path calls
@@ -15,8 +15,8 @@ import { getWarmupRampCap } from '@/features/sending/daily-cap';
 /**
  * The single source of truth for "how many emails may be sent today,
  * total". Returns `DAILY_SEND_CAP_TEST` whenever the domain isn't verified
- * — regardless of what the warmup ramp (`daily-cap.ts`) would otherwise
- * allow — and only consults the ramp once verified. There is no parameter
+ * - regardless of what the warmup ramp (`daily-cap.ts`) would otherwise
+ * allow - and only consults the ramp once verified. There is no parameter
  * here a caller could use to pass through a larger cap: this function takes
  * no arguments, so a caller cannot request a bypass even by accident.
  */

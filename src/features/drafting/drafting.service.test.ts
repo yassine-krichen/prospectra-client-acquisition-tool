@@ -4,7 +4,7 @@ import { ACTIVE_FRAMEWORKS } from './prompt-templates';
 
 // This is an orchestration test: gemini.client.ts/groq.client.ts and
 // model-rotation.ts have their own dedicated suites, and claude-bridge.client.ts
-// does too, so all three are mocked here — only drafting.service.ts's own
+// does too, so all three are mocked here - only drafting.service.ts's own
 // signal-validation, variant/humanize orchestration, status-advancement, and
 // batch-stopping logic is under test.
 const {
@@ -87,7 +87,7 @@ function buildProspectRow(overrides: ProspectRowOverrides = {}) {
 
 // 60 filler words (comfortably inside the 50-125 MIN_WORDS/MAX_WORDS range)
 // prefixed with a label so each variant's body is distinguishable, and
-// containing none of BANNED_PHRASES — needed so these fixtures pass
+// containing none of BANNED_PHRASES - needed so these fixtures pass
 // validate-draft-output.ts's post-generation validation, which
 // drafting.service.ts now runs on every generation.
 function validBody(label: string): string {
@@ -193,7 +193,7 @@ describe('draftProspect', () => {
     if (!result.ok) throw new Error('expected a drafted result');
 
     // ACTIVE_FRAMEWORKS currently has exactly 3 entries and VARIANT_COUNT is
-    // 3, so every active framework is used exactly once, in some order —
+    // 3, so every active framework is used exactly once, in some order -
     // never the same framework twice, never a shared prompt across variants.
     const promptsUsed = generateDraftWithFallbackMock.mock.calls.map(([prompt]) => prompt as string);
     expect(new Set(promptsUsed).size).toBe(promptsUsed.length);

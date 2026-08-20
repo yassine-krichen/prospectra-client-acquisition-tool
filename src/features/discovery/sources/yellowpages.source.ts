@@ -7,7 +7,7 @@ const YELLOWPAGES_BASE_URL = 'https://www.yellowpages.com';
 const RESULT_SELECTOR = 'div.result';
 
 // Optional bonus source (not one of the spec's three official Branch A
-// sources — Google Places + BuiltWith are). Ported from the Python
+// sources - Google Places + BuiltWith are). Ported from the Python
 // prototype's BeautifulSoup-by-CSS-class parsing (see removed
 // `app/scraper/yellowpages.py` in git history) to Playwright's in-page DOM
 // evaluation, which serves the same purpose here.
@@ -25,7 +25,7 @@ async function scrapeListings(searchUrl: string): Promise<ScrapedListing[]> {
     const page = await session.context.newPage();
     await page.goto(searchUrl, { timeout: 60_000 });
     // The page may render zero results legitimately (no matches for the
-    // query) — don't treat a missing selector as a hard failure.
+    // query) - don't treat a missing selector as a hard failure.
     await page.waitForSelector(RESULT_SELECTOR, { timeout: 10_000 }).catch(() => null);
 
     return await page.$$eval(RESULT_SELECTOR, (nodes) =>
@@ -93,7 +93,7 @@ export async function runYellowPagesSource(query: DiscoveryQuery): Promise<Sourc
       industry: 'local_service',
       location: { city: query.geography, country: null, lat: null, lng: null },
       companySize: 'unknown',
-      // ProspectSource has no `yellowpages` value — it isn't one of the
+      // ProspectSource has no `yellowpages` value - it isn't one of the
       // spec's three official Branch A sources, and extending the enum is
       // a schema migration out of scope for this phase. `manual` is the
       // closest existing value; revisit if yellowpages becomes a

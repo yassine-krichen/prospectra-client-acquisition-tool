@@ -8,7 +8,7 @@ const PRODUCT_HUNT_GRAPHQL_URL = 'https://api.producthunt.com/v2/api/graphql';
 
 // Product Hunt's search is topic-based, not category+geography like Branch
 // A's local/SMB sources. `query.category` is reused as the topic slug (e.g.
-// "saas", "developer-tools") and `query.geography` is ignored — Product
+// "saas", "developer-tools") and `query.geography` is ignored - Product
 // Hunt launches aren't tied to a location, so `location` on every discovered
 // prospect is left empty rather than approximated from the query.
 const POSTS_PER_QUERY = 20;
@@ -50,8 +50,8 @@ const postsResponseSchema = z.object({
 
 /**
  * Fetches recently launched products from Product Hunt's GraphQL API,
- * filtered by topic. Returns a typed "unavailable" result — rather than
- * throwing — when PRODUCT_HUNT_API_TOKEN is unset or the API call fails, so
+ * filtered by topic. Returns a typed "unavailable" result - rather than
+ * throwing - when PRODUCT_HUNT_API_TOKEN is unset or the API call fails, so
  * one missing key doesn't crash discovery.
  */
 export async function runProductHuntSource(query: DiscoveryQuery): Promise<SourceResult> {

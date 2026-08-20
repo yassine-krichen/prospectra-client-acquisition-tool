@@ -6,7 +6,7 @@ import type { ModelUsed } from '@/features/prospects/prospect.types';
 
 // Every domain value (the "claude-bridge" hyphenated DB-storage form used
 // across the app) paired with the Prisma enum member name it must map to
-// ("claude_bridge" — the `@map`'d DB storage value is "claude-bridge", but
+// ("claude_bridge" - the `@map`'d DB storage value is "claude-bridge", but
 // Prisma's generated client always exposes the enum member name at the
 // TS/runtime boundary, never the mapped value). See the header comment in
 // model-used.mapper.ts / company-size.mapper.ts.
@@ -54,13 +54,13 @@ describe('round-trip', () => {
 
 // NOTE: company-size.mapper.ts previously had a bug where an invalid/unmapped
 // input silently returned `undefined` at runtime instead of failing closed
-// (fixed by adding an explicit undefined-check that throws — see
+// (fixed by adding an explicit undefined-check that throws - see
 // company-size.mapper.test.ts's "invalid input handling" block). These two
 // tests assert model-used.mapper.ts holds the same fail-closed contract.
 // As of this writing, `toPrismaModelUsed`/`fromPrismaModelUsed` have NO such
 // guard (no undefined-check, unlike company-size.mapper.ts's fixed version),
 // so both tests below are expected to FAIL against the current
-// implementation — see the fail-closed gap called out in the accompanying
+// implementation - see the fail-closed gap called out in the accompanying
 // report. Do not "fix" these tests to match the current silent-passthrough
 // behavior; the gap is in the source, not the test.
 describe('invalid input handling', () => {

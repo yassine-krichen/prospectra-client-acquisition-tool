@@ -10,7 +10,7 @@ interface RouteParams {
  * Recomputes and persists a Prospect's service suggestions
  * (`suggestedServices`/`projectFit`/`estimatedBudget`) via the rules-based
  * matching engine. Manual trigger for a dashboard "Recompute suggestions"
- * button — the same computation also runs automatically after discovery
+ * button - the same computation also runs automatically after discovery
  * and enrichment. Returns 200 with the outcome in the body for
  * `invalid_signal`, matching this app's established per-item-outcome
  * convention (`win/route.ts`). Only a genuinely missing Prospect is a 404.

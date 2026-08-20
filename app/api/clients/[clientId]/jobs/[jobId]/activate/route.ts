@@ -8,9 +8,9 @@ interface RouteParams {
 }
 
 /**
- * Marks a recurring Job `active -> monthly` (see `markJobRecurringActive`) —
+ * Marks a recurring Job `active -> monthly` (see `markJobRecurringActive`) -
  * the retainer "going live" for the first time. Verifies the Job actually
- * belongs to `clientId` from the route — not just that the Job exists —
+ * belongs to `clientId` from the route - not just that the Job exists -
  * before delegating, same ownership check as the sibling `deliver` route.
  * Returns 200 with the outcome in the body for every "can't do this right
  * now" case (`already_active`, `not_eligible`), matching this app's

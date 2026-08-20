@@ -4,7 +4,7 @@ import type { ParsedDraftOutput } from '@/features/drafting/parse-draft-output';
 // Post-generation safety net for the hard constraints prompt-templates.ts
 // only asks the model for as instructions. Models don't always comply, so
 // this re-checks the model's actual output rather than trusting the prompt
-// alone — see drafting.service.ts for how a failure here is handled.
+// alone - see drafting.service.ts for how a failure here is handled.
 
 export type DraftConstraintViolation = 'word_count' | 'banned_phrase';
 

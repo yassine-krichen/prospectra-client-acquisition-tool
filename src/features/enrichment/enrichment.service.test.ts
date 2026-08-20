@@ -262,7 +262,7 @@ describe('enrichProspect', () => {
       })
     );
     // Same source chain, but this attempt's result is an unverified guess at
-    // an equal-or-higher confidence score — the confidence-drop check alone
+    // an equal-or-higher confidence score - the confidence-drop check alone
     // would miss this, since confidence didn't drop.
     runHunterEnrichmentMock.mockResolvedValue({
       ok: true,

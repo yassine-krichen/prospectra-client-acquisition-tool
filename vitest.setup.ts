@@ -5,7 +5,7 @@ import "dotenv/config"
 // imports it. `env.test.ts` mutates `process.env` and reloads the module per
 // case to exercise the validation failure paths directly.
 //
-// DATABASE_URL comes from `.env` (loaded above via dotenv/config) — the same
+// DATABASE_URL comes from `.env` (loaded above via dotenv/config) - the same
 // Neon database the app itself uses. The integration tests that hit a real
 // Postgres (discovery.service.dnc-preservation.test.ts, bridge-budget.test.ts,
 // hunter.source.test.ts, prospects.repository.test.ts,

@@ -11,7 +11,7 @@ function startOfUtcDay(date: Date): Date {
 /**
  * Server-enforced count of emails actually sent today (UTC), derived from
  * `Prospect.sentAt`/`Prospect.lastFollowupAt`/`Job.lastRetentionTouchAt`
- * rather than a separate counter table — per the Phase 4 spec, counting
+ * rather than a separate counter table - per the Phase 4 spec, counting
  * existing timestamp columns avoids introducing a second source of truth
  * that could drift out of sync with what was actually sent. This is the
  * only place send-queue.service.ts, followup-scheduler.ts, and
@@ -21,10 +21,10 @@ function startOfUtcDay(date: Date): Date {
  * shared daily cap mid-batch.
  *
  * `sentAt` is set once, by the original send (send-queue.service.ts), and
- * must keep meaning exactly that — it is never overwritten by a follow-up.
+ * must keep meaning exactly that - it is never overwritten by a follow-up.
  * `lastFollowupAt` is set on every subsequent follow-up touch
  * (followup-scheduler.ts). `lastRetentionTouchAt` is set on every retention
- * touch (retention-scheduler.ts) — a Job, not a Prospect, so it's a separate
+ * touch (retention-scheduler.ts) - a Job, not a Prospect, so it's a separate
  * count summed in, not a third OR branch on the same table. A follow-up or
  * retention send is still a send against the same sending-domain reputation,
  * so it counts toward today's total alongside original sends.

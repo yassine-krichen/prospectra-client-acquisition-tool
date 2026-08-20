@@ -73,7 +73,7 @@ describe("createSessionToken / verifySessionToken", () => {
     const token = await createSessionToken()
 
     vi.useFakeTimers()
-    // Just under the boundary — should still be valid.
+    // Just under the boundary - should still be valid.
     vi.setSystemTime(Date.now() + SESSION_MAX_AGE_SECONDS * 1000 - 1000)
 
     await expect(verifySessionToken(token)).resolves.toBe(true)

@@ -5,7 +5,7 @@ import { draftSchema, serviceSuggestionSchema } from '@/features/prospects/prosp
 // Client-safe fetch helpers + response schemas for the four per-prospect
 // pipeline actions the dashboard exposes. Response shapes mirror each
 // route's actual return type (see `app/api/prospects/[id]/*/route.ts`), not
-// imported directly — those routes import server-only `.service.ts` modules.
+// imported directly - those routes import server-only `.service.ts` modules.
 
 // --- enrich ---
 
@@ -114,7 +114,7 @@ const winResponseSchema = z.union([
 ]);
 export type WinResult = z.infer<typeof winResponseSchema> | { outcome: 'not_found' };
 
-// The route returns 404 (not 200) for a missing prospect — a typed
+// The route returns 404 (not 200) for a missing prospect - a typed
 // `not_found` result rather than throwing, matching this hook's convention
 // of surfacing every outcome (including "can't do this") to the caller.
 export async function winProspect(prospectId: string): Promise<WinResult> {
@@ -128,4 +128,30 @@ export async function winProspect(prospectId: string): Promise<WinResult> {
 
   const body: unknown = await response.json();
   return winResponseSchema.parse(body);
+}
+
+// --- seen ---
+
+const seenResponseSchema = z.object({ id: z.string(), seen: z.boolean() });
+export type SeenResult = z.infer<typeof seenResponseSchema>;
+
+/**
+ * Toggles the dashboard-only "seen" read marker (see the doc comment on
+ * `Prospect.seen` in prisma/schema.prisma) - not part of the outreach
+ * pipeline's own state, so unlike the other actions here this is meant to
+ * be a fast, silent interaction: callers should update local state directly
+ * rather than treating this like enrich/draft/match/win.
+ */
+export async function setProspectSeen(prospectId: string, seen: boolean): Promise<SeenResult> {
+  const response = await fetch(`/api/prospects/${prospectId}/seen`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ seen }),
+  });
+  if (!response.ok) {
+    throw new Error(`Seen request failed (status ${response.status}).`);
+  }
+
+  const body: unknown = await response.json();
+  return seenResponseSchema.parse(body);
 }

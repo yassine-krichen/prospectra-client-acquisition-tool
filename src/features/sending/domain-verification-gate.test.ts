@@ -22,7 +22,7 @@ beforeEach(() => {
 });
 
 describe('getEffectiveDailyCap', () => {
-  it('returns DAILY_SEND_CAP_TEST, never the warmup ramp cap, while the domain is unverified — even when the ramp would allow far more volume', () => {
+  it('returns DAILY_SEND_CAP_TEST, never the warmup ramp cap, while the domain is unverified - even when the ramp would allow far more volume', () => {
     mockEnv.DOMAIN_DNS_VERIFIED = false;
     mockEnv.DAILY_SEND_CAP_TEST = 3;
     getWarmupRampCapMock.mockReturnValue(100); // stubbed high ramp value that must NOT leak through

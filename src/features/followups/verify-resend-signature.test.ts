@@ -4,8 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 // `verify-resend-signature.ts` reads `env.RESEND_WEBHOOK_SECRET` at call time
 // from the `env` module-level singleton, which is itself computed once at
-// import time from `process.env` (see env.ts). So — same pattern as
-// env.test.ts — every case that needs a specific RESEND_WEBHOOK_SECRET value
+// import time from `process.env` (see env.ts). So - same pattern as
+// env.test.ts - every case that needs a specific RESEND_WEBHOOK_SECRET value
 // mutates `process.env` and forces a fresh module evaluation via
 // `vi.resetModules()` + a dynamic import, rather than mocking the module.
 
@@ -41,7 +41,7 @@ afterEach(() => {
 
 // Independently computes the signature Resend/Svix would send, using Node's
 // own crypto module rather than reusing any code path from
-// verify-resend-signature.ts — a shared bug between "how the test builds a
+// verify-resend-signature.ts - a shared bug between "how the test builds a
 // valid signature" and "how the source verifies it" would otherwise let a
 // broken verifier pass its own tests.
 function computeValidSignature(whsecSecret: string, signedContent: string): string {
@@ -167,9 +167,9 @@ describe('verifyResendWebhookSignature tampering fails closed', () => {
   });
 });
 
-describe('verifyResendWebhookSignature — RESEND_WEBHOOK_SECRET unset fails closed (critical case)', () => {
+describe('verifyResendWebhookSignature - RESEND_WEBHOOK_SECRET unset fails closed (critical case)', () => {
   it('rejects a genuinely valid, correctly signed request when RESEND_WEBHOOK_SECRET is unset at verification time', async () => {
-    // Build a real, well-formed signature using the known secret first — this
+    // Build a real, well-formed signature using the known secret first - this
     // is the exact request Resend would send if RESEND_WEBHOOK_SECRET really
     // were configured to WEBHOOK_SECRET.
     setEnv({ RESEND_WEBHOOK_SECRET: WEBHOOK_SECRET });
@@ -185,7 +185,7 @@ describe('verifyResendWebhookSignature — RESEND_WEBHOOK_SECRET unset fails clo
     ).resolves.toBe(true);
 
     // Now reload with RESEND_WEBHOOK_SECRET unset and replay the exact same,
-    // otherwise-valid request. Fail-closed means this must be rejected — an
+    // otherwise-valid request. Fail-closed means this must be rejected - an
     // unset secret means the server can't verify anything, not that it
     // trusts whatever arrives.
     setEnv({ RESEND_WEBHOOK_SECRET: undefined });

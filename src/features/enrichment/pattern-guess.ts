@@ -1,5 +1,5 @@
 // Generates standard corporate email address patterns from a contact name
-// and domain — no API key needed. This is the last-resort fallback in
+// and domain - no API key needed. This is the last-resort fallback in
 // enrichment.service.ts's chain: a guess, not a verified email, so callers
 // must pair it with a plausibility check (see smtp-verify.ts) and score it
 // with a conservatively low confidence.

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Orchestration test: domain-verification-gate.ts and daily-send-counter.ts
-// each have their own dedicated suites, so both are mocked here — only
+// each have their own dedicated suites, so both are mocked here - only
 // queue-listing.ts's own querying and pickDisplayDraft priority-selection
 // logic is under test. pickDisplayDraft itself isn't exported, so its
 // priority tiers are exercised indirectly through listApprovalQueue's

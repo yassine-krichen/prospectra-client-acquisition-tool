@@ -3,7 +3,7 @@ import { prisma } from '@/common/db/client';
 import { fromPrismaCompanySize } from '@/features/prospects/company-size.mapper';
 import type { Client, Job } from '@/features/clients/client.types';
 
-// Explicit projection — no `SELECT *` — matching prospects.repository.ts's
+// Explicit projection - no `SELECT *` - matching prospects.repository.ts's
 // convention (see "Explicit data selection" in engineering standards).
 const CLIENT_SELECT = {
   id: true,
@@ -46,7 +46,7 @@ export async function getClientWithJobs(clientId: string): Promise<Client | null
 }
 
 /**
- * All Clients with their Jobs, newest first. No pagination/filtering yet —
+ * All Clients with their Jobs, newest first. No pagination/filtering yet -
  * deferred until the dashboard Clients list (or a later phase) actually
  * needs it, per "don't over-build."
  */

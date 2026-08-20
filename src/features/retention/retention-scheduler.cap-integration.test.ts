@@ -6,7 +6,7 @@ import { prisma } from '@/common/db/client';
 import { getEffectiveDailyCap } from '@/features/sending/domain-verification-gate';
 import { runRetentionScheduler } from '@/features/retention/retention-scheduler';
 
-// Integration test against the real Postgres DB (DATABASE_URL — the same
+// Integration test against the real Postgres DB (DATABASE_URL - the same
 // database the app uses, see vitest.setup.ts), same pattern/style as
 // followup-scheduler.cap-integration.test.ts. Unlike retention-scheduler.test.ts
 // (which mocks `getTodaysSendCount` directly for fast, isolated orchestration
@@ -15,13 +15,13 @@ import { runRetentionScheduler } from '@/features/retention/retention-scheduler'
 //
 // `daily-send-counter.ts`'s `getTodaysSendCount()` sums BOTH
 // `Prospect.sentAt`/`Prospect.lastFollowupAt` and `Job.lastRetentionTouchAt`
-// — a retention send is still a send against the same shared cap. This test
+// - a retention send is still a send against the same shared cap. This test
 // proves the retention scheduler correctly RESPECTS whatever the shared
 // counter reports, using Prospect rows as the "other sends today" filler,
 // same technique the followups version of this test uses. It does not prove
 // a successful retention send is itself counted by a later run (that would
 // need a real `RESEND_API_KEY` for `sendEmail` to succeed rather than roll
-// back the claim) — same limitation the followups cap-integration test has.
+// back the claim) - same limitation the followups cap-integration test has.
 beforeEach(async () => {
   await prisma.prospect.deleteMany();
   await prisma.job.deleteMany();

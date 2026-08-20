@@ -7,12 +7,12 @@ import { generateGroqDraft } from '@/features/drafting/groq.client';
 import type { DraftGenerationResult, ModelRotationResult } from '@/features/drafting/drafting.types';
 
 // Bridge-budget cooldown record is keyed under this same source string
-// claude-bridge.client.ts itself uses — both lanes (humanize, and this
+// claude-bridge.client.ts itself uses - both lanes (humanize, and this
 // module's tier-2 draft-generation fallback) share one cooldown record.
 const BRIDGE_SOURCE = 'claude-bridge';
 
 // The full set of providers this registry knows how to call. `DraftingProvider`
-// (drafting.types.ts) is wider still — it also includes `'claude-bridge'`,
+// (drafting.types.ts) is wider still - it also includes `'claude-bridge'`,
 // the tier-2 fallback lane this registry itself never selects (see
 // `generateDraftWithFallback` below).
 export type ProviderId = 'gemini' | 'groq' | 'deepseek';
@@ -36,7 +36,7 @@ interface ProviderDefinition {
 
 // One entry per registered provider. Adding a new free-tier provider later
 // means writing one client file (matching gemini.client.ts/groq.client.ts's
-// pattern) and adding one entry here — no changes to the selection/failover
+// pattern) and adding one entry here - no changes to the selection/failover
 // logic below.
 const PROVIDERS: Record<ProviderId, ProviderDefinition> = {
   gemini: {
@@ -71,12 +71,12 @@ function pickRandom<T>(items: readonly T[]): T {
  * within it, across its comma-separated keys. Selection is uniformly random
  * rather than round-robin: unlike in-memory rotation-index state, a random
  * pick needs no state to persist across calls, which matters because this
- * app runs on Vercel serverless — module-level state doesn't survive cold
+ * app runs on Vercel serverless - module-level state doesn't survive cold
  * starts, so an index-based rotation silently stops rotating fairly there.
  * On failure (or a provider having no key at all), that provider is dropped
  * from the candidate pool and another is picked at random from what
  * remains, repeating until one succeeds or every configured provider has
- * been tried and failed — at which point `drafting.service.ts` treats the
+ * been tried and failed - at which point `drafting.service.ts` treats the
  * result as "no LLM available" and flags the prospect rather than throwing.
  */
 export async function generateDraftWithRotation(prompt: string): Promise<ModelRotationResult> {
@@ -110,14 +110,14 @@ export async function generateDraftWithRotation(prompt: string): Promise<ModelRo
 /**
  * `generateDraftWithRotation` (the bulk Gemini/Groq/DeepSeek pool), with a
  * single tier-2 overflow attempt via claude-web-bridge when that whole pool
- * is exhausted — gated on BOTH conditions together, per the drafting
+ * is exhausted - gated on BOTH conditions together, per the drafting
  * redesign plan:
  *
- * - `options.isHighPriority` — a low-priority prospect never touches the
+ * - `options.isHighPriority` - a low-priority prospect never touches the
  *   scarce, shared ~40-msgs/8h bridge budget, even during a temporary
  *   all-providers outage. It's flagged exactly as it is today.
  * - the bridge not already being in a known cooldown
- *   (`bridge-budget.ts`'s `isBridgeInCooldown`) — skips the bridge attempt
+ *   (`bridge-budget.ts`'s `isBridgeInCooldown`) - skips the bridge attempt
  *   entirely rather than burning a call already known to fail, and rather
  *   than risking discovering the same 429 redundantly from many concurrent
  *   high-priority prospects.

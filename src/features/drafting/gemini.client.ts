@@ -27,7 +27,7 @@ const geminiResponseSchema = z.object({
  * Generates one subject+body draft via Google's Gemini API for an
  * already-selected `apiKey` (key selection/rotation across a
  * comma-separated `GEMINI_API_KEY` list, and failover to Groq, are
- * model-rotation.ts's job — this client only knows how to make one call).
+ * model-rotation.ts's job - this client only knows how to make one call).
  * Never throws: a failed request, non-2xx response, shape mismatch, or
  * output that doesn't parse into the SUBJECT:/BODY: format all degrade to a
  * typed `ok:false` result instead.

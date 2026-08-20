@@ -7,7 +7,7 @@ import {
 } from './service-matching-rules';
 import type { CompanySize, Industry, Signal, SignalType } from '@/features/prospects/prospect.types';
 
-// Table-driven and one case per business rule row in the plan — this is the
+// Table-driven and one case per business rule row in the plan - this is the
 // highest-value test file in this phase since the rules engine is pure and
 // encodes every business rule literally.
 
@@ -95,7 +95,7 @@ describe('computeServiceSuggestions', () => {
     }
   );
 
-  it('produces no primary suggestion when hiring_post is the sole signal (known schema gap — no array of signals to derive one from)', () => {
+  it('produces no primary suggestion when hiring_post is the sole signal (known schema gap - no array of signals to derive one from)', () => {
     const suggestions = compute('hiring_post', '1-10', 'local_service');
     expect(findSuggestion(suggestions, 'primary')).toBeUndefined();
   });
@@ -198,7 +198,7 @@ describe('deriveProjectFitAndBudget', () => {
     expect(bumped.estimatedBudget).not.toBe(baseline.estimatedBudget);
   });
 
-  it('caps the bumped budget bucket at high — never overflows past the top bucket', () => {
+  it('caps the bumped budget bucket at high - never overflows past the top bucket', () => {
     const signal = buildSignal('funding_event');
     // A 51-200 full_stack_app primary is already priced into the 'high'
     // bucket by threshold alone, so the bump has nowhere higher to go.

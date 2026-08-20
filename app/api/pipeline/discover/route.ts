@@ -4,10 +4,10 @@ import { discoverRequestSchema } from '@/features/discovery/discovery.types';
 import { runDiscovery } from '@/features/discovery/discovery.service';
 
 /**
- * Dashboard-triggered counterpart to `api/cron/discover` — runs the same
+ * Dashboard-triggered counterpart to `api/cron/discover` - runs the same
  * discovery pipeline on demand from a human clicking "Run discovery" in the
  * UI. Session-gated by `proxy.ts` (this route isn't under `api/cron/`, so
- * it's not exempt), so it deliberately does not check `x-cron-secret` — a
+ * it's not exempt), so it deliberately does not check `x-cron-secret` - a
  * logged-in dashboard session is the authorization here, same as
  * `api/queue/approve`.
  */

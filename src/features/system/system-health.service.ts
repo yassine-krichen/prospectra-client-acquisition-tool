@@ -7,13 +7,13 @@ import { prospectStatusSchema } from '@/features/prospects/prospect.types';
 
 // Neon's free tier caps a project at 0.5 GiB of storage. There's no API call
 // this app can make to ask Neon "what's my plan's limit" (that needs a Neon
-// API key, which is a separate, unrelated credential from DATABASE_URL) — so
+// API key, which is a separate, unrelated credential from DATABASE_URL) - so
 // this is a soft, hardcoded assumption, not a fact read from Neon itself.
 // Correct as of the free tier at the time this was written; if the project
 // is ever upgraded to a paid Neon plan, update this constant.
 const NEON_FREE_TIER_LIMIT_MB = 512;
 
-// Mirrors hunter.source.ts's own MONTHLY_FREE_TIER_CAP — duplicated rather
+// Mirrors hunter.source.ts's own MONTHLY_FREE_TIER_CAP - duplicated rather
 // than imported because that constant is private to a module whose only
 // public surface is "run an enrichment attempt", not "report your cap".
 // Keep in sync if hunter.source.ts's cap ever changes.
@@ -86,7 +86,7 @@ async function getDatabaseHealth(): Promise<DatabaseHealth> {
       percentUsed: Math.round((sizeMB / NEON_FREE_TIER_LIMIT_MB) * 1000) / 10,
     };
   } catch {
-    // A failed query here means the database itself is unreachable — worth
+    // A failed query here means the database itself is unreachable - worth
     // surfacing as a top-level "reachable: false" rather than throwing and
     // taking the whole health check down with it.
     return { reachable: false, sizeMB: null, limitMB: NEON_FREE_TIER_LIMIT_MB, percentUsed: null };
@@ -114,12 +114,12 @@ async function getHunterQuota(): Promise<QuotaStatus> {
 /**
  * Aggregates every "how much do I have left" signal this app can answer
  * without calling out to a third party just to ask (Neon's own storage
- * quota isn't queryable this way — see `NEON_FREE_TIER_LIMIT_MB`'s doc
+ * quota isn't queryable this way - see `NEON_FREE_TIER_LIMIT_MB`'s doc
  * comment): DB storage headroom, Hunter's monthly free-tier quota, today's
  * send-cap usage, claude-bridge's cooldown state, which optional external
  * services actually have a key configured, and a status-by-status funnel
  * count of every Prospect on file. Backs the dashboard's system-health
- * panel — never throws, since a health check that itself crashes the page
+ * panel - never throws, since a health check that itself crashes the page
  * defeats its own purpose.
  */
 export async function getSystemHealth(): Promise<SystemHealth> {

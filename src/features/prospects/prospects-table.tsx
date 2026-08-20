@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   type ColumnDef,
@@ -10,11 +10,17 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { z } from 'zod';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { Compass01Icon } from '@hugeicons/core-free-icons';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Badge, type badgeVariants } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { toastError, toastInfo, toastSourceResults, toastSuccess } from '@/lib/toast';
 import {
   industrySchema,
   projectFitSchema,
@@ -35,12 +41,12 @@ import {
   draftProspect,
   enrichProspect,
   matchProspect,
+  setProspectSeen,
   winProspect,
-  type DraftResult,
-  type EnrichResult,
-  type MatchResult,
-  type WinResult,
 } from '@/features/prospects/prospect-actions';
+import type { VariantProps } from 'class-variance-authority';
+
+type BadgeVariant = VariantProps<typeof badgeVariants>['variant'];
 
 // Mirrors `ProspectSortField` in `prospects.repository.ts`. Duplicated
 // (rather than imported) because that module pulls in the Prisma client,
@@ -52,7 +58,7 @@ const listProspectsResponseSchema = z.object({
   nextCursor: z.string().nullable(),
 });
 
-// Sentinel used by the filter `Select`s in place of an empty string — Radix
+// Sentinel used by the filter `Select`s in place of an empty string - Radix
 // `Select.Item` requires a non-empty `value`.
 const ALL = 'all';
 
@@ -66,6 +72,11 @@ interface FiltersState {
   priorityScoreMin: string;
   priorityScoreMax: string;
   hasVerifiedEmail: typeof ALL | 'true' | 'false';
+  // Client-side-only convenience filter - translates to `seen=false` on the
+  // wire (see buildQueryParams). Kept alongside the server-backed filters
+  // above rather than as separate component state so `resetFilters`/the
+  // cursor-reset-on-change behavior cover it for free.
+  hideSeen: boolean;
 }
 
 const DEFAULT_FILTERS: FiltersState = {
@@ -78,6 +89,7 @@ const DEFAULT_FILTERS: FiltersState = {
   priorityScoreMin: '',
   priorityScoreMax: '',
   hasVerifiedEmail: ALL,
+  hideSeen: false,
 };
 
 const DEFAULT_SORTING: SortingState = [{ id: 'discoveredAt', desc: true }];
@@ -100,6 +112,7 @@ function buildQueryParams(filters: FiltersState, sorting: SortingState, cursor: 
   if (filters.priorityScoreMin.trim() !== '') params.set('priorityScoreMin', filters.priorityScoreMin);
   if (filters.priorityScoreMax.trim() !== '') params.set('priorityScoreMax', filters.priorityScoreMax);
   if (filters.hasVerifiedEmail !== ALL) params.set('hasVerifiedEmail', filters.hasVerifiedEmail);
+  if (filters.hideSeen) params.set('seen', 'false');
 
   const sort = sorting[0];
   if (sort && isSortField(sort.id)) {
@@ -125,8 +138,37 @@ async function fetchProspects(
 }
 
 function formatDate(value: Date | null): string {
-  return value ? value.toLocaleDateString() : '—';
+  return value ? value.toLocaleDateString() : '-';
 }
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Unknown error.';
+}
+
+function isDefaultFilters(filters: FiltersState): boolean {
+  return (Object.keys(DEFAULT_FILTERS) as Array<keyof FiltersState>).every((key) => filters[key] === DEFAULT_FILTERS[key]);
+}
+
+const STATUS_BADGE_VARIANT: Record<ProspectStatus, BadgeVariant> = {
+  new: 'outline',
+  enriched: 'secondary',
+  drafted: 'secondary',
+  queued: 'secondary',
+  sent: 'secondary',
+  followup_1: 'secondary',
+  followup_2: 'secondary',
+  followup_3: 'secondary',
+  replied: 'default',
+  won: 'default',
+  dead: 'outline',
+  unsubscribed: 'outline',
+};
+
+const SIGNAL_BADGE_VARIANT: Record<SignalStrength, BadgeVariant> = {
+  weak: 'outline',
+  medium: 'secondary',
+  strong: 'default',
+};
 
 export function ProspectsTable(): React.JSX.Element {
   const [filters, setFilters] = useState<FiltersState>(DEFAULT_FILTERS);
@@ -138,13 +180,12 @@ export function ProspectsTable(): React.JSX.Element {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Per-row action state: which prospects have an action in flight, and the
-  // last outcome message for each — mirrors approval-queue-table.tsx's
-  // `pendingDraftIds`/`lastOutcomes` pattern.
+  // Per-row action state: which prospects have an action in flight. Outcome
+  // messaging itself goes through toasts (lib/toast.ts) now - the one bit of
+  // state still tracked per row is a successful Win's clientId, since that
+  // produces a persistent "view client" link a toast can't hold onto.
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
-  const [lastActionOutcomes, setLastActionOutcomes] = useState<Record<string, { message: string; clientId?: string }>>(
-    {}
-  );
+  const [wonClientIds, setWonClientIds] = useState<Record<string, string>>({});
   // Bumped after any action succeeds to re-trigger the load effect below, so
   // status/priorityScore/sentAt reflect the change from the server.
   const [refreshIndex, setRefreshIndex] = useState(0);
@@ -162,8 +203,8 @@ export function ProspectsTable(): React.JSX.Element {
         setProspects(result.prospects);
         setNextCursor(result.nextCursor);
       })
-      .catch(() => {
-        if (!cancelled) setError('Failed to load prospects.');
+      .catch((err: unknown) => {
+        if (!cancelled) setError(errorMessage(err));
       })
       .finally(() => {
         if (!cancelled) setIsLoading(false);
@@ -174,46 +215,13 @@ export function ProspectsTable(): React.JSX.Element {
     };
   }, [filters, sorting, currentCursor, refreshIndex]);
 
-  function describeEnrichResult(result: EnrichResult): string {
-    return result.prospect.emailVerified
-      ? `Enriched — ${result.prospect.contactEmail ?? 'no email'} (verified)`
-      : 'Enriched — no verified email found';
-  }
-
-  function describeDraftResult(result: DraftResult): string {
-    return result.ok ? `Drafted ${result.drafts.length} variants` : `Flagged: ${result.flagged}`;
-  }
-
-  function describeMatchResult(result: MatchResult): string {
-    return result.outcome === 'applied'
-      ? `Matched ${result.suggestedServices.length} suggestion(s)`
-      : `Invalid signal: ${result.reason}`;
-  }
-
-  function describeWinResult(result: WinResult): { message: string; clientId?: string } {
-    switch (result.outcome) {
-      case 'converted':
-        return { message: 'Converted to client', clientId: result.clientId };
-      case 'already_converted':
-        return { message: 'Already converted', clientId: result.clientId };
-      case 'blocked_do_not_contact':
-        return { message: 'Blocked — do not contact' };
-      case 'not_found':
-        return { message: 'Prospect not found' };
-    }
-  }
-
-  async function runAction(
-    prospectId: string,
-    action: () => Promise<{ message: string; clientId?: string }>
-  ): Promise<void> {
+  const runAction = useCallback(async (prospectId: string, action: () => Promise<void>): Promise<void> => {
     setPendingIds((prev) => new Set(prev).add(prospectId));
     try {
-      const outcome = await action();
-      setLastActionOutcomes((prev) => ({ ...prev, [prospectId]: outcome }));
+      await action();
       setRefreshIndex((prev) => prev + 1);
-    } catch {
-      setLastActionOutcomes((prev) => ({ ...prev, [prospectId]: { message: 'Request failed.' } }));
+    } catch (err) {
+      toastError('Action failed', errorMessage(err));
     } finally {
       setPendingIds((prev) => {
         const next = new Set(prev);
@@ -221,23 +229,91 @@ export function ProspectsTable(): React.JSX.Element {
         return next;
       });
     }
-  }
+  }, []);
 
-  function handleEnrich(prospectId: string): void {
-    void runAction(prospectId, async () => ({ message: describeEnrichResult(await enrichProspect(prospectId)) }));
-  }
+  const handleEnrich = useCallback(
+    (prospectId: string): void => {
+      void runAction(prospectId, async () => {
+        const result = await enrichProspect(prospectId);
+        toastSourceResults('Enrichment', result.sources);
+        if (result.downgradeSkipped) {
+          toastInfo(
+            'Kept existing contact',
+            `${result.downgradeSkipped.reason} (existing confidence ${result.downgradeSkipped.existingConfidence}, attempted ${result.downgradeSkipped.attemptedConfidence})`
+          );
+        }
+      });
+    },
+    [runAction]
+  );
 
-  function handleDraft(prospectId: string): void {
-    void runAction(prospectId, async () => ({ message: describeDraftResult(await draftProspect(prospectId)) }));
-  }
+  const handleDraft = useCallback(
+    (prospectId: string): void => {
+      void runAction(prospectId, async () => {
+        const result = await draftProspect(prospectId);
+        if (result.ok) {
+          const variantLabel = `${result.drafts.length} variant${result.drafts.length === 1 ? '' : 's'}`;
+          const humanizeNote = result.humanize.attempted
+            ? `Humanizer: ${result.humanize.outcome ?? 'attempted'}${result.humanize.reason ? `, ${result.humanize.reason}` : ''}`
+            : undefined;
+          toastSuccess(`Drafted ${variantLabel}`, humanizeNote);
+        } else {
+          toastError(`Draft flagged: ${result.flagged.replace(/_/g, ' ')}`, result.message);
+        }
+      });
+    },
+    [runAction]
+  );
 
-  function handleMatch(prospectId: string): void {
-    void runAction(prospectId, async () => ({ message: describeMatchResult(await matchProspect(prospectId)) }));
-  }
+  const handleMatch = useCallback(
+    (prospectId: string): void => {
+      void runAction(prospectId, async () => {
+        const result = await matchProspect(prospectId);
+        if (result.outcome === 'applied') {
+          const count = result.suggestedServices.length;
+          toastSuccess(`Matched ${count} suggestion${count === 1 ? '' : 's'}`);
+        } else {
+          toastError('Invalid signal', result.reason);
+        }
+      });
+    },
+    [runAction]
+  );
 
-  function handleWin(prospectId: string): void {
-    void runAction(prospectId, async () => describeWinResult(await winProspect(prospectId)));
-  }
+  const handleWin = useCallback(
+    (prospectId: string): void => {
+      void runAction(prospectId, async () => {
+        const result = await winProspect(prospectId);
+        switch (result.outcome) {
+          case 'converted':
+            setWonClientIds((prev) => ({ ...prev, [prospectId]: result.clientId }));
+            toastSuccess('Converted to client');
+            break;
+          case 'already_converted':
+            setWonClientIds((prev) => ({ ...prev, [prospectId]: result.clientId }));
+            toastInfo('Already converted to a client');
+            break;
+          case 'blocked_do_not_contact':
+            toastError('Cannot convert', 'This prospect is marked do-not-contact.');
+            break;
+          case 'not_found':
+            toastError('Prospect not found', 'It may have been removed since this page loaded.');
+            break;
+        }
+      });
+    },
+    [runAction]
+  );
+
+  const handleToggleSeen = useCallback((prospectId: string, seen: boolean): void => {
+    // Optimistic, silent, no refetch: this is a read marker for the user's
+    // own benefit, not pipeline state, so it shouldn't feel like an "action"
+    // (no toast, no loading state on the row's other buttons).
+    setProspects((prev) => prev.map((p) => (p.id === prospectId ? { ...p, seen } : p)));
+    setProspectSeen(prospectId, seen).catch(() => {
+      setProspects((prev) => prev.map((p) => (p.id === prospectId ? { ...p, seen: !seen } : p)));
+    });
+  }, []);
 
   function updateFilter<K extends keyof FiltersState>(key: K, value: FiltersState[K]): void {
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -265,18 +341,34 @@ export function ProspectsTable(): React.JSX.Element {
 
   const columns = useMemo<ColumnDef<ProspectListItem>[]>(
     () => [
+      {
+        id: 'seen',
+        header: 'Seen',
+        cell: ({ row }) => (
+          <Checkbox
+            checked={row.original.seen}
+            onCheckedChange={(checked) => handleToggleSeen(row.original.id, checked === true)}
+            aria-label={row.original.seen ? 'Mark as unseen' : 'Mark as seen'}
+          />
+        ),
+      },
       { accessorKey: 'companyName', header: 'Company' },
       {
         accessorKey: 'domain',
         header: 'Domain',
-        cell: ({ row }) => row.original.domain ?? '—',
+        cell: ({ row }) => row.original.domain ?? 'None',
       },
       { accessorKey: 'industry', header: 'Industry' },
       { accessorKey: 'source', header: 'Source' },
       {
         id: 'signal',
         header: 'Signal',
-        cell: ({ row }) => `${row.original.signal.type} (${row.original.signal.strength})`,
+        cell: ({ row }) => (
+          <div className="flex items-center gap-1.5">
+            <Badge variant={SIGNAL_BADGE_VARIANT[row.original.signal.strength]}>{row.original.signal.strength}</Badge>
+            <span className="text-muted-foreground text-xs">{row.original.signal.type}</span>
+          </div>
+        ),
       },
       { accessorKey: 'projectFit', header: 'Project fit' },
       {
@@ -284,7 +376,11 @@ export function ProspectsTable(): React.JSX.Element {
         header: 'Priority',
         enableSorting: true,
       },
-      { accessorKey: 'status', header: 'Status' },
+      {
+        accessorKey: 'status',
+        header: 'Status',
+        cell: ({ row }) => <Badge variant={STATUS_BADGE_VARIANT[row.original.status]}>{row.original.status}</Badge>,
+      },
       {
         accessorKey: 'discoveredAt',
         header: 'Discovered',
@@ -300,7 +396,11 @@ export function ProspectsTable(): React.JSX.Element {
       {
         id: 'emailVerified',
         header: 'Email verified',
-        cell: ({ row }) => (row.original.emailVerified ? 'Yes' : 'No'),
+        cell: ({ row }) => (
+          <Badge variant={row.original.emailVerified ? 'default' : 'outline'}>
+            {row.original.emailVerified ? 'Yes' : 'No'}
+          </Badge>
+        ),
       },
       {
         id: 'actions',
@@ -308,7 +408,7 @@ export function ProspectsTable(): React.JSX.Element {
         cell: ({ row }) => {
           const prospectId = row.original.id;
           const isPending = pendingIds.has(prospectId);
-          const outcome = lastActionOutcomes[prospectId];
+          const clientId = wonClientIds[prospectId];
 
           return (
             <div className="flex flex-col gap-1">
@@ -326,26 +426,17 @@ export function ProspectsTable(): React.JSX.Element {
                   Win
                 </Button>
               </div>
-              {outcome ? (
-                <p className="text-xs text-muted-foreground">
-                  {outcome.message}
-                  {outcome.clientId ? (
-                    <>
-                      {' '}
-                      —{' '}
-                      <Link href={`/clients/${outcome.clientId}`} className="underline">
-                        view client
-                      </Link>
-                    </>
-                  ) : null}
-                </p>
+              {clientId ? (
+                <Link href={`/clients/${clientId}`} className="text-primary text-xs underline">
+                  View client
+                </Link>
               ) : null}
             </div>
           );
         },
       },
     ],
-    [pendingIds, lastActionOutcomes]
+    [pendingIds, wonClientIds, handleToggleSeen, handleEnrich, handleDraft, handleMatch, handleWin]
   );
 
   const table = useReactTable({
@@ -361,6 +452,11 @@ export function ProspectsTable(): React.JSX.Element {
 
   return (
     <div className="flex flex-col gap-4 p-6">
+      <div>
+        <h1 className="text-xl font-semibold tracking-tight">Prospects</h1>
+        <p className="text-muted-foreground text-sm">Every lead discovery has found, ready to enrich, draft, and send.</p>
+      </div>
+
       <div className="flex flex-wrap items-end gap-3">
         <FilterSelect
           label="Source"
@@ -405,7 +501,7 @@ export function ProspectsTable(): React.JSX.Element {
           onChange={(value) => updateFilter('hasVerifiedEmail', value as FiltersState['hasVerifiedEmail'])}
         />
         <div className="flex flex-col gap-1">
-          <label className="text-xs text-muted-foreground">Priority min</label>
+          <label className="text-muted-foreground text-xs">Priority min</label>
           <Input
             type="number"
             className="w-24"
@@ -414,7 +510,7 @@ export function ProspectsTable(): React.JSX.Element {
           />
         </div>
         <div className="flex flex-col gap-1">
-          <label className="text-xs text-muted-foreground">Priority max</label>
+          <label className="text-muted-foreground text-xs">Priority max</label>
           <Input
             type="number"
             className="w-24"
@@ -422,12 +518,18 @@ export function ProspectsTable(): React.JSX.Element {
             onChange={(event) => updateFilter('priorityScoreMax', event.target.value)}
           />
         </div>
+        <label className="flex h-8 items-center gap-2 text-sm">
+          <Checkbox checked={filters.hideSeen} onCheckedChange={(checked) => updateFilter('hideSeen', checked === true)} />
+          Hide seen
+        </label>
         <Button variant="outline" onClick={resetFilters}>
           Clear filters
         </Button>
       </div>
 
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      {error ? (
+        <p className="text-destructive text-sm">Couldn&apos;t load prospects: {error}</p>
+      ) : null}
 
       <Table>
         <TableHeader>
@@ -459,20 +561,37 @@ export function ProspectsTable(): React.JSX.Element {
         </TableHeader>
         <TableBody>
           {isLoading ? (
-            <TableRow>
-              <TableCell colSpan={columns.length} className="text-center text-muted-foreground">
-                Loading…
-              </TableCell>
-            </TableRow>
+            Array.from({ length: 6 }).map((_, index) => (
+              <TableRow key={`skeleton-${index}`}>
+                {columns.map((column, columnIndex) => (
+                  <TableCell key={column.id ?? columnIndex}>
+                    <Skeleton className="h-4 w-full" />
+                  </TableCell>
+                ))}
+              </TableRow>
+            ))
           ) : prospects.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={columns.length} className="text-center text-muted-foreground">
-                No prospects found.
+              <TableCell colSpan={columns.length}>
+                <div className="flex flex-col items-center gap-3 py-10 text-center">
+                  <HugeiconsIcon icon={Compass01Icon} strokeWidth={1.5} className="text-muted-foreground size-8" />
+                  <div className="flex flex-col gap-1">
+                    <p className="text-sm font-medium">No prospects found</p>
+                    <p className="text-muted-foreground text-sm">
+                      {isDefaultFilters(filters)
+                        ? 'Nothing discovered yet.'
+                        : 'No prospects match the current filters - try clearing them.'}
+                    </p>
+                  </div>
+                  <Button asChild size="sm" variant="outline">
+                    <Link href="/discovery">Run Discovery</Link>
+                  </Button>
+                </div>
               </TableCell>
             </TableRow>
           ) : (
             table.getRowModel().rows.map((row) => (
-              <TableRow key={row.id}>
+              <TableRow key={row.id} className={row.original.seen ? 'opacity-50' : undefined}>
                 {row.getVisibleCells().map((cell) => (
                   <TableCell key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>
                 ))}
@@ -504,7 +623,7 @@ interface FilterSelectProps {
 function FilterSelect({ label, value, options, onChange }: FilterSelectProps): React.JSX.Element {
   return (
     <div className="flex flex-col gap-1">
-      <label className="text-xs text-muted-foreground">{label}</label>
+      <label className="text-muted-foreground text-xs">{label}</label>
       <Select value={value} onValueChange={onChange}>
         <SelectTrigger className="w-40">
           <SelectValue />

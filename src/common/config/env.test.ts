@@ -90,7 +90,7 @@ describe("env", () => {
   })
 
   // .env.example ships every optional key as KEY="" rather than omitting the
-  // line, so this is the actual shape .env files have in practice — not an
+  // line, so this is the actual shape .env files have in practice - not an
   // edge case. An optional string field must treat "" the same as unset.
   it("treats an empty-string optional key (as shipped by .env.example) the same as unset, not a validation failure", async () => {
     setEnv({})
@@ -105,7 +105,7 @@ describe("env", () => {
 })
 
 // DOMAIN_DNS_VERIFIED is THE hard gate on real send volume (see
-// domain-verification-gate.ts) — deliberately not z.coerce.boolean(), which
+// domain-verification-gate.ts) - deliberately not z.coerce.boolean(), which
 // would treat any non-empty string (including "false") as true. Only the
 // exact literal string "true" may open the gate; every other value, including
 // plausible-looking typos, must fail closed to `false`.
@@ -151,7 +151,7 @@ describe("env DOMAIN_DNS_VERIFIED parsing", () => {
     expect(env.DOMAIN_DNS_VERIFIED).toBe(false)
   })
 
-  it('parses "1" as false — only the literal string "true" opens the gate', async () => {
+  it('parses "1" as false - only the literal string "true" opens the gate', async () => {
     setEnv({})
     process.env.DOMAIN_DNS_VERIFIED = "1"
 
@@ -187,7 +187,7 @@ describe("env DOMAIN_DNS_VERIFIED parsing", () => {
     expect(env.DOMAIN_DNS_VERIFIED).toBe(false)
   })
 
-  it('parses " true" (leading whitespace) as false — no trimming is applied', async () => {
+  it('parses " true" (leading whitespace) as false - no trimming is applied', async () => {
     setEnv({})
     process.env.DOMAIN_DNS_VERIFIED = " true"
 

@@ -8,7 +8,7 @@ const QUOTA_WARNING_REMAINING = 3;
 
 /**
  * Reduces the full health payload down to one traffic-light status for the
- * sidebar's status dot. `critical` wins over `warning` wins over `ok` — the
+ * sidebar's status dot. `critical` wins over `warning` wins over `ok` - the
  * dot always reflects the worst thing currently true, never an average.
  */
 export function deriveOverallStatus(health: SystemHealth | null): OverallStatus {

@@ -11,10 +11,10 @@ import type {
 // every LLM call returns a typed `ok:false` instead of throwing, so one
 // provider being unavailable/erroring never crashes the drafting run.
 
-// Draftable subset of `Prospect` — same "explicit projection" pattern as
+// Draftable subset of `Prospect` - same "explicit projection" pattern as
 // `PROSPECT_SELECT` in enrichment.service.ts / `LIST_ITEM_SELECT` in
 // prospects.repository.ts. `signal` is required here (not the nullable-in-
-// practice value on the raw DB row) — `drafting.service.ts` only builds this
+// practice value on the raw DB row) - `drafting.service.ts` only builds this
 // once it has already validated the raw JSON column really holds a `Signal`.
 export interface DraftableProspect {
   companyName: string;
@@ -71,7 +71,7 @@ export interface DraftedResult {
   ok: true;
   drafts: Draft[];
   /** Humanizer pass outcome for the prospect's primary (variant 1) draft
-   * only — see drafting.service.ts's doc comment for why only variant 1. */
+   * only - see drafting.service.ts's doc comment for why only variant 1. */
   humanize: HumanizeOutcomeSummary;
 }
 

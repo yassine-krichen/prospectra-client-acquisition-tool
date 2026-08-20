@@ -37,7 +37,7 @@ describe('POST /api/prospects/[id]/draft', () => {
     draftProspectMock.mockResolvedValue({
       ok: false,
       flagged: 'missing_signal',
-      message: 'prospect has no valid signal on file — drafting requires signal.description/evidence',
+      message: 'prospect has no valid signal on file - drafting requires signal.description/evidence',
     });
 
     const response = await POST(draftRequest(), routeParams('prospect-1'));
@@ -47,7 +47,7 @@ describe('POST /api/prospects/[id]/draft', () => {
     expect(body).toEqual({
       ok: false,
       flagged: 'missing_signal',
-      message: 'prospect has no valid signal on file — drafting requires signal.description/evidence',
+      message: 'prospect has no valid signal on file - drafting requires signal.description/evidence',
     });
   });
 

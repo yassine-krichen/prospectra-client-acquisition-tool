@@ -32,8 +32,8 @@ export type ConvertOutcome =
  * Converts a Prospect to a Client. Idempotent: a second call for a Prospect
  * that already has a Client returns `already_converted` with that Client's
  * id rather than creating a duplicate. `doNotContact` blocks conversion
- * regardless of `status` — a compliance decision, never overridden. A
- * `dead` prospect is NOT blocked — only `doNotContact` is — since a dead
+ * regardless of `status` - a compliance decision, never overridden. A
+ * `dead` prospect is NOT blocked - only `doNotContact` is - since a dead
  * lead can legitimately come back and convert later.
  */
 export async function convertProspectToClient(prospectId: string): Promise<ConvertOutcome> {
@@ -62,7 +62,7 @@ export async function convertProspectToClient(prospectId: string): Promise<Conve
 
     if (claim.count !== 1) {
       // Lost the race. The winner must have created (or be in the middle of
-      // creating) the Client in its own transaction — re-check rather than
+      // creating) the Client in its own transaction - re-check rather than
       // silently succeeding or guessing.
       const raceWinnerClient = await tx.client.findUnique({ where: { prospectId }, select: { id: true } });
       if (raceWinnerClient) return { outcome: 'already_converted', clientId: raceWinnerClient.id };

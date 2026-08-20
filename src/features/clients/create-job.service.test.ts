@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // createJob is the one production write path for recording a sold service
-// against a Client — see its doc comment. Prisma is mocked (orchestration
+// against a Client - see its doc comment. Prisma is mocked (orchestration
 // test, not a real-DB test), same convention as convert-to-client.service.test.ts.
 const { findUniqueClientMock, createJobMock } = vi.hoisted(() => ({
   findUniqueClientMock: vi.fn(),

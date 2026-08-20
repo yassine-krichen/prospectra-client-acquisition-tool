@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Integration test against the real Postgres DB (same pattern as
-// daily-send-counter.test.ts / prospects.repository.test.ts) — the guarantee
+// daily-send-counter.test.ts / prospects.repository.test.ts) - the guarantee
 // under test ("a doNotContact:true prospect is left completely untouched by
 // re-discovery") is a persistence guarantee, so it's verified with a direct
 // DB read after the run rather than trusting the returned summary alone.

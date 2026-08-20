@@ -9,13 +9,13 @@ import { processInboundReply, processInboundReplyForClient } from '@/features/fo
 // logged-in user, so it cannot sit behind the session-cookie gate (see
 // proxy.ts's matcher, which explicitly excludes this exact path). Because it
 // can't use session auth, it MUST verify Resend's webhook signature instead
-// — an unverified version of this route would let anyone on the internet
+// - an unverified version of this route would let anyone on the internet
 // forge a "prospect replied with unsubscribe intent" event and have this
 // app permanently flag any prospect's contactEmail as doNotContact. Fail
 // closed at every step: invalid/missing signature, or `data.from` present
 // but unparseable, both reject before `processInboundReply` is ever called.
 
-// Resend's inbound/received-email webhook payload — a superset of fields is
+// Resend's inbound/received-email webhook payload - a superset of fields is
 // documented; only what this route actually needs is validated here. `from`
 // commonly arrives as either a bare address or an RFC 5322 `"Name" <addr>`
 // display form, so it's extracted with a regex rather than assumed to be a
@@ -31,7 +31,7 @@ const resendWebhookEventSchema = z.object({
 
 // Only these event types represent an inbound reply worth processing.
 // Anything else (delivery/open/click/bounce events Resend also sends to the
-// same webhook endpoint) is acknowledged with 200 and otherwise ignored —
+// same webhook endpoint) is acknowledged with 200 and otherwise ignored -
 // not every event this endpoint receives is an attack or an error, most of
 // them just aren't relevant to reply detection.
 const REPLY_EVENT_TYPES = new Set(['email.received', 'inbound.email.received']);
@@ -80,7 +80,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   // Both checks run independently: `fromEmail` may match a Prospect, a
-  // Client, both, or neither — a converted (won) Prospect and its resulting
+  // Client, both, or neither - a converted (won) Prospect and its resulting
   // Client are separate tables with separate email histories (cold outreach
   // vs. retention), and this webhook is the only place either can ever learn
   // about a reply.

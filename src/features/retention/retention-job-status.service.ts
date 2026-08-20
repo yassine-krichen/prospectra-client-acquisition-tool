@@ -23,7 +23,7 @@ export type MarkJobDeliveredOutcome =
 /**
  * Marks a one-off Job `active -> delivered`, setting `deliveredAt` to now and
  * `freeRevisionWindowEndsAt` to `deliveredAt + FREE_REVISION_WINDOW_DAYS`
- * (the catalog's "2 free fixes within 30 days of delivery" guarantee — see
+ * (the catalog's "2 free fixes within 30 days of delivery" guarantee - see
  * service-catalog.ts). Idempotent: calling this again on an already-
  * `delivered` Job reports `already_delivered` rather than re-stamping
  * `deliveredAt`, which would otherwise silently reset the free-revision
@@ -41,7 +41,7 @@ export async function markJobDelivered(jobId: string): Promise<MarkJobDeliveredO
   const freeRevisionWindowEndsAt = new Date(deliveredAt.getTime() + FREE_REVISION_WINDOW_DAYS * MS_PER_DAY);
 
   // Atomic claim: only succeeds if this Job is still exactly `active` (and
-  // still `one_off`) at claim time — conditioned on the exact state just
+  // still `one_off`) at claim time - conditioned on the exact state just
   // read, same principle as convert-to-client.service.ts's claim.
   const claim = await prisma.job.updateMany({
     where: { id: jobId, status: JobStatus.active, cadence: JobCadence.one_off },
@@ -54,7 +54,7 @@ export async function markJobDelivered(jobId: string): Promise<MarkJobDeliveredO
   });
 
   if (claim.count !== 1) {
-    // Lost the race (or the read was stale) — re-check rather than guessing.
+    // Lost the race (or the read was stale) - re-check rather than guessing.
     const recheck = await prisma.job.findUnique({ where: { id: jobId }, select: { status: true } });
     if (recheck?.status === JobStatus.delivered) return { outcome: 'already_delivered' };
     return { outcome: 'not_eligible' };
@@ -72,7 +72,7 @@ export type MarkJobRecurringActiveOutcome =
   | { outcome: 'not_eligible' };
 
 /**
- * Marks a recurring Job `active -> monthly` — the retainer "going live" for
+ * Marks a recurring Job `active -> monthly` - the retainer "going live" for
  * the first time, after which it's eligible for the Phase 8 quarterly-only
  * retention cadence (see retention-scheduler.ts). No `deliveredAt`/
  * `freeRevisionWindowEndsAt` are set here: those are one-off-Job concepts a
