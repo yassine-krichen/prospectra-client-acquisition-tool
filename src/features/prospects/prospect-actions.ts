@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { draftSchema, serviceSuggestionSchema } from '@/features/prospects/prospect.types';
+import { draftSchema, prospectSchema, serviceSuggestionSchema, type Prospect } from '@/features/prospects/prospect.types';
 
 // Client-safe fetch helpers + response schemas for the four per-prospect
 // pipeline actions the dashboard exposes. Response shapes mirror each
@@ -154,4 +154,17 @@ export async function setProspectSeen(prospectId: string, seen: boolean): Promis
 
   const body: unknown = await response.json();
   return seenResponseSchema.parse(body);
+}
+
+// --- detail ---
+
+/** Full-detail fetch for the prospect detail dialog (every column plus drafts, not the list projection). */
+export async function getProspectDetail(prospectId: string): Promise<Prospect> {
+  const response = await fetch(`/api/prospects/${prospectId}`);
+  if (!response.ok) {
+    throw new Error(`Prospect detail request failed (status ${response.status}).`);
+  }
+
+  const body: unknown = await response.json();
+  return prospectSchema.parse(body);
 }

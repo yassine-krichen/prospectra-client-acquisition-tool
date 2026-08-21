@@ -1,4 +1,4 @@
-import { flexRender, type Row, type Table as TanstackTable } from '@tanstack/react-table';
+import { flexRender, type Column, type Row, type Table as TanstackTable } from '@tanstack/react-table';
 import type * as React from 'react';
 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -18,6 +18,20 @@ interface DataTableProps<TData> extends React.ComponentProps<'div'> {
   actionBar?: React.ReactNode;
   emptyState?: React.ReactNode;
   getRowClassName?: (row: Row<TData>) => string | undefined;
+  // Forwarded to the inner `<table>` element - e.g. `table-fixed` so a column
+  // definition's explicit `size` (see prospects-table.tsx's Signal column,
+  // the one column deliberately left without a `size` so it absorbs the
+  // table's remaining width instead of every column stretching evenly).
+  // Omitted by every other caller today, so this has no effect on them.
+  tableClassName?: string;
+}
+
+// `column.getSize()` always returns a number (defaulting to 150) even for
+// columns that never set an explicit `size` - so this checks the raw
+// `columnDef.size` instead, to only apply a width for columns that actually
+// asked for one and leave every other column's sizing exactly as before.
+function getColumnWidthStyle<TData, TValue>(column: Column<TData, TValue>): React.CSSProperties {
+  return column.columnDef.size === undefined ? {} : { width: column.columnDef.size };
 }
 
 export function DataTable<TData>({
@@ -26,6 +40,7 @@ export function DataTable<TData>({
   actionBar,
   emptyState,
   getRowClassName,
+  tableClassName,
   children,
   className,
   ...props
@@ -34,12 +49,16 @@ export function DataTable<TData>({
     <div className={cn('flex w-full flex-col gap-2.5 overflow-auto', className)} {...props}>
       {children}
       <div className="overflow-hidden rounded-md border">
-        <Table>
+        <Table className={tableClassName}>
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow key={headerGroup.id}>
                 {headerGroup.headers.map((header) => (
-                  <TableHead key={header.id} colSpan={header.colSpan} style={getColumnPinningStyle({ column: header.column })}>
+                  <TableHead
+                    key={header.id}
+                    colSpan={header.colSpan}
+                    style={{ ...getColumnPinningStyle({ column: header.column }), ...getColumnWidthStyle(header.column) }}
+                  >
                     {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
                   </TableHead>
                 ))}
@@ -51,7 +70,10 @@ export function DataTable<TData>({
               table.getRowModel().rows.map((row) => (
                 <TableRow key={row.id} data-state={row.getIsSelected() && 'selected'} className={getRowClassName?.(row)}>
                   {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id} style={getColumnPinningStyle({ column: cell.column })}>
+                    <TableCell
+                      key={cell.id}
+                      style={{ ...getColumnPinningStyle({ column: cell.column }), ...getColumnWidthStyle(cell.column) }}
+                    >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </TableCell>
                   ))}

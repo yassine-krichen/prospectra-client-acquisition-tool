@@ -1,9 +1,11 @@
 import { Prisma } from '@/lib/generated/prisma/client';
 import { prisma } from '@/common/db/client';
 import { fromPrismaCompanySize } from '@/features/prospects/company-size.mapper';
+import { fromPrismaModelUsed } from '@/features/drafting/model-used.mapper';
 import type {
   Industry,
   Location,
+  Prospect,
   ProjectFit,
   ProspectListItem,
   ProspectSource,
@@ -12,6 +14,7 @@ import type {
   Signal,
   SignalStrength,
   SignalType,
+  StatusHistoryEntry,
 } from '@/features/prospects/prospect.types';
 
 // Explicit projection matching `ProspectListItem` - the list view never
@@ -249,4 +252,70 @@ export async function listProspects(options: ListProspectsOptions = {}): Promise
     hasMore && last ? encodeCursor({ sortValue: extractSortValue(last, sortField), id: last.id }) : null;
 
   return { prospects: page.map(toListItem), nextCursor };
+}
+
+// Every column plus `drafts` - the detail dialog is the one place this app
+// shows the FULL Prospect record (contact info, statusHistory, drafts,
+// follow-up/reply tracking) rather than the trimmed `LIST_ITEM_SELECT`
+// projection above.
+const FULL_PROSPECT_SELECT = {
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  companyName: true,
+  domain: true,
+  websiteUrl: true,
+  industry: true,
+  location: true,
+  companySize: true,
+  contactName: true,
+  contactTitle: true,
+  contactEmail: true,
+  emailVerified: true,
+  emailConfidence: true,
+  linkedinUrl: true,
+  source: true,
+  sourceUrl: true,
+  discoveredAt: true,
+  signal: true,
+  projectFit: true,
+  estimatedBudget: true,
+  suggestedServices: true,
+  priorityScore: true,
+  status: true,
+  statusHistory: true,
+  seen: true,
+  activeDraftId: true,
+  sentAt: true,
+  lastFollowupAt: true,
+  followupCount: true,
+  repliedAt: true,
+  replySentiment: true,
+  doNotContact: true,
+  unsubscribedAt: true,
+  notes: true,
+  tags: true,
+  drafts: {
+    orderBy: { variant: 'asc' },
+  },
+} as const satisfies Prisma.ProspectSelect;
+
+type FullProspectRow = Prisma.ProspectGetPayload<{ select: typeof FULL_PROSPECT_SELECT }>;
+
+function toFullProspect(row: FullProspectRow): Prospect {
+  return {
+    ...row,
+    companySize: fromPrismaCompanySize(row.companySize),
+    location: row.location as Location,
+    signal: row.signal as Signal,
+    suggestedServices: row.suggestedServices as ServiceSuggestion[],
+    statusHistory: row.statusHistory as unknown as StatusHistoryEntry[],
+    drafts: row.drafts.map((draft) => ({ ...draft, modelUsed: fromPrismaModelUsed(draft.modelUsed) })),
+  };
+}
+
+/** Full detail fetch for the prospect detail dialog. `null` if no prospect exists with `id`. */
+export async function getProspectById(id: string): Promise<Prospect | null> {
+  const row = await prisma.prospect.findUnique({ where: { id }, select: FULL_PROSPECT_SELECT });
+  return row ? toFullProspect(row) : null;
 }

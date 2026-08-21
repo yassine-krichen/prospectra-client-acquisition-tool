@@ -1,15 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { type ColumnDef, type SortingState, type VisibilityState, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { z } from 'zod';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Compass01Icon } from '@hugeicons/core-free-icons';
+import { Compass01Icon, ArrowUp01Icon, ArrowDown01Icon } from '@hugeicons/core-free-icons';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge, type badgeVariants } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DataTable } from '@/components/data-table/data-table';
@@ -17,7 +16,7 @@ import { DataTableColumnHeader } from '@/components/data-table/data-table-column
 import { DataTableViewOptions } from '@/components/data-table/data-table-view-options';
 import { DataTableSkeleton } from '@/components/data-table/data-table-skeleton';
 import { DataTableCursorPagination } from '@/components/data-table/data-table-pagination';
-import { toastError, toastInfo, toastSourceResults, toastSuccess } from '@/lib/toast';
+import { ProspectDetailDialog } from '@/features/prospects/prospect-detail-dialog';
 import {
   industrySchema,
   projectFitSchema,
@@ -34,21 +33,19 @@ import {
   type SignalStrength,
   type SignalType,
 } from '@/features/prospects/prospect.types';
-import {
-  draftProspect,
-  enrichProspect,
-  matchProspect,
-  setProspectSeen,
-  winProspect,
-} from '@/features/prospects/prospect-actions';
-import type { VariantProps } from 'class-variance-authority';
-
-type BadgeVariant = VariantProps<typeof badgeVariants>['variant'];
+import { setProspectSeen } from '@/features/prospects/prospect-actions';
+import { cn } from '@/lib/utils';
 
 // Mirrors `ProspectSortField` in `prospects.repository.ts`. Duplicated
 // (rather than imported) because that module pulls in the Prisma client,
 // which must not end up in the client bundle.
 type SortField = 'priorityScore' | 'discoveredAt' | 'sentAt';
+
+const SORT_FIELD_LABELS: Record<SortField, string> = {
+  priorityScore: 'Priority',
+  discoveredAt: 'Discovered',
+  sentAt: 'Sent',
+};
 
 const listProspectsResponseSchema = z.object({
   prospects: z.array(prospectListItemSchema),
@@ -143,7 +140,7 @@ async function fetchProspects(
 }
 
 function formatDate(value: Date | null): string {
-  return value ? value.toLocaleDateString() : '-';
+  return value ? value.toLocaleDateString() : 'No Record';
 }
 
 function errorMessage(error: unknown): string {
@@ -154,26 +151,86 @@ function isDefaultFilters(filters: FiltersState): boolean {
   return (Object.keys(DEFAULT_FILTERS) as Array<keyof FiltersState>).every((key) => filters[key] === DEFAULT_FILTERS[key]);
 }
 
-const STATUS_BADGE_VARIANT: Record<ProspectStatus, BadgeVariant> = {
-  new: 'outline',
-  enriched: 'secondary',
-  drafted: 'secondary',
-  queued: 'secondary',
-  sent: 'secondary',
-  followup_1: 'secondary',
-  followup_2: 'secondary',
-  followup_3: 'secondary',
-  replied: 'default',
-  won: 'default',
-  dead: 'outline',
-  unsubscribed: 'outline',
+// Turns a snake_case enum value into readable English - "landing_page"
+// becomes "Landing page" (only the first word capitalized, matching normal
+// sentence casing rather than each-word Title Case).
+function formatEnumLabel(value: string): string {
+  return value
+    .split('_')
+    .map((word, index) => (index === 0 ? word.charAt(0).toUpperCase() + word.slice(1) : word))
+    .join(' ');
+}
+
+const SIGNAL_STRENGTH_TEXT_COLOR: Record<SignalStrength, string> = {
+  strong: 'text-green-500',
+  medium: 'text-orange-500',
+  weak: 'text-red-500',
 };
 
-const SIGNAL_BADGE_VARIANT: Record<SignalStrength, BadgeVariant> = {
-  weak: 'outline',
-  medium: 'secondary',
-  strong: 'default',
+const SIGNAL_STRENGTH_LABEL: Record<SignalStrength, string> = {
+  strong: 'High',
+  medium: 'Medium',
+  weak: 'Low',
 };
+
+// Domains that are almost always a personal/student/hobby project rather
+// than a real business (free static-hosting subdomains, .edu) - the list
+// view has no way to open the site and judge it manually, so this is a
+// best-effort filter to steer obvious non-clients toward "Ignore" rather
+// than spending an enrich/draft credit on them.
+const LOW_VALUE_DOMAIN_PATTERNS: readonly RegExp[] = [
+  /\.edu$/i,
+  /vercel\.app$/i,
+  /netlify\.app$/i,
+  /github\.io$/i,
+  /pages\.dev$/i,
+  /web\.app$/i,
+  /herokuapp\.com$/i,
+  /repl\.co$/i,
+  /glitch\.me$/i,
+  /wixsite\.com$/i,
+  /weebly\.com$/i,
+];
+
+function isLikelyLowValue(prospect: ProspectListItem): boolean {
+  return Boolean(prospect.domain) && LOW_VALUE_DOMAIN_PATTERNS.some((pattern) => pattern.test(prospect.domain!));
+}
+
+type RecommendationTone = 'green' | 'red' | 'neutral';
+
+interface Recommendation {
+  label: string;
+  tone: RecommendationTone;
+}
+
+// Maps pipeline status to the next manual step a human would take on this
+// prospect. `neutral` covers states with no outstanding action (already
+// queued/sent/following-up automatically, or already converted).
+const STATUS_RECOMMENDATION: Record<ProspectStatus, Recommendation> = {
+  new: { label: 'Enrich', tone: 'green' },
+  enriched: { label: 'Draft', tone: 'green' },
+  drafted: { label: 'Review in queue', tone: 'green' },
+  queued: { label: 'Awaiting send', tone: 'neutral' },
+  sent: { label: 'Awaiting reply', tone: 'neutral' },
+  followup_1: { label: 'Awaiting reply', tone: 'neutral' },
+  followup_2: { label: 'Awaiting reply', tone: 'neutral' },
+  followup_3: { label: 'Awaiting reply', tone: 'neutral' },
+  replied: { label: 'Win', tone: 'green' },
+  won: { label: 'Converted', tone: 'neutral' },
+  dead: { label: 'Ignore', tone: 'red' },
+  unsubscribed: { label: 'Ignore', tone: 'red' },
+};
+
+const RECOMMENDATION_TEXT_COLOR: Record<RecommendationTone, string> = {
+  green: 'text-green-500',
+  red: 'text-red-500',
+  neutral: 'text-muted-foreground',
+};
+
+function getRecommendation(prospect: ProspectListItem): Recommendation {
+  if (isLikelyLowValue(prospect)) return { label: 'Ignore', tone: 'red' };
+  return STATUS_RECOMMENDATION[prospect.status];
+}
 
 export function ProspectsTable(): React.JSX.Element {
   const [filters, setFilters] = useState<FiltersState>(DEFAULT_FILTERS);
@@ -186,16 +243,14 @@ export function ProspectsTable(): React.JSX.Element {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  // Per-row action state: which prospects have an action in flight. Outcome
-  // messaging itself goes through toasts (lib/toast.ts) now - the one bit of
-  // state still tracked per row is a successful Win's clientId, since that
-  // produces a persistent "view client" link a toast can't hold onto.
-  const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
-  const [wonClientIds, setWonClientIds] = useState<Record<string, string>>({});
-  // Bumped after any action succeeds to re-trigger the load effect below, so
-  // status/priorityScore/sentAt reflect the change from the server.
+  // Bumped after any action inside the detail dialog succeeds, to
+  // re-trigger the load effect below so status/priorityScore/sentAt reflect
+  // the change from the server.
   const [refreshIndex, setRefreshIndex] = useState(0);
+  // Which prospect's detail dialog is open, if any. Every per-prospect
+  // action (Enrich/Draft/Match/Win) now lives inside that dialog - see
+  // prospect-detail-dialog.tsx - rather than as buttons in this table.
+  const [selectedProspectId, setSelectedProspectId] = useState<string | null>(null);
 
   const currentCursor = cursorStack[cursorStack.length - 1];
 
@@ -222,97 +277,7 @@ export function ProspectsTable(): React.JSX.Element {
     };
   }, [filters, sorting, currentCursor, limit, refreshIndex]);
 
-  const runAction = useCallback(async (prospectId: string, action: () => Promise<void>): Promise<void> => {
-    setPendingIds((prev) => new Set(prev).add(prospectId));
-    try {
-      await action();
-      setRefreshIndex((prev) => prev + 1);
-    } catch (err) {
-      toastError('Action failed', errorMessage(err));
-    } finally {
-      setPendingIds((prev) => {
-        const next = new Set(prev);
-        next.delete(prospectId);
-        return next;
-      });
-    }
-  }, []);
-
-  const handleEnrich = useCallback(
-    (prospectId: string): void => {
-      void runAction(prospectId, async () => {
-        const result = await enrichProspect(prospectId);
-        toastSourceResults('Enrichment', result.sources);
-        if (result.downgradeSkipped) {
-          toastInfo(
-            'Kept existing contact',
-            `${result.downgradeSkipped.reason} (existing confidence ${result.downgradeSkipped.existingConfidence}, attempted ${result.downgradeSkipped.attemptedConfidence})`
-          );
-        }
-      });
-    },
-    [runAction]
-  );
-
-  const handleDraft = useCallback(
-    (prospectId: string): void => {
-      void runAction(prospectId, async () => {
-        const result = await draftProspect(prospectId);
-        if (result.ok) {
-          const variantLabel = `${result.drafts.length} variant${result.drafts.length === 1 ? '' : 's'}`;
-          const humanizeNote = result.humanize.attempted
-            ? `Humanizer: ${result.humanize.outcome ?? 'attempted'}${result.humanize.reason ? `, ${result.humanize.reason}` : ''}`
-            : undefined;
-          toastSuccess(`Drafted ${variantLabel}`, humanizeNote);
-        } else {
-          toastError(`Draft flagged: ${result.flagged.replace(/_/g, ' ')}`, result.message);
-        }
-      });
-    },
-    [runAction]
-  );
-
-  const handleMatch = useCallback(
-    (prospectId: string): void => {
-      void runAction(prospectId, async () => {
-        const result = await matchProspect(prospectId);
-        if (result.outcome === 'applied') {
-          const count = result.suggestedServices.length;
-          toastSuccess(`Matched ${count} suggestion${count === 1 ? '' : 's'}`);
-        } else {
-          toastError('Invalid signal', result.reason);
-        }
-      });
-    },
-    [runAction]
-  );
-
-  const handleWin = useCallback(
-    (prospectId: string): void => {
-      void runAction(prospectId, async () => {
-        const result = await winProspect(prospectId);
-        switch (result.outcome) {
-          case 'converted':
-            setWonClientIds((prev) => ({ ...prev, [prospectId]: result.clientId }));
-            toastSuccess('Converted to client');
-            break;
-          case 'already_converted':
-            setWonClientIds((prev) => ({ ...prev, [prospectId]: result.clientId }));
-            toastInfo('Already converted to a client');
-            break;
-          case 'blocked_do_not_contact':
-            toastError('Cannot convert', 'This prospect is marked do-not-contact.');
-            break;
-          case 'not_found':
-            toastError('Prospect not found', 'It may have been removed since this page loaded.');
-            break;
-        }
-      });
-    },
-    [runAction]
-  );
-
-  const handleToggleSeen = useCallback((prospectId: string, seen: boolean): void => {
+  function handleToggleSeen(prospectId: string, seen: boolean): void {
     // Optimistic, silent, no refetch: this is a read marker for the user's
     // own benefit, not pipeline state, so it shouldn't feel like an "action"
     // (no toast, no loading state on the row's other buttons).
@@ -320,7 +285,7 @@ export function ProspectsTable(): React.JSX.Element {
     setProspectSeen(prospectId, seen).catch(() => {
       setProspects((prev) => prev.map((p) => (p.id === prospectId ? { ...p, seen: !seen } : p)));
     });
-  }, []);
+  }
 
   function updateFilter<K extends keyof FiltersState>(key: K, value: FiltersState[K]): void {
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -335,6 +300,14 @@ export function ProspectsTable(): React.JSX.Element {
   function handleSortingChange(updater: SortingState | ((old: SortingState) => SortingState)): void {
     setSorting(updater);
     setCursorStack([]);
+  }
+
+  function setSortField(field: SortField): void {
+    handleSortingChange([{ id: field, desc: sorting[0]?.desc ?? true }]);
+  }
+
+  function toggleSortDirection(): void {
+    handleSortingChange([{ id: sorting[0]?.id ?? 'discoveredAt', desc: !(sorting[0]?.desc ?? true) }]);
   }
 
   function goToNextPage(): void {
@@ -357,6 +330,7 @@ export function ProspectsTable(): React.JSX.Element {
         id: 'seen',
         header: 'Seen',
         enableHiding: false,
+        size: 48,
         cell: ({ row }) => (
           <Checkbox
             checked={row.original.seen}
@@ -367,113 +341,79 @@ export function ProspectsTable(): React.JSX.Element {
       },
       {
         accessorKey: 'companyName',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Company" />,
-        meta: { label: 'Company' },
-      },
-      {
-        accessorKey: 'domain',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Domain" />,
-        meta: { label: 'Domain' },
-        cell: ({ row }) => row.original.domain ?? 'None',
-      },
-      {
-        accessorKey: 'industry',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Industry" />,
-        meta: { label: 'Industry' },
-      },
-      {
-        accessorKey: 'source',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Source" />,
-        meta: { label: 'Source' },
+        header: 'Company',
+        enableHiding: false,
+        size: 200,
+        cell: ({ row }) => (
+          <button
+            type="button"
+            className="block w-full truncate text-left text-white underline underline-offset-2"
+            onClick={() => setSelectedProspectId(row.original.id)}
+          >
+            {row.original.companyName}
+          </button>
+        ),
       },
       {
         id: 'signal',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Signal" />,
-        meta: { label: 'Signal' },
+        // Deliberately the one column with no `size` - see `tableClassName="table-fixed"`
+        // below: under a fixed table layout, the column left without an explicit
+        // width absorbs all the space the other (narrow, fixed-width) columns
+        // don't use, instead of every column stretching evenly and leaving gaps.
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Signal : Reason" />,
+        meta: { label: 'Signal : Reason' },
         cell: ({ row }) => (
-          <div className="flex items-center gap-1.5">
-            <Badge variant={SIGNAL_BADGE_VARIANT[row.original.signal.strength]}>{row.original.signal.strength}</Badge>
-            <span className="text-muted-foreground text-xs">{row.original.signal.type}</span>
-          </div>
+          <span className="block whitespace-normal">
+            <span className={cn('font-medium', SIGNAL_STRENGTH_TEXT_COLOR[row.original.signal.strength])}>
+              {SIGNAL_STRENGTH_LABEL[row.original.signal.strength]}
+            </span>
+            {' : '}
+            {row.original.signal.description}
+          </span>
         ),
       },
       {
         accessorKey: 'projectFit',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Project fit" />,
         meta: { label: 'Project fit' },
-      },
-      {
-        accessorKey: 'priorityScore',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Priority" />,
-        meta: { label: 'Priority' },
-        enableSorting: true,
+        size: 140,
+        cell: ({ row }) => <span className="block truncate">{formatEnumLabel(row.original.projectFit)}</span>,
       },
       {
         accessorKey: 'status',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Status" />,
         meta: { label: 'Status' },
-        cell: ({ row }) => <Badge variant={STATUS_BADGE_VARIANT[row.original.status]}>{row.original.status}</Badge>,
-      },
-      {
-        accessorKey: 'discoveredAt',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Discovered" />,
-        meta: { label: 'Discovered' },
-        enableSorting: true,
-        cell: ({ row }) => formatDate(row.original.discoveredAt),
+        size: 120,
+        cell: ({ row }) => (
+          <span className={cn('block truncate', row.original.status === 'enriched' && 'text-green-500')}>
+            {formatEnumLabel(row.original.status)}
+          </span>
+        ),
       },
       {
         accessorKey: 'sentAt',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Sent" />,
         meta: { label: 'Sent' },
         enableSorting: true,
+        size: 120,
         cell: ({ row }) => formatDate(row.original.sentAt),
       },
       {
-        id: 'emailVerified',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Email verified" />,
-        meta: { label: 'Email verified' },
-        cell: ({ row }) => (
-          <Badge variant={row.original.emailVerified ? 'default' : 'outline'}>
-            {row.original.emailVerified ? 'Yes' : 'No'}
-          </Badge>
-        ),
-      },
-      {
-        id: 'actions',
-        header: 'Actions',
-        enableHiding: false,
+        id: 'recommendedAction',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Recommended Action" />,
+        meta: { label: 'Recommended Action' },
+        size: 160,
         cell: ({ row }) => {
-          const prospectId = row.original.id;
-          const isPending = pendingIds.has(prospectId);
-          const clientId = wonClientIds[prospectId];
-
+          const recommendation = getRecommendation(row.original);
           return (
-            <div className="flex flex-col gap-1">
-              <div className="flex flex-wrap gap-1">
-                <Button size="sm" variant="outline" disabled={isPending} onClick={() => handleEnrich(prospectId)}>
-                  Enrich
-                </Button>
-                <Button size="sm" variant="outline" disabled={isPending} onClick={() => handleDraft(prospectId)}>
-                  Draft
-                </Button>
-                <Button size="sm" variant="outline" disabled={isPending} onClick={() => handleMatch(prospectId)}>
-                  Match
-                </Button>
-                <Button size="sm" variant="outline" disabled={isPending} onClick={() => handleWin(prospectId)}>
-                  Win
-                </Button>
-              </div>
-              {clientId ? (
-                <Link href={`/clients/${clientId}`} className="text-primary text-xs underline">
-                  View client
-                </Link>
-              ) : null}
-            </div>
+            <span className={cn('block truncate font-medium', RECOMMENDATION_TEXT_COLOR[recommendation.tone])}>
+              {recommendation.label}
+            </span>
           );
         },
       },
     ],
-    [pendingIds, wonClientIds, handleToggleSeen, handleEnrich, handleDraft, handleMatch, handleWin]
+    []
   );
 
   const table = useReactTable({
@@ -492,7 +432,9 @@ export function ProspectsTable(): React.JSX.Element {
     <div className="flex flex-col gap-4 p-6">
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Prospects</h1>
-        <p className="text-muted-foreground text-sm">Every lead discovery has found, ready to enrich, draft, and send.</p>
+        <p className="text-muted-foreground text-sm">
+          Every lead discovery has found, ready to enrich, draft, and send. Click a company name for full details.
+        </p>
       </div>
 
       <div className="flex flex-wrap items-end gap-3">
@@ -556,6 +498,26 @@ export function ProspectsTable(): React.JSX.Element {
             onChange={(event) => updateFilter('priorityScoreMax', event.target.value)}
           />
         </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-muted-foreground text-xs">Sort by</label>
+          <div className="flex items-center gap-1">
+            <Select value={sorting[0]?.id ?? 'discoveredAt'} onValueChange={(value) => setSortField(value as SortField)}>
+              <SelectTrigger className="w-32">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SORT_FIELDS.map((field) => (
+                  <SelectItem key={field} value={field}>
+                    {SORT_FIELD_LABELS[field]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button variant="outline" size="icon" onClick={toggleSortDirection} aria-label="Toggle sort direction">
+              <HugeiconsIcon icon={sorting[0]?.desc ? ArrowDown01Icon : ArrowUp01Icon} strokeWidth={2} />
+            </Button>
+          </div>
+        </div>
         <label className="flex h-8 items-center gap-2 text-sm">
           <Checkbox checked={filters.hideSeen} onCheckedChange={(checked) => updateFilter('hideSeen', checked === true)} />
           Hide seen
@@ -573,6 +535,12 @@ export function ProspectsTable(): React.JSX.Element {
       ) : (
         <DataTable
           table={table}
+          // Fixed layout + every column but Signal:Reason declaring an
+          // explicit `size` (see the columns above): the table still fills
+          // the full width, but the narrow columns stay tight to their
+          // content instead of stretching evenly and leaving gaps - the
+          // Signal:Reason column absorbs whatever width is left over.
+          tableClassName="table-fixed"
           getRowClassName={(row) => (row.original.seen ? 'opacity-50' : undefined)}
           pagination={
             <DataTableCursorPagination
@@ -602,6 +570,14 @@ export function ProspectsTable(): React.JSX.Element {
           }
         />
       )}
+
+      <ProspectDetailDialog
+        prospectId={selectedProspectId}
+        onOpenChange={(open) => {
+          if (!open) setSelectedProspectId(null);
+        }}
+        onChanged={() => setRefreshIndex((prev) => prev + 1)}
+      />
     </div>
   );
 }

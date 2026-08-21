@@ -5,7 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { prisma } from '@/common/db/client';
 import { assertDestructiveTestsAllowed } from '@/common/testing/require-destructive-test-guard';
 import { toPrismaCompanySize } from '@/features/prospects/company-size.mapper';
-import { listProspects } from '@/features/prospects/prospects.repository';
+import { getProspectById, listProspects } from '@/features/prospects/prospects.repository';
 import type {
   CompanySize,
   Industry,
@@ -334,5 +334,51 @@ describe('listProspects projection', () => {
     const { prospects } = await listProspects();
 
     expect(prospects[0].companySize).toBe('11-50');
+  });
+});
+
+describe('getProspectById', () => {
+  it('returns null when no prospect exists with the given id', async () => {
+    expect(await getProspectById(randomUUID())).toBeNull();
+  });
+
+  it('returns the full prospect with contact fields null for a never-enriched (status: new) prospect', async () => {
+    const { id } = await seedProspect({ companyName: 'Not Yet Enriched', status: 'new' });
+
+    const prospect = await getProspectById(id);
+
+    expect(prospect?.status).toBe('new');
+    expect(prospect?.contactName).toBeNull();
+    expect(prospect?.contactEmail).toBeNull();
+    expect(prospect?.emailConfidence).toBe(0);
+    expect(prospect?.drafts).toEqual([]);
+  });
+
+  it('returns real contact info and drafts (with modelUsed mapped to the domain hyphenated form) for an enriched prospect', async () => {
+    const { id } = await seedProspect({ companyName: 'Enriched Co', status: 'drafted' });
+    await prisma.prospect.update({
+      where: { id },
+      data: { contactName: 'Jane Doe', contactEmail: 'jane@example.com', emailVerified: true, emailConfidence: 90 },
+    });
+    await prisma.draft.create({
+      data: {
+        prospectId: id,
+        variant: 1,
+        subject: 'Subject',
+        body: 'Body',
+        modelUsed: 'claude_bridge',
+        framework: 'pas',
+        approved: false,
+        edited: false,
+      },
+    });
+
+    const prospect = await getProspectById(id);
+
+    expect(prospect?.contactName).toBe('Jane Doe');
+    expect(prospect?.contactEmail).toBe('jane@example.com');
+    expect(prospect?.emailVerified).toBe(true);
+    expect(prospect?.drafts).toHaveLength(1);
+    expect(prospect?.drafts[0].modelUsed).toBe('claude-bridge');
   });
 });
