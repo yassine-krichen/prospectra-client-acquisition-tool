@@ -29,7 +29,7 @@ export type StaleStackResult = { ok: true; lookup: StaleStackLookup } | { ok: fa
 /**
  * Looks up a domain's tech stack via the BuiltWith Domain API and maps it to
  * a "needs rebuild" signal via `stale-stack-rules.ts`. Fails gracefully with
- * a typed, legible reason when the API key is missing or the call errors —
+ * a typed, legible reason when the API key is missing or the call errors -
  * never throws.
  */
 export async function lookupStaleStack(domain: string): Promise<StaleStackResult> {

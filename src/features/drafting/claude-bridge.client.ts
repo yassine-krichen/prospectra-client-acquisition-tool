@@ -8,7 +8,7 @@ import type { DraftGenerationResult } from '@/features/drafting/drafting.types';
 
 // Local sibling app (claude-web-bridge) that drives a real, logged-in
 // Claude web session headlessly. Its real usage limit is ~40 messages per
-// 8-hour window, SHARED across every caller of the bridge process — not
+// 8-hour window, SHARED across every caller of the bridge process - not
 // per-caller here. This client makes exactly one bridge call per
 // `humanize()`/`generateDraft()` invocation and never retries internally;
 // callers (drafting.service.ts, the draft-batch cron, model-rotation.ts's
@@ -33,10 +33,10 @@ export interface HumanizeFailure {
   kind: HumanizeFailureKind;
   reason: string;
   /**
-   * Seconds to wait before retrying. Populated for `rate_limited` — either
+   * Seconds to wait before retrying. Populated for `rate_limited` - either
    * the bridge's own reported `retryAfter` (429, the shared Claude quota) or
    * this client's fixed fallback backoff (503, no browser slot / an
-   * unresolved Cloudflare-Arkose challenge — the bridge reports no
+   * unresolved Cloudflare-Arkose challenge - the bridge reports no
    * `retryAfter` for that case).
    */
   retryAfterSeconds?: number;
@@ -60,12 +60,12 @@ const errorResponseSchema = z.object({
   retryAfter: z.number().optional(),
 });
 
-// The bridge reports no retryAfter for 503 — this fixed backoff is this
+// The bridge reports no retryAfter for 503 - this fixed backoff is this
 // client's own choice, not part of the bridge's documented contract.
 const SERVICE_UNAVAILABLE_BACKOFF_SECONDS = 60;
 
 // Fallback backoff recorded against the shared cooldown when the bridge
-// returns a 429 but its own body doesn't include a `retryAfter` — same
+// returns a 429 but its own body doesn't include a `retryAfter` - same
 // reasoning as SERVICE_UNAVAILABLE_BACKOFF_SECONDS: a conservative fixed
 // value is safer than recording no cooldown at all.
 const DEFAULT_RATE_LIMIT_BACKOFF_SECONDS = 60;
@@ -79,7 +79,7 @@ type BridgeCallOutcome = HumanizeSuccess | HumanizeFailure;
  * Makes one `POST /chat` call against the bridge with `provider: 'claude'`
  * and maps every documented outcome (a logged-out saved session, the shared
  * rate limit, no browser slot available, an unreachable bridge, or an
- * unexpected response shape) to a typed result — shared by `humanize()` and
+ * unexpected response shape) to a typed result - shared by `humanize()` and
  * `generateDraft()` so this error-handling isn't duplicated between them.
  * On a 429, records the shared cooldown via `bridge-budget.ts` before
  * returning, so every future caller (either lane, any serverless
@@ -109,7 +109,7 @@ async function callBridgeChat(prompt: string): Promise<BridgeCallOutcome> {
       ok: false,
       kind: 'logged_out',
       reason:
-        "claude-bridge's saved browser login session is logged out — re-run the bridge's setup script to log back in",
+        "claude-bridge's saved browser login session is logged out - re-run the bridge's setup script to log back in",
     };
   }
 
@@ -155,12 +155,12 @@ async function callBridgeChat(prompt: string): Promise<BridgeCallOutcome> {
 /**
  * Runs a one-shot humanizer pass on a draft's body via the local
  * claude-web-bridge sibling app (`POST /chat`, `provider: "claude"`,
- * non-streaming, no `sessionId` — each call is independent, and the
+ * non-streaming, no `sessionId` - each call is independent, and the
  * response's `sessionId` is deliberately discarded rather than reused
- * across drafts). Never throws: every documented bridge outcome — including
+ * across drafts). Never throws: every documented bridge outcome - including
  * the shared rate limit (429), a logged-out saved browser session (424,
  * which needs manual re-login and is reported distinctly so it isn't
- * mistaken for a transient failure), and an unreachable bridge — maps to a
+ * mistaken for a transient failure), and an unreachable bridge - maps to a
  * typed `HumanizeResult`, so a busy or misconfigured bridge degrades a
  * single draft's humanizing rather than the whole drafting run.
  */
@@ -170,7 +170,7 @@ export async function humanize(text: string): Promise<HumanizeResult> {
 
 /**
  * Generates one subject+body draft via the local claude-web-bridge sibling
- * app — Phase C's tier-2 overflow lane for original drafting, used only
+ * app - Phase C's tier-2 overflow lane for original drafting, used only
  * when the primary Gemini/Groq/DeepSeek pool (model-rotation.ts) is
  * exhausted for a high-priority prospect (see `generateDraftWithFallback`).
  * Unlike `humanize()`, `prompt` here is sent as-is: the caller

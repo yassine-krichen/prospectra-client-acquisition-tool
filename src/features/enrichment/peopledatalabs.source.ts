@@ -8,13 +8,13 @@ const PERSON_ENRICH_URL = 'https://api.peopledatalabs.com/v5/person/enrich';
 // PDL scores a match's confidence as a 1-10 "likelihood", not the 0-100
 // scale this app's `emailConfidence` uses elsewhere (Hunter's own score is
 // already 0-100). This threshold is PDL's own documented cutoff for a
-// "high-confidence" match — below it, PDL considers the match itself
+// "high-confidence" match - below it, PDL considers the match itself
 // uncertain, so `emailVerified` is only set `true` at or above it.
 const HIGH_CONFIDENCE_LIKELIHOOD = 8;
 
 // hunter.source.ts documents that this app's pattern-guess+MX-check
 // fallback (emailConfidence 15) is meant to be the least confident non-empty
-// result this app ever returns — Hunter's and PDL's own results are
+// result this app ever returns - Hunter's and PDL's own results are
 // supposed to always score above it. PDL's 1-10 likelihood scaled by 10 can
 // go as low as 10 (likelihood 1), which would violate that invariant, so a
 // PDL match is only accepted at all once its scaled confidence clears the
@@ -42,8 +42,8 @@ const personEnrichResponseSchema = z.object({
 /**
  * Looks up a contact's work email via People Data Labs' Person Enrichment
  * API, using the company domain (and contact name, if already known) as
- * match inputs. Returns a typed "unavailable" result — rather than
- * throwing — when PEOPLE_DATA_LABS_API_KEY is unset, PDL finds no confident
+ * match inputs. Returns a typed "unavailable" result - rather than
+ * throwing - when PEOPLE_DATA_LABS_API_KEY is unset, PDL finds no confident
  * match, or the call fails.
  */
 export async function runPeopleDataLabsEnrichment(input: EnrichmentInput): Promise<EnrichmentResult> {

@@ -1,17 +1,17 @@
 import { prisma } from '@/common/db/client';
 
 // Shared cooldown state for the claude-web-bridge sibling app, persisted so
-// every caller — the existing humanize() pass and Phase C's tier-2 draft-
+// every caller - the existing humanize() pass and Phase C's tier-2 draft-
 // generation call, across separate serverless invocations that share no
-// in-memory state — sees the same "is the bridge currently rate-limited"
+// in-memory state - sees the same "is the bridge currently rate-limited"
 // answer instead of each independently rediscovering it. See
 // `BridgeCooldown` in prisma/schema.prisma.
 
 /**
  * Reports whether `source` (e.g. `'claude-bridge'`) is currently known to be
  * rate-limited. Fails closed: if the cooldown record can't be read at all
- * (e.g. a transient DB error), this returns `true` — "treat it as in
- * cooldown" — so a lookup failure can never accidentally spend the scarce
+ * (e.g. a transient DB error), this returns `true` - "treat it as in
+ * cooldown" - so a lookup failure can never accidentally spend the scarce
  * bridge budget. This is the one place in this module where "fail closed"
  * means the opposite of "assume available": spending an unverified bridge
  * call is the unsafe direction here, not withholding one.

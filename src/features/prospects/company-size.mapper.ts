@@ -3,7 +3,7 @@ import type { CompanySize } from '@/features/prospects/prospect.types';
 
 // Prisma's generated client always exposes the Prisma-schema enum member
 // name (e.g. "size_1_10") as both the TS type and the runtime JS value for
-// reads/writes through the client — never the `@map`'d DB storage value
+// reads/writes through the client - never the `@map`'d DB storage value
 // ("1-10"). The domain `CompanySize` type in `prospect.types.ts` uses the
 // human-readable "1-10" form, so every read/write through Prisma needs an
 // explicit translation between the two.

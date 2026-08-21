@@ -1,20 +1,32 @@
 import { randomUUID } from 'node:crypto';
 
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { prisma } from '@/common/db/client';
+import { assertDestructiveTestsAllowed } from '@/common/testing/require-destructive-test-guard';
+import { prisma } from '@/common/testing/test-db-client';
 import { getEffectiveDailyCap } from '@/features/sending/domain-verification-gate';
 import { FOLLOWUP_INTERVAL_DAYS, runFollowupScheduler } from '@/features/followups/followup-scheduler';
 
-// Integration test against the real Postgres test DB (docker-compose's
-// `postgres` service on port 5433, `biz_scraper_test` database — see
-// vitest.setup.ts). Unlike followup-scheduler.test.ts (which mocks
+// Redirects every layer of `runFollowupScheduler`'s own call chain (not just
+// this file's direct calls) to the isolated test database - see
+// require-destructive-test-guard.ts.
+vi.mock('@/common/db/client', async () => {
+  const { prisma } = await import('@/common/testing/test-db-client');
+  return { prisma };
+});
+
+// Integration test against the real Postgres DB (DATABASE_URL - the same
+// database the app uses, see vitest.setup.ts). Unlike followup-scheduler.test.ts (which mocks
 // `getTodaysSendCount` directly for fast, isolated orchestration coverage),
 // this exercises the REAL `daily-send-counter.ts` wired through the
-// scheduler's cap check end to end — proving Finding 2's fix (the counter
+// scheduler's cap check end to end - proving Finding 2's fix (the counter
 // must also recognize a today `lastFollowupAt`, not just `sentAt`) actually
 // takes effect in the real send path, not just in the counter's own unit
 // tests.
+beforeAll(() => {
+  assertDestructiveTestsAllowed('followup-scheduler.cap-integration.test.ts');
+});
+
 beforeEach(async () => {
   await prisma.prospect.deleteMany();
 });
@@ -67,8 +79,8 @@ describe('runFollowupScheduler daily cap enforcement (real daily-send-counter.ts
   it('blocks a due candidate as skipped_cap once enough OTHER prospects have a today lastFollowupAt to reach the real effective cap, without ever attempting a claim on it', async () => {
     const cap = getEffectiveDailyCap();
 
-    // Filler rows that are already terminal (`dead`) — never candidates for
-    // this scheduler run (findMany only selects in-flight statuses) — whose
+    // Filler rows that are already terminal (`dead`) - never candidates for
+    // this scheduler run (findMany only selects in-flight statuses) - whose
     // ONLY today-timestamp is `lastFollowupAt`. If the counter still only
     // looked at `sentAt` (the pre-fix bug), these would be invisible and the
     // cap check below would wrongly let the due candidate through.

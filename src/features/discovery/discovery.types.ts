@@ -1,14 +1,9 @@
 import { z } from 'zod';
 
-import type {
-  CompanySize,
-  EstimatedBudget,
-  Industry,
-  Location,
-  ProjectFit,
-  ProspectSource,
-  Signal,
-} from '@/features/prospects/prospect.types';
+import { DISCOVERY_SOURCES } from '@/features/discovery/discovery-source-registry';
+import type { CompanySize, Industry, Location, ProspectSource, Signal } from '@/features/prospects/prospect.types';
+
+const DISCOVERY_SOURCE_KEYS = DISCOVERY_SOURCES.map((source) => source.key) as [string, ...string[]];
 
 // A category + geography search input shared by every Branch A discovery
 // source (e.g. category: "plumber", geography: "Austin, TX").
@@ -18,9 +13,27 @@ export const discoveryQuerySchema = z.object({
 });
 export type DiscoveryQuery = z.infer<typeof discoveryQuerySchema>;
 
+// `branch` selects which discovery sources run: 'a' (the default, preserving
+// prior behavior) = local/SMB sources, 'b' = startup/SaaS sources, 'both' =
+// every source. See `discovery.service.ts`'s `runDiscovery` doc comment for
+// what each branch includes. Shared by the cron and dashboard-triggered
+// discovery routes so the request shape is defined exactly once.
+export const discoverRequestSchema = discoveryQuerySchema.extend({
+  branch: z.enum(['a', 'b', 'both']).default('a'),
+  // Which sources to actually run for this request, filtered by `branch` -
+  // see `runDiscovery`'s `enabledSources` parameter. Omitted (the cron
+  // route never sends this) means "run every source for the branch",
+  // preserving prior behavior.
+  sources: z.array(z.enum(DISCOVERY_SOURCE_KEYS)).optional(),
+});
+export type DiscoverRequest = z.infer<typeof discoverRequestSchema>;
+
 // The subset of the `Prospect` shape a discovery source can populate on its
 // own. The orchestrator fills in the rest (id, priorityScore persistence,
-// status, etc) once results are deduped.
+// status, etc) once results are deduped - including `projectFit`/
+// `estimatedBudget`, which are computed centrally from `signal`/
+// `companySize`/`industry` by the matching engine at persist time
+// (`service-matching-rules.ts`) rather than supplied by each source.
 export interface DiscoveredProspect {
   companyName: string;
   domain: string | null;
@@ -32,8 +45,6 @@ export interface DiscoveredProspect {
   sourceUrl: string;
   discoveredAt: Date;
   signal: Signal;
-  projectFit: ProjectFit;
-  estimatedBudget: EstimatedBudget;
 }
 
 export interface SourceUnavailable {
@@ -58,3 +69,48 @@ export interface SourceRunSuccess {
 // missing API key or a failed request degrades to "skipped, here's why"
 // rather than crashing the whole discovery run.
 export type SourceResult = SourceRunSuccess | SourceUnavailable;
+
+// Zod mirrors of `SourceRunSummary`/`DiscoveryRunSummary` in
+// discovery.service.ts, duplicated here (not imported) so client components
+// (e.g. discovery-trigger-form.tsx) can validate a discovery run's response
+// without pulling in discovery.service.ts, which imports `@/common/config/env`
+// and `@/common/db/client`.
+export const sourceRunSummarySchema = z.object({
+  source: z.string(),
+  ran: z.boolean(),
+  reason: z.string().optional(),
+  count: z.number().int(),
+});
+export type SourceRunSummary = z.infer<typeof sourceRunSummarySchema>;
+
+export const discoveryRunSummarySchema = z.object({
+  query: discoveryQuerySchema,
+  branch: z.enum(['a', 'b', 'both']),
+  sources: z.array(sourceRunSummarySchema),
+  totalFound: z.number().int(),
+  inserted: z.number().int(),
+  updated: z.number().int(),
+  skippedDoNotContact: z.number().int(),
+});
+export type DiscoveryRunSummary = z.infer<typeof discoveryRunSummarySchema>;
+
+// Client-safe mirror of the `DiscoveryRun` Prisma model (discovery.service.ts's
+// `listRecentDiscoveryRuns`), duplicated here for the same reason as
+// `discoveryRunSummarySchema` above: client components validate the
+// `GET /api/discovery/runs` response without importing `discovery.service.ts`
+// (which pulls in `@/common/config/env` and `@/common/db/client`).
+export const discoveryRunHistoryEntrySchema = z.object({
+  id: z.string(),
+  category: z.string(),
+  geography: z.string(),
+  branch: z.enum(['a', 'b', 'both']),
+  totalFound: z.number().int(),
+  inserted: z.number().int(),
+  updated: z.number().int(),
+  skippedDoNotContact: z.number().int(),
+  sources: z.array(sourceRunSummarySchema),
+  createdAt: z.coerce.date(),
+});
+export type DiscoveryRunHistoryEntry = z.infer<typeof discoveryRunHistoryEntrySchema>;
+
+export const discoveryRunHistorySchema = z.array(discoveryRunHistoryEntrySchema);

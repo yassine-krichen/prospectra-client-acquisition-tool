@@ -1,4 +1,4 @@
-import { ModelUsed as PrismaModelUsed, ProspectStatus as PrismaProspectStatus } from '@/lib/generated/prisma/client';
+import { ModelUsed as PrismaModelUsed, Prisma, ProspectStatus as PrismaProspectStatus } from '@/lib/generated/prisma/client';
 import { prisma } from '@/common/db/client';
 import { humanize } from '@/features/drafting/claude-bridge.client';
 import { fromPrismaModelUsed, toPrismaModelUsed } from '@/features/drafting/model-used.mapper';
@@ -17,7 +17,7 @@ import type {
 
 // Signal strength is currently scored 1 (weak) - 3 (strong) as a Phase 3
 // stub (see discovery.service.ts's `SIGNAL_STRENGTH_SCORE` /
-// `computePriorityScore` — "real weighting arrives in Phase 6"). Until that
+// `computePriorityScore` - "real weighting arrives in Phase 6"). Until that
 // real scoring lands, "HIGH priorityScore" means the top of that stub
 // scale: a `strong` signal. Revisit this constant once Phase 6 replaces the
 // stub with weighted scoring.
@@ -35,7 +35,7 @@ export const DRAFT_BATCH_SIZE = 10;
 // claude-bridge's real ~40-messages/8-hour window, SHARED across every
 // caller (high-priority prospects humanized inline by `draftProspect`, any
 // other process hitting the same bridge, and this cron potentially running
-// several times before the window resets) — 5 keeps a wide safety margin
+// several times before the window resets) - 5 keeps a wide safety margin
 // rather than assuming this cron run has the whole budget to itself.
 export const HUMANIZE_BATCH_SIZE = 5;
 
@@ -87,19 +87,19 @@ type ValidatedDraftResult =
 
 /**
  * Wraps `generateDraftWithFallback` with a post-generation check against
- * `validateDraftOutput`'s hard constraints (word count, banned phrases) —
+ * `validateDraftOutput`'s hard constraints (word count, banned phrases) -
  * prompt-templates.ts only asks the model for these as instructions, and
  * models don't always comply. A validation failure is treated the same way
  * as a provider failure: retried once through the same rotation/failover
- * path (which rotates which provider goes first — see model-rotation.ts),
+ * path (which rotates which provider goes first - see model-rotation.ts),
  * giving the other provider a chance to produce compliant output, rather
  * than silently persisting a non-compliant draft as if it met every
  * constraint. If the retry is also non-compliant, this reports failure so
- * the caller flags the prospect instead of persisting anything for it —
+ * the caller flags the prospect instead of persisting anything for it -
  * consistent with `draftProspect`'s existing "generated all-or-nothing"
  * behavior for a `no_llm_available` failure. `isHighPriority` is threaded
  * straight through to `generateDraftWithFallback`, which only attempts its
- * scarce claude-bridge tier-2 lane for high-priority prospects — see that
+ * scarce claude-bridge tier-2 lane for high-priority prospects - see that
  * function's doc comment in model-rotation.ts.
  */
 async function generateValidatedDraft(prompt: string, isHighPriority: boolean): Promise<ValidatedDraftResult> {
@@ -117,6 +117,24 @@ async function generateValidatedDraft(prompt: string, isHighPriority: boolean): 
     flagged: 'invalid_draft_output',
     reason: `generated draft failed post-generation validation twice: ${retryValidation.reasons.join('; ')}`,
   };
+}
+
+/**
+ * Persists a flagged/failure outcome to `Prospect.lastDraftFailure` so the
+ * dashboard can surface "what failed" after the fact - both the missing/
+ * invalid-signal and the no-LLM/failed-validation failure paths are
+ * transient API-response-only outcomes otherwise (see this module's return
+ * points below).
+ */
+async function recordDraftFailure(
+  prospectId: string,
+  flagged: 'missing_signal' | 'no_llm_available' | 'invalid_draft_output',
+  message: string
+): Promise<void> {
+  await prisma.prospect.update({
+    where: { id: prospectId },
+    data: { lastDraftFailure: { flagged, message, occurredAt: new Date().toISOString() } },
+  });
 }
 
 function toDraftView(row: DraftRow): Draft {
@@ -140,14 +158,14 @@ function toDraftView(row: DraftRow): Draft {
  * draft (and flagging the prospect instead of throwing) if either its
  * signal is missing/invalid or no LLM provider is available. Runs a
  * humanizer pass only on the prospect's primary (variant 1) draft, and only
- * when `priorityScore` is HIGH (`>= HIGH_PRIORITY_THRESHOLD`) — see this
+ * when `priorityScore` is HIGH (`>= HIGH_PRIORITY_THRESHOLD`) - see this
  * module's doc comment on `HUMANIZE_BATCH_SIZE` for why the shared
  * claude-bridge budget rules out humanizing every variant of every
  * prospect. Lower-priority prospects' variant-1 drafts are picked up later
  * by `humanizeBatch`. A claude-bridge failure/rate-limit never fails the
  * prospect's drafting: `humanizedBody` is simply left `null` and the
  * outcome is reported in the returned `humanize` summary, while
- * `status` still advances `enriched -> drafted` — humanizing is a quality
+ * `status` still advances `enriched -> drafted` - humanizing is a quality
  * layer on top of drafting, not a blocker for the drafted state.
  *
  * Returns `null` if no prospect exists with `prospectId` (the caller maps
@@ -163,12 +181,10 @@ export async function draftProspect(prospectId: string): Promise<DraftProspectOu
 
   const signalResult = signalSchema.safeParse(existing.signal);
   if (!signalResult.success) {
-    return {
-      ok: false,
-      flagged: 'missing_signal',
-      message:
-        'prospect has no valid signal on file — drafting requires signal.description/evidence as the one allowed observation',
-    };
+    const message =
+      'prospect has no valid signal on file - drafting requires signal.description/evidence as the one allowed observation';
+    await recordDraftFailure(prospectId, 'missing_signal', message);
+    return { ok: false, flagged: 'missing_signal', message };
   }
 
   const prospectData = {
@@ -183,23 +199,24 @@ export async function draftProspect(prospectId: string): Promise<DraftProspectOu
 
   const isHighPriority = existing.priorityScore >= HIGH_PRIORITY_THRESHOLD;
 
-  // Each variant gets its own distinct copywriting framework — sampled
+  // Each variant gets its own distinct copywriting framework - sampled
   // without replacement so a prospect never gets the same narrative angle
-  // twice — and therefore its own distinct prompt (see prompt-templates.ts's
+  // twice - and therefore its own distinct prompt (see prompt-templates.ts's
   // `sampleFrameworks`/`buildDraftPrompt`), rather than 3 independent samples
   // of one shared prompt.
   const frameworkIds = sampleFrameworks(VARIANT_COUNT);
 
   // Generated all-or-nothing: if any of the `VARIANT_COUNT` calls comes back
-  // "no LLM available" (or fails validation twice — see
+  // "no LLM available" (or fails validation twice - see
   // `generateValidatedDraft`), every subsequent call would very likely fail
   // the same way, so there's no value in persisting a partially-drafted
-  // prospect — flag it instead.
+  // prospect - flag it instead.
   const generations: Array<{ subject: string; body: string; modelUsed: DraftingProvider; framework: string }> = [];
   for (const frameworkId of frameworkIds) {
     const prompt = buildDraftPrompt(prospectData, frameworkId);
     const result = await generateValidatedDraft(prompt, isHighPriority);
     if (!result.ok) {
+      await recordDraftFailure(prospectId, result.flagged, result.reason);
       return { ok: false, flagged: result.flagged, message: result.reason };
     }
     generations.push({ ...result, framework: frameworkId });
@@ -247,7 +264,7 @@ export async function draftProspect(prospectId: string): Promise<DraftProspectOu
 
     await tx.prospect.update({
       where: { id: prospectId },
-      data: { status: nextStatus, statusHistory: nextStatusHistory },
+      data: { status: nextStatus, statusHistory: nextStatusHistory, lastDraftFailure: Prisma.DbNull },
     });
 
     return rows;
@@ -280,7 +297,7 @@ export async function draftBatch(limit: number = DRAFT_BATCH_SIZE): Promise<
 
 /**
  * Humanizer pass for previously-drafted prospects whose primary (variant 1)
- * draft doesn't yet have a `humanizedBody` — the draft-batch cron's part
+ * draft doesn't yet have a `humanizedBody` - the draft-batch cron's part
  * (b), respecting `HUMANIZE_BATCH_SIZE`. Only variant 1 is ever considered
  * (see `draftProspect`'s doc comment).
  *

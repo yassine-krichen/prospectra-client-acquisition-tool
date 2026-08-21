@@ -6,8 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 // import, rather than mocking the module itself.
 
 const VALID_ENV = {
-  DATABASE_URL:
-    "postgresql://postgres:postgres@localhost:5433/biz_scraper_test?schema=public",
+  DATABASE_URL: "postgresql://user:pass@example.neon.tech/biz_scraper?sslmode=require",
   DASHBOARD_PASSWORD: "a-real-password",
   SESSION_SECRET: "a-secret-that-is-at-least-32-characters-long",
   CRON_SECRET: "a-cron-secret-that-is-at-least-32-characters-long",
@@ -89,10 +88,24 @@ describe("env", () => {
       /Invalid environment variables/
     )
   })
+
+  // .env.example ships every optional key as KEY="" rather than omitting the
+  // line, so this is the actual shape .env files have in practice - not an
+  // edge case. An optional string field must treat "" the same as unset.
+  it("treats an empty-string optional key (as shipped by .env.example) the same as unset, not a validation failure", async () => {
+    setEnv({})
+    process.env.GEMINI_API_KEY = ""
+    process.env.CLAUDE_BRIDGE_URL = ""
+
+    const { env } = await loadEnvModule()
+
+    expect(env.GEMINI_API_KEY).toBeUndefined()
+    expect(env.CLAUDE_BRIDGE_URL).toBeUndefined()
+  })
 })
 
 // DOMAIN_DNS_VERIFIED is THE hard gate on real send volume (see
-// domain-verification-gate.ts) — deliberately not z.coerce.boolean(), which
+// domain-verification-gate.ts) - deliberately not z.coerce.boolean(), which
 // would treat any non-empty string (including "false") as true. Only the
 // exact literal string "true" may open the gate; every other value, including
 // plausible-looking typos, must fail closed to `false`.
@@ -138,7 +151,7 @@ describe("env DOMAIN_DNS_VERIFIED parsing", () => {
     expect(env.DOMAIN_DNS_VERIFIED).toBe(false)
   })
 
-  it('parses "1" as false — only the literal string "true" opens the gate', async () => {
+  it('parses "1" as false - only the literal string "true" opens the gate', async () => {
     setEnv({})
     process.env.DOMAIN_DNS_VERIFIED = "1"
 
@@ -174,7 +187,7 @@ describe("env DOMAIN_DNS_VERIFIED parsing", () => {
     expect(env.DOMAIN_DNS_VERIFIED).toBe(false)
   })
 
-  it('parses " true" (leading whitespace) as false — no trimming is applied', async () => {
+  it('parses " true" (leading whitespace) as false - no trimming is applied', async () => {
     setEnv({})
     process.env.DOMAIN_DNS_VERIFIED = " true"
 
@@ -228,6 +241,56 @@ describe("env DAILY_SEND_CAP_TEST parsing", () => {
   it("throws at load time when DAILY_SEND_CAP_TEST is not a number", async () => {
     setEnv({})
     process.env.DAILY_SEND_CAP_TEST = "not-a-number"
+
+    await expect(loadEnvModule()).rejects.toThrow(/Invalid environment variables/)
+  })
+
+  it("defaults to 3 when set to an empty string, same as when unset (KEY=\"\" in .env.example)", async () => {
+    setEnv({})
+    process.env.DAILY_SEND_CAP_TEST = ""
+
+    const { env } = await loadEnvModule()
+
+    expect(env.DAILY_SEND_CAP_TEST).toBe(3)
+  })
+})
+
+describe("env HOURLY_RATE_CENTS parsing", () => {
+  afterEach(() => {
+    process.env = { ...originalEnv }
+    vi.resetModules()
+  })
+
+  it("defaults to 5000 when unset", async () => {
+    setEnv({})
+    delete process.env.HOURLY_RATE_CENTS
+
+    const { env } = await loadEnvModule()
+
+    expect(env.HOURLY_RATE_CENTS).toBe(5000)
+  })
+
+  it("defaults to 5000 when set to an empty string, same as when unset (KEY=\"\" in .env.example)", async () => {
+    setEnv({})
+    process.env.HOURLY_RATE_CENTS = ""
+
+    const { env } = await loadEnvModule()
+
+    expect(env.HOURLY_RATE_CENTS).toBe(5000)
+  })
+
+  it("coerces a numeric string to a number", async () => {
+    setEnv({})
+    process.env.HOURLY_RATE_CENTS = "7500"
+
+    const { env } = await loadEnvModule()
+
+    expect(env.HOURLY_RATE_CENTS).toBe(7500)
+  })
+
+  it("throws at load time when HOURLY_RATE_CENTS is zero or negative", async () => {
+    setEnv({})
+    process.env.HOURLY_RATE_CENTS = "0"
 
     await expect(loadEnvModule()).rejects.toThrow(/Invalid environment variables/)
   })

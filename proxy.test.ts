@@ -9,7 +9,7 @@ import { proxy } from "./proxy"
 // /_next and /favicon.ico from ever reaching `proxy()`) is compiled and
 // applied by Next.js's own routing layer, not by code in this repo. Verifying
 // that exclusion would mean reimplementing Next's matcher compiler, which is
-// a framework internal — out of scope here. What's tested below is the part
+// a framework internal - out of scope here. What's tested below is the part
 // this repo owns: what `proxy()` itself does with a request.
 
 function requestWithCookie(cookieHeader?: string): NextRequest {

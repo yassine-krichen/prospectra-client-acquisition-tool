@@ -4,7 +4,7 @@ import { parseDraftOutput } from '@/features/drafting/parse-draft-output';
 import type { DraftGenerationResult } from '@/features/drafting/drafting.types';
 
 // DeepSeek's API is OpenAI-chat-completions-compatible, served from
-// api.deepseek.com (not an /v1/ path, per DeepSeek's own docs — unlike
+// api.deepseek.com (not an /v1/ path, per DeepSeek's own docs - unlike
 // Groq/OpenAI's URL convention). `deepseek-chat` is DeepSeek's general-
 // purpose chat model, the free-tier-appropriate default (as opposed to
 // `deepseek-reasoner`, which is unnecessary for short cold-email drafts).
@@ -12,7 +12,7 @@ const DEEPSEEK_URL = 'https://api.deepseek.com/chat/completions';
 const DEEPSEEK_MODEL = 'deepseek-chat';
 
 // Minimal subset of the OpenAI-compatible chat completions response shape
-// this client relies on — identical shape to Groq's.
+// this client relies on - identical shape to Groq's.
 const deepseekResponseSchema = z.object({
   choices: z
     .array(
@@ -27,7 +27,7 @@ const deepseekResponseSchema = z.object({
  * Generates one subject+body draft via DeepSeek's OpenAI-compatible chat
  * completions API for an already-selected `apiKey` (key selection/rotation
  * across a comma-separated `DEEPSEEK_API_KEY` list, and failover to other
- * providers, are model-rotation.ts's job — this client only knows how to
+ * providers, are model-rotation.ts's job - this client only knows how to
  * make one call). Never throws: a failed request, non-2xx response, shape
  * mismatch, or output that doesn't parse into the SUBJECT:/BODY: format all
  * degrade to a typed `ok:false` result instead.

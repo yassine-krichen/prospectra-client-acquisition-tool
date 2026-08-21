@@ -1,21 +1,38 @@
 import { randomUUID } from 'node:crypto';
 
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { prisma } from '@/common/db/client';
+import { assertDestructiveTestsAllowed } from '@/common/testing/require-destructive-test-guard';
+import { prisma } from '@/common/testing/test-db-client';
 import { getTodaysSendCount } from '@/features/sending/daily-send-counter';
 
-// Integration test against the real Postgres test DB (docker-compose's
-// `postgres` service on port 5433, `biz_scraper_test` database — see
-// vitest.setup.ts), same pattern as prospects.repository.test.ts. This is
+// Redirects every layer of `getTodaysSendCount`'s own call chain (not just
+// this file's direct calls) to the isolated test database - see
+// require-destructive-test-guard.ts.
+vi.mock('@/common/db/client', async () => {
+  const { prisma } = await import('@/common/testing/test-db-client');
+  return { prisma };
+});
+
+// Integration test against the real Postgres DB (DATABASE_URL - the same
+// database the app uses, see vitest.setup.ts), same pattern as
+// prospects.repository.test.ts. This is
 // the daily-cap enforcement's own read path, so the UTC day boundary math is
-// exercised for real rather than mocked — an off-by-one here would let a
+// exercised for real rather than mocked - an off-by-one here would let a
 // bulk-approve batch quietly exceed the daily cap.
+beforeAll(() => {
+  assertDestructiveTestsAllowed('daily-send-counter.test.ts');
+});
+
 beforeEach(async () => {
+  await prisma.job.deleteMany();
+  await prisma.client.deleteMany();
   await prisma.prospect.deleteMany();
 });
 
 afterAll(async () => {
+  await prisma.job.deleteMany();
+  await prisma.client.deleteMany();
   await prisma.prospect.deleteMany();
   await prisma.$disconnect();
 });
@@ -40,6 +57,26 @@ async function seedProspect(sentAt: Date | null, lastFollowupAt: Date | null = n
       priorityScore: 1,
       sentAt,
       lastFollowupAt,
+    },
+  });
+}
+
+async function seedJobWithRetentionTouch(lastRetentionTouchAt: Date | null): Promise<void> {
+  const client = await prisma.client.create({
+    data: {
+      companyName: `Test Client ${randomUUID()}`,
+      industry: 'local_service',
+      companySize: 'unknown',
+    },
+  });
+  await prisma.job.create({
+    data: {
+      clientId: client.id,
+      service: 'landing_page',
+      cadence: 'one_off',
+      status: 'delivered',
+      agreedPriceCents: 100_000,
+      lastRetentionTouchAt,
     },
   });
 }
@@ -106,7 +143,7 @@ describe('getTodaysSendCount', () => {
 
   // A follow-up send (followup-scheduler.ts) only ever sets `lastFollowupAt`,
   // never `sentAt` (which must keep meaning "when the ORIGINAL send went
-  // out" — see the module doc comment). Without this, follow-up sends were
+  // out" - see the module doc comment). Without this, follow-up sends were
   // invisible to the daily cap entirely.
   it('counts a prospect whose ONLY today-timestamp is lastFollowupAt (a follow-up send with no sentAt change today)', async () => {
     await seedProspect(new Date('2026-01-01T00:00:00.000Z'), new Date('2026-06-15T10:00:00.000Z'));
@@ -138,5 +175,42 @@ describe('getTodaysSendCount', () => {
     const count = await getTodaysSendCount(referenceDate);
 
     expect(count).toBe(1);
+  });
+
+  // A retention touch (retention-scheduler.ts) sets Job.lastRetentionTouchAt,
+  // a separate table from Prospect - without this, retention sends were
+  // invisible to the shared daily cap entirely, letting a busy retention day
+  // exceed sending-domain volume limits alongside cold outreach.
+  it('counts a Job whose lastRetentionTouchAt falls within the reference UTC day', async () => {
+    await seedJobWithRetentionTouch(new Date('2026-06-15T10:00:00.000Z'));
+
+    const count = await getTodaysSendCount(referenceDate);
+
+    expect(count).toBe(1);
+  });
+
+  it('excludes a Job whose lastRetentionTouchAt falls outside the reference UTC day', async () => {
+    await seedJobWithRetentionTouch(new Date('2026-06-10T10:00:00.000Z'));
+
+    const count = await getTodaysSendCount(referenceDate);
+
+    expect(count).toBe(0);
+  });
+
+  it('excludes a Job that has never had a retention touch (lastRetentionTouchAt null)', async () => {
+    await seedJobWithRetentionTouch(null);
+
+    const count = await getTodaysSendCount(referenceDate);
+
+    expect(count).toBe(0);
+  });
+
+  it('sums prospect sends and Job retention touches from today (not one replacing the other)', async () => {
+    await seedProspect(new Date('2026-06-15T08:00:00.000Z'));
+    await seedJobWithRetentionTouch(new Date('2026-06-15T10:00:00.000Z'));
+
+    const count = await getTodaysSendCount(referenceDate);
+
+    expect(count).toBe(2);
   });
 });

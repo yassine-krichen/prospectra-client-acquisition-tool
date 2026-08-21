@@ -14,14 +14,14 @@ import { timingSafeEqual } from '@/common/auth/session';
 // This is implemented with raw Web Crypto HMAC rather than the `svix` npm
 // package: the algorithm above is simple, fully documented, and this app
 // already does equivalent raw-HMAC signing/verification for its own session
-// cookie (see common/auth/session.ts) — adding a dependency for a few lines
+// cookie (see common/auth/session.ts) - adding a dependency for a few lines
 // of HMAC verification would fail the "fewer dependencies" standard for no
 // real benefit. Revisit if Resend's signing scheme turns out to need more of
 // what the `svix` package provides (e.g. its built-in replay-tolerance
 // handling) than this file reimplements.
 
 // Rejects a signature whose `svix-timestamp` is further than this many
-// seconds from now (past or future) — standard Svix replay-attack mitigation
+// seconds from now (past or future) - standard Svix replay-attack mitigation
 // tolerance.
 const TIMESTAMP_TOLERANCE_SECONDS = 5 * 60;
 
@@ -65,7 +65,7 @@ function isTimestampFresh(svixTimestamp: string): boolean {
 
 /**
  * Verifies a Resend/Svix webhook signature against the raw request body.
- * Fails closed on every ambiguous case — this app's standard posture for
+ * Fails closed on every ambiguous case - this app's standard posture for
  * anything gating a "trust this input" decision: missing
  * `RESEND_WEBHOOK_SECRET` (can't verify, so refuse everything, per the spec's
  * explicit instruction), a malformed secret, any missing header, a stale/

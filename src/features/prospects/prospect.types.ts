@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { serviceTypeSchema } from '@/features/pricing/service-type';
+
 // Mirrors the enums/models defined in prisma/schema.prisma. Kept in sync by
 // hand since Prisma's generated types describe persistence shape, not the
 // validated shape of data crossing API boundaries.
@@ -80,6 +82,36 @@ export const signalSchema = z.object({
 });
 export type Signal = z.infer<typeof signalSchema>;
 
+// Mirrors `ServiceSuggestion` in matching/service-matching-rules.ts.
+// `source` is a literal today (only the rules engine produces suggestions
+// in this scope), widening later if an LLM-suggestion overlay is added.
+export const priceRangeCentsSchema = z.object({
+  min: z.number().int(),
+  max: z.number().int(),
+});
+export type PriceRangeCents = z.infer<typeof priceRangeCentsSchema>;
+
+export const serviceSuggestionSchema = z.object({
+  service: serviceTypeSchema,
+  role: z.enum(['primary', 'cross_sell']),
+  priceRangeCents: priceRangeCentsSchema.nullable(),
+  requiresManualQuote: z.boolean(),
+  reasoning: z.string(),
+  source: z.literal('rules'),
+});
+export type ServiceSuggestion = z.infer<typeof serviceSuggestionSchema>;
+
+// Mirrors `Prospect.lastDraftFailure` in prisma/schema.prisma - see that
+// column's doc comment. `flagged` is deliberately a plain string (not
+// `DraftProspectOutcome`'s narrower literal union) so an old persisted
+// record from a since-retired flag value never fails validation.
+export const draftFailureSchema = z.object({
+  flagged: z.string(),
+  message: z.string(),
+  occurredAt: z.string(),
+});
+export type DraftFailure = z.infer<typeof draftFailureSchema>;
+
 export const statusHistoryEntrySchema = z.object({
   status: z.string(),
   timestamp: z.coerce.date(),
@@ -129,9 +161,18 @@ export const prospectSchema = z.object({
   signal: signalSchema,
   projectFit: projectFitSchema,
   estimatedBudget: estimatedBudgetSchema,
+  suggestedServices: z.array(serviceSuggestionSchema),
   priorityScore: z.number().int(),
   status: prospectStatusSchema,
   statusHistory: z.array(statusHistoryEntrySchema),
+  // Dashboard-only read marker - see the doc comment on `Prospect.seen` in
+  // prisma/schema.prisma. Not part of the outreach pipeline's own state.
+  seen: z.boolean(),
+  // Dead-letter tracking for the most recent failed `draftProspect` attempt
+  // - see the doc comment on `Prospect.lastDraftFailure` in
+  // prisma/schema.prisma. Null once the prospect has never failed drafting,
+  // or once a later attempt succeeds.
+  lastDraftFailure: draftFailureSchema.nullable(),
   drafts: z.array(draftSchema),
   activeDraftId: z.string().nullable(),
   sentAt: z.coerce.date().nullable(),
@@ -149,7 +190,7 @@ export type Prospect = z.infer<typeof prospectSchema>;
 // Narrower projection returned by the prospect list/dashboard view
 // (`listProspects` in `prospects.repository.ts`). Excludes heavier fields
 // the list UI doesn't render (drafts, statusHistory, notes, tags, contact
-// details, follow-up/reply tracking) — a full prospect detail view can
+// details, follow-up/reply tracking) - a full prospect detail view can
 // fetch the rest by id later. Keeping this explicit (rather than reusing
 // the full `prospectSchema`) also means the list query only ever selects
 // the columns it actually needs.

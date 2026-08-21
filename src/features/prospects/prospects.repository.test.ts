@@ -1,10 +1,19 @@
 import { randomUUID } from 'node:crypto';
 
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { prisma } from '@/common/db/client';
+import { assertDestructiveTestsAllowed } from '@/common/testing/require-destructive-test-guard';
+import { prisma } from '@/common/testing/test-db-client';
 import { toPrismaCompanySize } from '@/features/prospects/company-size.mapper';
-import { listProspects } from '@/features/prospects/prospects.repository';
+import { getProspectById, listProspects } from '@/features/prospects/prospects.repository';
+
+// Redirects every layer of `listProspects`/`getProspectById`'s own call
+// chain (not just this file's direct calls) to the isolated test database -
+// see require-destructive-test-guard.ts.
+vi.mock('@/common/db/client', async () => {
+  const { prisma } = await import('@/common/testing/test-db-client');
+  return { prisma };
+});
 import type {
   CompanySize,
   Industry,
@@ -14,11 +23,17 @@ import type {
   Signal,
 } from '@/features/prospects/prospect.types';
 
-// Integration tests against the real Postgres test DB (docker-compose's
-// `postgres` service on port 5433, `biz_scraper_test` database — see
-// vitest.setup.ts). The Prospect table is wiped before every test rather than
-// tagged/rolled back: this DB has no other purpose, and deleteMany is simpler
-// than threading a transaction through `listProspects`'s own `prisma` import.
+// Integration tests against the real Postgres DB (DATABASE_URL - the same
+// database the app uses, see vitest.setup.ts). The Prospect table is wiped
+// before every test rather than tagged/rolled back: deleteMany is simpler
+// than threading a transaction through `listProspects`'s own `prisma`
+// import. Deliberate tradeoff: don't run `npm test` against a DATABASE_URL
+// holding data you care about - and see require-destructive-test-guard.ts
+// for the explicit opt-in this file now refuses to run without.
+beforeAll(() => {
+  assertDestructiveTestsAllowed('prospects.repository.test.ts');
+});
+
 beforeEach(async () => {
   await prisma.prospect.deleteMany();
 });
@@ -288,7 +303,7 @@ describe('listProspects cursor pagination', () => {
 
     const seededIds = seeded.map((s) => s.id);
     expect(new Set(collected).size).toBe(collected.length); // no repeats
-    expect(collected.sort()).toEqual(seededIds.sort()); // no skips — same set of ids
+    expect(collected.sort()).toEqual(seededIds.sort()); // no skips - same set of ids
   });
 
   it('does not repeat or skip items when paging with a non-default sortField (priorityScore)', async () => {
@@ -327,5 +342,51 @@ describe('listProspects projection', () => {
     const { prospects } = await listProspects();
 
     expect(prospects[0].companySize).toBe('11-50');
+  });
+});
+
+describe('getProspectById', () => {
+  it('returns null when no prospect exists with the given id', async () => {
+    expect(await getProspectById(randomUUID())).toBeNull();
+  });
+
+  it('returns the full prospect with contact fields null for a never-enriched (status: new) prospect', async () => {
+    const { id } = await seedProspect({ companyName: 'Not Yet Enriched', status: 'new' });
+
+    const prospect = await getProspectById(id);
+
+    expect(prospect?.status).toBe('new');
+    expect(prospect?.contactName).toBeNull();
+    expect(prospect?.contactEmail).toBeNull();
+    expect(prospect?.emailConfidence).toBe(0);
+    expect(prospect?.drafts).toEqual([]);
+  });
+
+  it('returns real contact info and drafts (with modelUsed mapped to the domain hyphenated form) for an enriched prospect', async () => {
+    const { id } = await seedProspect({ companyName: 'Enriched Co', status: 'drafted' });
+    await prisma.prospect.update({
+      where: { id },
+      data: { contactName: 'Jane Doe', contactEmail: 'jane@example.com', emailVerified: true, emailConfidence: 90 },
+    });
+    await prisma.draft.create({
+      data: {
+        prospectId: id,
+        variant: 1,
+        subject: 'Subject',
+        body: 'Body',
+        modelUsed: 'claude_bridge',
+        framework: 'pas',
+        approved: false,
+        edited: false,
+      },
+    });
+
+    const prospect = await getProspectById(id);
+
+    expect(prospect?.contactName).toBe('Jane Doe');
+    expect(prospect?.contactEmail).toBe('jane@example.com');
+    expect(prospect?.emailVerified).toBe(true);
+    expect(prospect?.drafts).toHaveLength(1);
+    expect(prospect?.drafts[0].modelUsed).toBe('claude-bridge');
   });
 });

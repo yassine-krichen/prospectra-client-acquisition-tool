@@ -32,7 +32,7 @@ const repoSearchBody = {
 
 /**
  * Routes a mocked `fetch` by pathname, so each test only has to specify the
- * endpoints it cares about — every other GitHub endpoint this source hits
+ * endpoints it cares about - every other GitHub endpoint this source hits
  * (readme, contents, workflows) degrades to its own documented "not found"
  * fallback rather than needing an explicit mock every time.
  */

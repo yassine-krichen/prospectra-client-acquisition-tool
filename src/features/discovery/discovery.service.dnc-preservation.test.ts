@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Integration test against the real Postgres test DB (same pattern as
-// daily-send-counter.test.ts / prospects.repository.test.ts) — the guarantee
+import { assertDestructiveTestsAllowed } from '@/common/testing/require-destructive-test-guard';
+
+// Integration test against the real Postgres DB (same pattern as
+// daily-send-counter.test.ts / prospects.repository.test.ts) - the guarantee
 // under test ("a doNotContact:true prospect is left completely untouched by
 // re-discovery") is a persistence guarantee, so it's verified with a direct
 // DB read after the run rather than trusting the returned summary alone.
@@ -38,10 +40,22 @@ vi.mock('@/features/discovery/sources/indiehackers.source', () => ({
   runIndieHackersSource: runIndieHackersSourceMock,
 }));
 
-const { prisma } = await import('@/common/db/client');
+// Redirects every layer of `runDiscovery`'s own call chain (not just this
+// file's direct calls) to the isolated test database - see
+// require-destructive-test-guard.ts.
+vi.mock('@/common/db/client', async () => {
+  const { prisma } = await import('@/common/testing/test-db-client');
+  return { prisma };
+});
+
+const { prisma } = await import('@/common/testing/test-db-client');
 const { runDiscovery } = await import('./discovery.service');
 
 const query = { category: 'plumber', geography: 'Austin, TX' };
+
+beforeAll(() => {
+  assertDestructiveTestsAllowed('discovery.service.dnc-preservation.test.ts');
+});
 
 beforeEach(async () => {
   await prisma.prospect.deleteMany();
@@ -104,8 +118,6 @@ describe('runDiscovery doNotContact preservation (real DB)', () => {
           sourceUrl: 'https://example.com/rescrape',
           discoveredAt: new Date(),
           signal: { type: 'outdated_site', description: 'freshly re-scraped signal', evidence: 'evidence', strength: 'strong' },
-          projectFit: 'landing_page',
-          estimatedBudget: 'high',
         },
       ],
     });
@@ -146,8 +158,6 @@ describe('runDiscovery doNotContact preservation (real DB)', () => {
           sourceUrl: 'https://example.com/source',
           discoveredAt: new Date(),
           signal: { type: 'no_https', description: 'x', evidence: null, strength: 'weak' },
-          projectFit: 'unclear',
-          estimatedBudget: 'unknown',
         },
         {
           companyName: 'Brand New Co',
@@ -160,8 +170,6 @@ describe('runDiscovery doNotContact preservation (real DB)', () => {
           sourceUrl: 'https://example.com/source',
           discoveredAt: new Date(),
           signal: { type: 'no_https', description: 'x', evidence: null, strength: 'medium' },
-          projectFit: 'unclear',
-          estimatedBudget: 'unknown',
         },
       ],
     });

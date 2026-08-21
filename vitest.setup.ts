@@ -1,9 +1,23 @@
+import "dotenv/config"
+
 // Default valid env vars so `src/common/config/env.ts` (which validates and
 // throws at import time) doesn't blow up every test file that transitively
 // imports it. `env.test.ts` mutates `process.env` and reloads the module per
 // case to exercise the validation failure paths directly.
-process.env.DATABASE_URL ??=
-  "postgresql://postgres:postgres@localhost:5433/biz_scraper_test?schema=public"
+//
+// DATABASE_URL comes from `.env` (loaded above via dotenv/config) - the same
+// Neon database the app itself uses. The 7 integration tests that truncate
+// real tables (discovery.service.dnc-preservation.test.ts,
+// bridge-budget.test.ts, hunter.source.test.ts, prospects.repository.test.ts,
+// daily-send-counter.test.ts, followup-scheduler.cap-integration.test.ts,
+// retention-scheduler.cap-integration.test.ts) now read/write against the
+// isolated TEST_DATABASE_URL Neon branch instead (see
+// require-destructive-test-guard.ts and @/common/testing/test-db-client), so
+// `npm test` no longer touches DATABASE_URL at all. Falls back to an
+// unreachable-but-URL-shaped placeholder when `.env` doesn't define
+// DATABASE_URL at all, so env.ts's `.url()` validation still passes for
+// every other test file.
+process.env.DATABASE_URL ??= "postgresql://unset:unset@localhost:5432/unset?schema=public"
 process.env.DASHBOARD_PASSWORD ??= "test-password"
 process.env.SESSION_SECRET ??= "test-session-secret-32-characters"
 process.env.CRON_SECRET ??= "test-cron-secret-32-characters-long"

@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Orchestration test: domain-verification-gate.ts and daily-send-counter.ts
-// each have their own dedicated suites, so both are mocked here — only
+// each have their own dedicated suites, so both are mocked here - only
 // queue-listing.ts's own querying and pickDisplayDraft priority-selection
 // logic is under test. pickDisplayDraft itself isn't exported, so its
 // priority tiers are exercised indirectly through listApprovalQueue's
-// returned `draft` field per item.
+// returned `defaultDraftId` field per item.
 const { findManyMock } = vi.hoisted(() => ({ findManyMock: vi.fn() }));
 vi.mock('@/common/db/client', () => ({ prisma: { prospect: { findMany: findManyMock } } }));
 
@@ -25,17 +25,20 @@ interface DraftOverrides {
   id: string;
   variant: number;
   humanizedBody?: string | null;
+  lastSendFailure?: unknown;
 }
 
 function buildDraft(overrides: DraftOverrides) {
   return {
     id: overrides.id,
     variant: overrides.variant,
+    framework: null,
     subject: 'Subject',
     body: 'Body',
     humanizedBody: overrides.humanizedBody ?? null,
     edited: false,
     approved: false,
+    lastSendFailure: overrides.lastSendFailure ?? null,
   };
 }
 
@@ -80,7 +83,7 @@ describe('listApprovalQueue draft selection priority', () => {
 
     const { items } = await listApprovalQueue();
 
-    expect(items[0].draft?.id).toBe('draft-2');
+    expect(items[0].defaultDraftId).toBe('draft-2');
   });
 
   it('falls back to whichever variant has a humanizedBody when activeDraftId is unset', async () => {
@@ -96,7 +99,7 @@ describe('listApprovalQueue draft selection priority', () => {
 
     const { items } = await listApprovalQueue();
 
-    expect(items[0].draft?.id).toBe('draft-2');
+    expect(items[0].defaultDraftId).toBe('draft-2');
   });
 
   it('falls back to variant 1 when no draft has a humanizedBody and activeDraftId is unset', async () => {
@@ -112,7 +115,7 @@ describe('listApprovalQueue draft selection priority', () => {
 
     const { items } = await listApprovalQueue();
 
-    expect(items[0].draft?.id).toBe('draft-1');
+    expect(items[0].defaultDraftId).toBe('draft-1');
   });
 
   it('falls back to the lowest-numbered variant when there is no variant 1 and none is humanized', async () => {
@@ -128,7 +131,7 @@ describe('listApprovalQueue draft selection priority', () => {
 
     const { items } = await listApprovalQueue();
 
-    expect(items[0].draft?.id).toBe('draft-2');
+    expect(items[0].defaultDraftId).toBe('draft-2');
   });
 
   it('falls through to the next tier when activeDraftId does not match any of this prospect\'s own drafts', async () => {
@@ -141,15 +144,56 @@ describe('listApprovalQueue draft selection priority', () => {
 
     const { items } = await listApprovalQueue();
 
-    expect(items[0].draft?.id).toBe('draft-1');
+    expect(items[0].defaultDraftId).toBe('draft-1');
   });
 
-  it('yields a null draft when a drafted-status prospect has zero draft rows', async () => {
+  it('yields an empty drafts array and a null defaultDraftId when a drafted-status prospect has zero draft rows', async () => {
     findManyMock.mockResolvedValue([buildProspect({ drafts: [] })]);
 
     const { items } = await listApprovalQueue();
 
-    expect(items[0].draft).toBeNull();
+    expect(items[0].drafts).toEqual([]);
+    expect(items[0].defaultDraftId).toBeNull();
+  });
+});
+
+describe('listApprovalQueue drafts array', () => {
+  it('surfaces every draft variant for a prospect, sorted by variant ascending', async () => {
+    findManyMock.mockResolvedValue([
+      buildProspect({
+        drafts: [
+          buildDraft({ id: 'draft-3', variant: 3 }),
+          buildDraft({ id: 'draft-1', variant: 1 }),
+          buildDraft({ id: 'draft-2', variant: 2 }),
+        ],
+      }),
+    ]);
+
+    const { items } = await listApprovalQueue();
+
+    expect(items[0].drafts.map((draft) => draft.id)).toEqual(['draft-1', 'draft-2', 'draft-3']);
+  });
+});
+
+describe('listApprovalQueue hasSendFailure', () => {
+  it('reports hasSendFailure true when the draft has a non-null lastSendFailure', async () => {
+    findManyMock.mockResolvedValue([
+      buildProspect({
+        drafts: [buildDraft({ id: 'draft-1', variant: 1, lastSendFailure: { reason: 'oops', occurredAt: 'now' } })],
+      }),
+    ]);
+
+    const { items } = await listApprovalQueue();
+
+    expect(items[0].drafts[0].hasSendFailure).toBe(true);
+  });
+
+  it('reports hasSendFailure false when the draft has no lastSendFailure on file', async () => {
+    findManyMock.mockResolvedValue([buildProspect({ drafts: [buildDraft({ id: 'draft-1', variant: 1 })] })]);
+
+    const { items } = await listApprovalQueue();
+
+    expect(items[0].drafts[0].hasSendFailure).toBe(false);
   });
 });
 

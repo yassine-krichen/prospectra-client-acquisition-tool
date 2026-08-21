@@ -4,6 +4,7 @@ import { generateEmailGuesses } from '@/features/enrichment/pattern-guess';
 import { domainAcceptsEmail } from '@/features/enrichment/smtp-verify';
 import { runHunterEnrichment } from '@/features/enrichment/hunter.source';
 import { runPeopleDataLabsEnrichment } from '@/features/enrichment/peopledatalabs.source';
+import { applyServiceMatching } from '@/features/matching/matching.service';
 import type {
   EnrichedContact,
   EnrichmentInput,
@@ -12,8 +13,8 @@ import type {
   EnrichProspectResult,
 } from '@/features/enrichment/enrichment.types';
 
-// A guessed-and-MX-checked email was never actually confirmed to exist —
-// only that its domain can theoretically receive mail — so it's scored well
+// A guessed-and-MX-checked email was never actually confirmed to exist -
+// only that its domain can theoretically receive mail - so it's scored well
 // below anything Hunter or PDL return (their lowest realistic confidence is
 // still well above this). This is the least confident this app's
 // `emailConfidence` scale ever goes for a non-empty email.
@@ -95,8 +96,8 @@ async function guessAndCheckEmail(input: EnrichmentInput): Promise<EnrichmentRes
 }
 
 /**
- * Runs the Branch C enrichment fallback chain — Hunter -> People Data Labs
- * -> pattern-guess+MX-check — stopping at the first source that returns a
+ * Runs the Branch C enrichment fallback chain - Hunter -> People Data Labs
+ * -> pattern-guess+MX-check - stopping at the first source that returns a
  * usable contact. Never throws: each source degrades to a typed
  * `ok:false`, and this function reports every attempted source's outcome in
  * the returned `sources` summary regardless of which one (if any) supplied
@@ -118,7 +119,7 @@ async function runEnrichmentChain(
 
     if (result.ok) {
       sources.push({ source: name, ran: true, used: true });
-      // Any source after this one in the chain never runs — recorded here
+      // Any source after this one in the chain never runs - recorded here
       // (rather than as `ran: false` entries) since it's a deliberate
       // "already have a usable result" skip, not an availability failure.
       return { contact: result.contact, sources };
@@ -133,7 +134,7 @@ async function runEnrichmentChain(
 /**
  * Enriches a single prospect's contact info: loads it, runs the fallback
  * chain, persists whichever result was found, and returns the updated
- * prospect. Returns `null` if no prospect exists with `prospectId` — the
+ * prospect. Returns `null` if no prospect exists with `prospectId` - the
  * caller (the `/enrich` route) maps that to a 404.
  */
 export async function enrichProspect(prospectId: string): Promise<EnrichProspectResult | null> {
@@ -188,7 +189,7 @@ export async function enrichProspect(prospectId: string): Promise<EnrichProspect
     };
   }
 
-  // Every enrichment source in this phase discovers/confirms a contact —
+  // Every enrichment source in this phase discovers/confirms a contact -
   // 'new' is the only status this moves forward from, so a prospect that's
   // already progressed further (drafted, sent, etc) keeps its status as-is.
   const nextStatus =
@@ -213,6 +214,11 @@ export async function enrichProspect(prospectId: string): Promise<EnrichProspect
     },
     select: PROSPECT_SELECT,
   })) as ProspectRow;
+
+  // Company size/industry confidence may have shifted now that a contact was
+  // found - recompute service suggestions against the freshly enriched
+  // prospect rather than leaving discovery-time suggestions stale.
+  await applyServiceMatching(prospectId);
 
   return { prospect: toView(updated), sources };
 }

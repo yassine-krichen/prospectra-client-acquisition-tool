@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The registry reads keys straight from `env` at call time (no module-level
-// rotation-index state to reset — that's the whole point of this redesign),
+// rotation-index state to reset - that's the whole point of this redesign),
 // so each test just sets the env mock it needs before importing/using the
 // module. `vi.resetModules()` still runs between tests for isolation.
 const envMock: {

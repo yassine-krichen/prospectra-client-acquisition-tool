@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // This is the highest-stakes orchestration test in this phase: the atomic
 // claim inside `attemptFollowupSend`/`markDead` is what makes the
-// reply-vs-follow-up race impossible to lose — a reply arriving between this
+// reply-vs-follow-up race impossible to lose - a reply arriving between this
 // module's read and its claim must make the claim match zero rows and abort
 // before `sendEmail` is ever called. Prisma, the daily-cap gate, the
 // send-count reader, and `sendEmail` are all mocked (this is an orchestration
@@ -174,7 +174,7 @@ describe('runFollowupScheduler eligibility and touch progression', () => {
 
   it('does not treat a prospect as due shortly before the interval elapses', async () => {
     // A few minutes short of the interval, rather than an exact
-    // millisecond boundary — `runFollowupScheduler` computes its own `now`
+    // millisecond boundary - `runFollowupScheduler` computes its own `now`
     // internally (no injectable reference clock), so a true 1ms-precision
     // boundary assertion would be flaky against real test-execution jitter.
     const candidate = buildCandidate({
@@ -190,7 +190,7 @@ describe('runFollowupScheduler eligibility and touch progression', () => {
 
   it('measures staleness from lastFollowupAt, not the original sentAt, once at least one follow-up has already gone out', async () => {
     // sentAt is ancient (would be "stale" many times over), but lastFollowupAt
-    // is recent — the prospect must not be treated as due again yet.
+    // is recent - the prospect must not be treated as due again yet.
     const candidate = buildCandidate({
       status: 'followup_1',
       sentAt: daysAgo(60),
@@ -234,7 +234,7 @@ describe('runFollowupScheduler dead transition after touch 4', () => {
 // The core correctness invariant of this phase: a reply must halt follow-ups
 // with zero race window. There is no intermediate "check status is still
 // valid" read in attemptFollowupSend between reading the candidate and
-// issuing the atomic claim — the claim's own WHERE clause (keyed to the
+// issuing the atomic claim - the claim's own WHERE clause (keyed to the
 // exact status this candidate was read at) is the *only* thing standing
 // between a stale read and an incorrect send. These tests prove that by
 // controlling only what the claim itself returns.
@@ -244,7 +244,7 @@ describe('runFollowupScheduler reply-vs-follow-up race', () => {
     findManyMock.mockResolvedValue([candidate]);
     // Models a reply-detection updateMany having already moved this exact row
     // to `replied` between this scheduler's findMany read and its own claim
-    // attempt — a real DB's `UPDATE ... WHERE status = 'sent'` would match 0
+    // attempt - a real DB's `UPDATE ... WHERE status = 'sent'` would match 0
     // rows once the row is no longer `sent`.
     updateManyMock.mockResolvedValue({ count: 0 });
 
@@ -262,7 +262,7 @@ describe('runFollowupScheduler reply-vs-follow-up race', () => {
     await runFollowupScheduler();
 
     // The claim must condition on `followup_2` (this candidate's read status)
-    // and `doNotContact: false` — never a looser WHERE (e.g. "status is any
+    // and `doNotContact: false` - never a looser WHERE (e.g. "status is any
     // in-flight status") that a reply already committed to `replied` could
     // still satisfy.
     expect(updateManyMock).toHaveBeenCalledWith(
@@ -295,7 +295,7 @@ describe('runFollowupScheduler reply-vs-follow-up race', () => {
     // Read snapshot shows doNotContact:false (otherwise it wouldn't have been
     // a candidate at all), but the claim's fresh WHERE doNotContact:false
     // check is what actually protects against a flip that happened after the
-    // read — modeled here by the claim itself returning 0.
+    // read - modeled here by the claim itself returning 0.
     const candidate = buildCandidate({ status: 'sent', sentAt: daysAgo(FOLLOWUP_INTERVAL_DAYS + 1), doNotContact: false });
     findManyMock.mockResolvedValue([candidate]);
     updateManyMock.mockResolvedValue({ count: 0 });
@@ -398,8 +398,8 @@ describe('runFollowupScheduler send failure rollback', () => {
     expect(outcomes).toEqual([
       { prospectId: candidate.id, outcome: 'failed', reason: 'resend responded with 500' },
     ]);
-    // Conditioned rollback: WHERE keys off `followup_1` — the status THIS
-    // call's claim just set — not an unconditional `update`. This is what
+    // Conditioned rollback: WHERE keys off `followup_1` - the status THIS
+    // call's claim just set - not an unconditional `update`. This is what
     // lets a concurrent reply that already moved status away from
     // `followup_1` make the rollback a no-op instead of overwriting it (see
     // the race test below).
@@ -420,7 +420,7 @@ describe('runFollowupScheduler send failure rollback', () => {
     findManyMock.mockResolvedValue([candidate]);
 
     // First updateMany call is this candidate's forward claim (sent ->
-    // followup_1) — it succeeds. Between that claim and the (failing)
+    // followup_1) - it succeeds. Between that claim and the (failing)
     // sendEmail call, model a concurrent reply-detection.service.ts claim
     // having already moved the row to `replied`. The second updateMany call
     // is the rollback attempt, which must now match 0 rows because its WHERE
@@ -442,7 +442,7 @@ describe('runFollowupScheduler send failure rollback', () => {
         statusHistory: candidate.statusHistory,
       },
     });
-    // The rollback's own count (0) proves it did not touch the row — the
+    // The rollback's own count (0) proves it did not touch the row - the
     // prospect is left as `replied` by the concurrent reply claim, not
     // resurrected back to `sent`/follow-up-eligible.
     await expect(updateManyMock.mock.results[1].value).resolves.toEqual({ count: 0 });

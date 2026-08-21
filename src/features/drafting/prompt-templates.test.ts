@@ -102,9 +102,9 @@ describe('buildDraftPrompt', () => {
       const prompt = buildDraftPrompt(buildProspect(), 'bab');
 
       expect(prompt).toMatch(/Before-After-Bridge/i);
-      expect(prompt).toMatch(/Before —/);
-      expect(prompt).toMatch(/After —/);
-      expect(prompt).toMatch(/Bridge —/);
+      expect(prompt).toMatch(/Before - /);
+      expect(prompt).toMatch(/After - /);
+      expect(prompt).toMatch(/Bridge - /);
     });
   });
 

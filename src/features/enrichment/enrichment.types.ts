@@ -62,7 +62,7 @@ export interface EnrichProspectResult {
   /**
    * Set when the enrichment chain found a usable contact but it was a
    * downgrade from what the prospect already had (see
-   * `enrichment.service.ts`'s monotonicity guard) — the existing,
+   * `enrichment.service.ts`'s monotonicity guard) - the existing,
    * higher-confidence contact was kept instead of being overwritten.
    */
   downgradeSkipped?: {

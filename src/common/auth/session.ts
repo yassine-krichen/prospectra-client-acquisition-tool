@@ -30,7 +30,7 @@ async function sign(data: string): Promise<string> {
 
 // Constant-time comparison so signature checks don't leak timing information.
 // Callers comparing variable-length secrets (e.g. passwords) must hash them
-// to a fixed-length digest first with `sha256Hex` — otherwise the early
+// to a fixed-length digest first with `sha256Hex` - otherwise the early
 // length check below still leaks the secret's length.
 export function timingSafeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
@@ -54,7 +54,7 @@ export async function sha256Hex(input: string): Promise<string> {
 /**
  * Creates a signed session token proving the caller authenticated with the
  * dashboard password. The token carries only an issue timestamp and an HMAC
- * signature — never the password itself.
+ * signature - never the password itself.
  */
 export async function createSessionToken(): Promise<string> {
   const issuedAt = Date.now().toString();

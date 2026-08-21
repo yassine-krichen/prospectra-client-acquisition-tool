@@ -109,7 +109,7 @@ describe('enrichProspect', () => {
     findUniqueMock.mockResolvedValue(buildProspectRow());
     runHunterEnrichmentMock.mockResolvedValue({
       ok: false,
-      reason: 'source unavailable: Hunter.io free-tier quota (25/month) already used this month',
+      reason: 'source unavailable: Hunter.io free-tier quota (50/month) already used this month',
     });
     runPeopleDataLabsEnrichmentMock.mockResolvedValue({ ok: true, contact: pdlContact });
 
@@ -119,7 +119,7 @@ describe('enrichProspect', () => {
       {
         source: 'hunter',
         ran: false,
-        reason: 'source unavailable: Hunter.io free-tier quota (25/month) already used this month',
+        reason: 'source unavailable: Hunter.io free-tier quota (50/month) already used this month',
         used: false,
       },
       { source: 'people_data_labs', ran: true, used: true },
@@ -262,7 +262,7 @@ describe('enrichProspect', () => {
       })
     );
     // Same source chain, but this attempt's result is an unverified guess at
-    // an equal-or-higher confidence score — the confidence-drop check alone
+    // an equal-or-higher confidence score - the confidence-drop check alone
     // would miss this, since confidence didn't drop.
     runHunterEnrichmentMock.mockResolvedValue({
       ok: true,

@@ -1,21 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { z } from 'zod';
 
 import { env } from '@/common/config/env';
 import { sha256Hex, timingSafeEqual } from '@/common/auth/session';
+import { discoverRequestSchema } from '@/features/discovery/discovery.types';
 import { runDiscovery } from '@/features/discovery/discovery.service';
 
 const CRON_SECRET_HEADER = 'x-cron-secret';
-
-// `branch` selects which discovery sources run for this request: 'a' (the
-// default, preserving prior behavior) = local/SMB sources, 'b' = startup/SaaS
-// sources, 'both' = every source. See `discovery.service.ts`'s `runDiscovery`
-// doc comment for what each branch includes.
-const discoverRequestSchema = z.object({
-  category: z.string().min(1),
-  geography: z.string().min(1),
-  branch: z.enum(['a', 'b', 'both']).default('a'),
-});
 
 // Fail closed, same pattern as the dashboard login flow: hash both sides to
 // a fixed-length digest before the constant-time compare, since the

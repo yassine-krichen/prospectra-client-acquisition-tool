@@ -13,7 +13,7 @@ import { lookup } from 'node:dns/promises';
 
 const mockLookup = vi.mocked(lookup);
 
-// Every fixture below is fetched through a mocked `fetch` — this is the
+// Every fixture below is fetched through a mocked `fetch` - this is the
 // appropriate boundary to mock, since `detectWebsiteSignals` exists
 // specifically to make a real network call.
 function mockFetchResponse(html: string, options: { ok?: boolean } = {}): void {
@@ -52,7 +52,7 @@ function legacySiteHtml(year: number): string {
 describe('detectWebsiteSignals', () => {
   // `detectWebsiteSignals` now resolves the hostname before fetching (SSRF
   // guard). Every test in this suite fetches from a fake *.example.com host,
-  // so DNS resolution is stubbed to a public IP by default — the SSRF-guard
+  // so DNS resolution is stubbed to a public IP by default - the SSRF-guard
   // tests further down override this per-test to exercise the guard itself.
   beforeEach(() => {
     mockLookup.mockResolvedValue({ address: '93.184.216.34', family: 4 });

@@ -1,14 +1,27 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { prisma } from '@/common/db/client';
+import { assertDestructiveTestsAllowed } from '@/common/testing/require-destructive-test-guard';
+import { prisma } from '@/common/testing/test-db-client';
+
+// Redirects every layer of `isBridgeInCooldown`/`recordBridgeRateLimit`'s own
+// call chain (not just this file's direct calls) to the isolated test
+// database - see require-destructive-test-guard.ts.
+vi.mock('@/common/db/client', async () => {
+  const { prisma } = await import('@/common/testing/test-db-client');
+  return { prisma };
+});
 
 import { isBridgeInCooldown, recordBridgeRateLimit } from './bridge-budget';
 
-// Integration test against the real Postgres test DB (same pattern as
-// hunter.source.test.ts's ApiUsageCounter tests) — this is genuinely shared
+// Integration test against the real Postgres DB (same pattern as
+// hunter.source.test.ts's ApiUsageCounter tests) - this is genuinely shared
 // state read/written across separate serverless invocations, so it's worth
 // exercising against real Postgres rather than a mocked Prisma client.
 const SOURCE = 'claude-bridge';
+
+beforeAll(() => {
+  assertDestructiveTestsAllowed('bridge-budget.test.ts');
+});
 
 beforeEach(async () => {
   await prisma.bridgeCooldown.deleteMany();

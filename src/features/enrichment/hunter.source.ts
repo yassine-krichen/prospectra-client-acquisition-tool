@@ -8,11 +8,22 @@ const EMAIL_FINDER_URL = 'https://api.hunter.io/v2/email-finder';
 const DOMAIN_SEARCH_URL = 'https://api.hunter.io/v2/domain-search';
 
 const USAGE_SOURCE_KEY = 'hunter';
-// Hunter.io's free tier is capped at 25 searches/month — a hard external
-// quota, not something this code can bypass. `ApiUsageCounter` tracks calls
-// per calendar month so the code refuses to call Hunter past the cap rather
-// than burning it on calls that fail after the fact.
-const MONTHLY_FREE_TIER_CAP = 25;
+// Hunter.io's free tier search cap - a hard external quota, not something
+// this code can bypass. `ApiUsageCounter` tracks calls per calendar month so
+// the code refuses to call Hunter past the cap rather than burning it on
+// calls that fail after the fact. This is intentionally a hardcoded local
+// constant, not a live call to Hunter's own /v2/account endpoint on every
+// reservation - `reserveHunterQuota()` below needs to stay a single atomic
+// Postgres UPDATE for its race-safety guarantee (see that function's doc
+// comment), and a network round-trip has no place in that. Verified against
+// the actual configured HUNTER_API_KEY's real account via GET
+// https://api.hunter.io/v2/account (`requests.searches.available`) - 50 as
+// of this writing, NOT the 25 commonly cited for Hunter's free tier
+// elsewhere. Re-verify this the same way if the configured key ever changes
+// accounts/plans; the System Health panel's live account.usage.hunter
+// reading (hunter-account.service.ts) is the place to check current reality
+// without touching this file.
+const MONTHLY_FREE_TIER_CAP = 50;
 
 function currentYearMonth(): string {
   return new Date().toISOString().slice(0, 7); // "YYYY-MM", UTC
@@ -43,7 +54,7 @@ async function reserveHunterQuota(): Promise<boolean> {
 }
 
 /**
- * Compensating rollback for a reserved quota unit — used only when the
+ * Compensating rollback for a reserved quota unit - used only when the
  * `fetch` call to Hunter itself threw (a network-level failure), meaning the
  * request never reached Hunter's servers, so Hunter could not have counted
  * it against the real account quota. Deliberately NOT used for non-2xx
@@ -106,7 +117,7 @@ function buildContactName(firstName: string | null | undefined, lastName: string
 }
 
 // A "valid" verification status is Hunter's own strongest confidence signal
-// — anything else (accept_all, webmail, unknown, etc) means Hunter itself
+// - anything else (accept_all, webmail, unknown, etc) means Hunter itself
 // isn't certain the mailbox exists, so `emailVerified` only flips to `true`
 // on an explicit "valid".
 function isVerified(status: string | null | undefined): boolean {
@@ -118,7 +129,7 @@ function isVerified(status: string | null | undefined): boolean {
  * contact name is already known, otherwise the Domain Search endpoint's
  * highest-confidence result. Refuses to call Hunter at all once this
  * calendar month's free-tier quota (`MONTHLY_FREE_TIER_CAP`) is used up.
- * Returns a typed "unavailable" result — rather than throwing — when
+ * Returns a typed "unavailable" result - rather than throwing - when
  * HUNTER_API_KEY is unset, the quota is exhausted, or the call fails.
  */
 export async function runHunterEnrichment(input: EnrichmentInput): Promise<EnrichmentResult> {

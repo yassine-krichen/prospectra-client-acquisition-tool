@@ -4,7 +4,7 @@ import { getEffectiveDailyCap, isDomainVerified } from '@/features/sending/domai
 import { getTodaysSendCount } from '@/features/sending/daily-send-counter';
 import type { QueueItemView, QueueListResult } from '@/features/sending/sending.types';
 
-// Explicit projection — the queue view only needs enough of each prospect
+// Explicit projection - the queue view only needs enough of each prospect
 // and its drafts to render a preview and let a human approve/edit, same
 // "explicit data selection" pattern as prospects.repository.ts's
 // LIST_ITEM_SELECT.
@@ -20,11 +20,13 @@ const QUEUE_SELECT = {
     select: {
       id: true,
       variant: true,
+      framework: true,
       subject: true,
       body: true,
       humanizedBody: true,
       edited: true,
       approved: true,
+      lastSendFailure: true,
     },
   },
 } as const satisfies Prisma.ProspectSelect;
@@ -33,12 +35,14 @@ type QueueProspectRow = Prisma.ProspectGetPayload<{ select: typeof QUEUE_SELECT 
 type QueueDraftRow = QueueProspectRow['drafts'][number];
 
 /**
- * Picks which of a prospect's drafts to show in the approval queue, in
+ * Picks which of a prospect's drafts to pre-select/highlight as the default
+ * in the approval queue UI - all 3 variants are always sent to the client
+ * (see `listApprovalQueue`), this only decides which one starts selected, in
  * priority order:
  *   1. The prospect's `activeDraftId` draft, if set (e.g. it was already
  *      approved/sent once before, or a human previously picked a variant).
- *   2. Whichever variant has a `humanizedBody` — normally variant 1, since
- *      only variant 1 is ever humanized (see drafting.service.ts) — since a
+ *   2. Whichever variant has a `humanizedBody` - normally variant 1, since
+ *      only variant 1 is ever humanized (see drafting.service.ts) - since a
  *      humanized draft reads more naturally than a raw LLM draft.
  *   3. Variant 1, the default "primary" variant every prospect gets.
  *   4. Whatever variant has the lowest variant number, as a last resort for
@@ -64,10 +68,10 @@ function pickDisplayDraft(prospect: QueueProspectRow): QueueDraftRow | null {
 
 /**
  * Lists every `drafted`-status prospect for the approval queue UI (highest
- * `priorityScore` first), each paired with its chosen display draft (see
- * `pickDisplayDraft`), alongside the current daily-cap status so the UI can
- * show why an approval might get skipped before a human even clicks
- * approve.
+ * `priorityScore` first), each with all of its draft variants (sorted by
+ * variant ascending) plus which one `pickDisplayDraft` would pre-select,
+ * alongside the current daily-cap status so the UI can show why an approval
+ * might get skipped before a human even clicks approve.
  */
 export async function listApprovalQueue(): Promise<QueueListResult> {
   const prospects = await prisma.prospect.findMany({
@@ -77,7 +81,8 @@ export async function listApprovalQueue(): Promise<QueueListResult> {
   });
 
   const items: QueueItemView[] = prospects.map((prospect) => {
-    const draft = pickDisplayDraft(prospect);
+    const sortedDrafts = [...prospect.drafts].sort((a, b) => a.variant - b.variant);
+    const defaultDraft = pickDisplayDraft(prospect);
     return {
       prospectId: prospect.id,
       companyName: prospect.companyName,
@@ -85,17 +90,18 @@ export async function listApprovalQueue(): Promise<QueueListResult> {
       contactEmail: prospect.contactEmail,
       doNotContact: prospect.doNotContact,
       priorityScore: prospect.priorityScore,
-      draft: draft
-        ? {
-            id: draft.id,
-            variant: draft.variant,
-            subject: draft.subject,
-            body: draft.body,
-            humanizedBody: draft.humanizedBody,
-            edited: draft.edited,
-            approved: draft.approved,
-          }
-        : null,
+      drafts: sortedDrafts.map((draft) => ({
+        id: draft.id,
+        variant: draft.variant,
+        framework: draft.framework,
+        subject: draft.subject,
+        body: draft.body,
+        humanizedBody: draft.humanizedBody,
+        edited: draft.edited,
+        approved: draft.approved,
+        hasSendFailure: draft.lastSendFailure !== null,
+      })),
+      defaultDraftId: defaultDraft?.id ?? null,
     };
   });
 

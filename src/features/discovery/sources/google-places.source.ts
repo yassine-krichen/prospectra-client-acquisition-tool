@@ -11,7 +11,7 @@ const PLACE_DETAILS_URL = 'https://maps.googleapis.com/maps/api/place/details/js
 
 // Google Places has no first-class "recently opened" filter. This threshold
 // approximates that warm-lead signal via a low review count on an
-// operational listing — the real intent ("recently opened, likely no
+// operational listing - the real intent ("recently opened, likely no
 // investment in a website yet") isn't what this actually checks. A
 // well-established but rarely-reviewed business would also match; treat it
 // as a weak heuristic, not a direct signal.
@@ -87,7 +87,7 @@ async function buildSignal(
 /**
  * Searches Google Places Text Search by category + geography, then fetches
  * Place Details (website) for each result. Returns a typed "unavailable"
- * result — rather than throwing — when GOOGLE_PLACES_API_KEY is unset or
+ * result - rather than throwing - when GOOGLE_PLACES_API_KEY is unset or
  * the API call fails, so one missing key doesn't crash discovery.
  */
 export async function runGooglePlacesSource(query: DiscoveryQuery): Promise<SourceResult> {
@@ -148,8 +148,6 @@ export async function runGooglePlacesSource(query: DiscoveryQuery): Promise<Sour
       sourceUrl: `https://www.google.com/maps/place/?q=place_id:${result.place_id}`,
       discoveredAt: new Date(),
       signal,
-      projectFit: 'unclear',
-      estimatedBudget: 'unknown',
     });
   }
 

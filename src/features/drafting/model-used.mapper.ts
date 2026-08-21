@@ -3,7 +3,7 @@ import type { ModelUsed } from '@/features/prospects/prospect.types';
 
 // Same translation need as company-size.mapper.ts: Prisma's generated
 // client exposes the schema enum's member name ("claude_bridge") as both
-// the TS type and the runtime value for reads/writes — never the `@map`'d
+// the TS type and the runtime value for reads/writes - never the `@map`'d
 // DB storage value ("claude-bridge") the domain `ModelUsed` type uses.
 const DOMAIN_TO_PRISMA: Record<ModelUsed, PrismaModelUsed> = {
   gemini: PrismaModelUsed.gemini,

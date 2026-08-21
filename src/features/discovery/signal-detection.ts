@@ -3,7 +3,7 @@ import * as cheerio from 'cheerio';
 import { fetchSafely } from '@/common/net/is-safe-fetch-target';
 import type { Signal, SignalStrength } from '@/features/prospects/prospect.types';
 
-// The only signal source in this phase that needs zero API keys — HTTPS,
+// The only signal source in this phase that needs zero API keys - HTTPS,
 // viewport meta tag, footer copyright year, and schema.org markup can all be
 // checked from a single page fetch.
 
@@ -35,7 +35,7 @@ function extractCopyrightYear(pageText: string): number | null {
 
 /**
  * Fetches a website and checks it for staleness/technical-debt markers.
- * Returns `null` when the site is unreachable or no marker was found — it
+ * Returns `null` when the site is unreachable or no marker was found - it
  * never fabricates a signal to satisfy a caller that needs one; callers
  * decide their own fallback (see `buildNoSignalDetectedFallback`).
  */
@@ -44,8 +44,8 @@ export async function detectWebsiteSignals(websiteUrl: string): Promise<Signal |
 
   try {
     // `websiteUrl` comes from scraped/attacker-writable sources (Google
-    // Places, yellowpages listings), so it's validated — and every redirect
-    // hop re-validated — against private/loopback/link-local targets before
+    // Places, yellowpages listings), so it's validated - and every redirect
+    // hop re-validated - against private/loopback/link-local targets before
     // being fetched. See `fetchSafely`.
     const response = await fetchSafely(websiteUrl);
     if (!response || !response.ok) return null;
@@ -70,7 +70,7 @@ export async function detectWebsiteSignals(websiteUrl: string): Promise<Signal |
   if (!hasViewportMeta) {
     candidates.push({
       type: 'outdated_site',
-      description: 'No responsive viewport meta tag found — site likely predates mobile-first design',
+      description: 'No responsive viewport meta tag found - site likely predates mobile-first design',
       evidence: null,
       strength: 'medium',
     });

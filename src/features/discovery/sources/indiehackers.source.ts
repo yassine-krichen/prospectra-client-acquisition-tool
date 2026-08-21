@@ -1,6 +1,7 @@
 import * as cheerio from 'cheerio';
 
 import { closeScrapingSession, launchScrapingSession } from '@/common/scraping/browser';
+import { retryOnBlock, ScraperBlockedError } from '@/common/scraping/retry-on-block';
 import { buildNoSignalDetectedFallback, detectWebsiteSignals } from '@/features/discovery/signal-detection';
 import { extractDomain } from '@/features/discovery/normalize-domain';
 import type { DiscoveredProspect, DiscoveryQuery, SourceResult } from '@/features/discovery/discovery.types';
@@ -14,7 +15,7 @@ const JOBS_URL = `${INDIE_HACKERS_BASE_URL}/jobs`;
 // approach as yellowpages.source.ts, then parses the rendered HTML with
 // cheerio (rather than Playwright's own `$$eval`) because these pages'
 // structure is less uniform. The selectors below are a best-effort read of
-// the live site's markup at the time of writing — like yellowpages.source.ts,
+// the live site's markup at the time of writing - like yellowpages.source.ts,
 // they may need updating if Indie Hackers changes its DOM.
 interface ScrapedLaunch {
   name: string | null;
@@ -34,7 +35,14 @@ async function fetchRenderedHtml(url: string): Promise<string> {
 
   try {
     const page = await session.context.newPage();
-    await page.goto(url, { timeout: 60_000 });
+    const response = await page.goto(url, { timeout: 60_000 });
+    // A non-2xx response (e.g. a Cloudflare block) still renders as a normal
+    // page with zero matching result nodes - without this check that reads
+    // as "no results", not "blocked", and the block goes unnoticed. Same
+    // pattern as yellowpages.source.ts.
+    if (response && !response.ok()) {
+      throw new ScraperBlockedError(`${url} returned ${response.status()} ${response.statusText()}`);
+    }
     await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => null);
     return await page.content();
   } finally {
@@ -48,8 +56,19 @@ function scrapeLaunches(html: string): ScrapedLaunch[] {
 
   $('a[href^="/product/"]').each((_, element) => {
     const node = $(element);
-    const name = node.find('h3, h2').first().text().trim() || null;
-    const tagline = node.find('p').first().text().trim() || null;
+    // Live indiehackers.com/products (confirmed 2026-08-21) renders two
+    // sections under this same `a[href^="/product/"]` link pattern: a "Top
+    // Products" ranking widget (`.top-product__*`) and an "All Products"
+    // grid (`.product-card__*`) - neither uses a heading tag, so the
+    // originally-written `h3, h2` selector matched zero real listings.
+    const name =
+      node.find('.product-card__name').first().text().trim() ||
+      node.find('.top-product__snippet strong').first().text().trim() ||
+      null;
+    const tagline =
+      node.find('.product-card__tagline').first().text().trim() ||
+      node.find('.top-product__title span').first().text().trim() ||
+      null;
     const productPath = node.attr('href') ?? null;
     const websiteUrl = node.find('a[href^="http"]').first().attr('href') ?? null;
 
@@ -63,10 +82,16 @@ function scrapeJobs(html: string): ScrapedJob[] {
   const $ = cheerio.load(html);
   const jobs: ScrapedJob[] = [];
 
-  $('a[href^="/jobs/"]').each((_, element) => {
+  // Live indiehackers.com/jobs (confirmed 2026-08-21) renders each listing as
+  // an `a.jobs__job` link to `/post/jobAd-...` (not `/jobs/...`, which never
+  // matched anything), with the role under `.job__role` and the hiring
+  // product's name under `.job__product-name` - neither the originally
+  // written `h3, h2` / `.company-name, [class*="company"]` selectors ever
+  // matched this markup.
+  $('a.jobs__job').each((_, element) => {
     const node = $(element);
-    const title = node.find('h3, h2').first().text().trim() || null;
-    const companyName = node.find('.company-name, [class*="company"]').first().text().trim() || null;
+    const title = node.find('.job__role').first().text().trim() || null;
+    const companyName = node.find('.job__product-name').first().text().trim() || null;
     const jobPath = node.attr('href') ?? null;
 
     if (title) jobs.push({ title, companyName, jobPath });
@@ -79,14 +104,17 @@ function scrapeJobs(html: string): ScrapedJob[] {
  * Scrapes Indie Hackers' public "Products" (recent launches) and "Jobs"
  * pages. Any discovered external website URL is passed to
  * `detectWebsiteSignals` (which internally uses `fetchSafely`) rather than
- * fetched directly — these URLs come from scraped, attacker-writable page
+ * fetched directly - these URLs come from scraped, attacker-writable page
  * content, same SSRF concern as yellowpages.source.ts.
  */
 export async function runIndieHackersSource(_query: DiscoveryQuery): Promise<SourceResult> {
   let launchesHtml: string;
   let jobsHtml: string;
   try {
-    [launchesHtml, jobsHtml] = await Promise.all([fetchRenderedHtml(PRODUCTS_URL), fetchRenderedHtml(JOBS_URL)]);
+    [launchesHtml, jobsHtml] = await Promise.all([
+      retryOnBlock(() => fetchRenderedHtml(PRODUCTS_URL)),
+      retryOnBlock(() => fetchRenderedHtml(JOBS_URL)),
+    ]);
   } catch (error) {
     return {
       ok: false,
@@ -119,8 +147,6 @@ export async function runIndieHackersSource(_query: DiscoveryQuery): Promise<Sou
       sourceUrl: launch.productPath ? `${INDIE_HACKERS_BASE_URL}${launch.productPath}` : PRODUCTS_URL,
       discoveredAt: new Date(),
       signal,
-      projectFit: 'unclear',
-      estimatedBudget: 'unknown',
     });
   }
 
@@ -143,8 +169,6 @@ export async function runIndieHackersSource(_query: DiscoveryQuery): Promise<Sou
         evidence: job.title,
         strength: 'medium',
       },
-      projectFit: 'unclear',
-      estimatedBudget: 'unknown',
     });
   }
 

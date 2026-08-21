@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // generateDraftWithFallback (model-rotation.ts) composes:
-// - generateDraftWithRotation (the Gemini/Groq/DeepSeek pool) — exercised via
+// - generateDraftWithRotation (the Gemini/Groq/DeepSeek pool) - exercised via
 //   the real registry, with each provider client mocked (same convention as
 //   model-rotation.test.ts).
 // - claude-bridge.client.ts's generateDraft (the tier-2 fallback) and
-//   bridge-budget.ts's isBridgeInCooldown — both mocked here, since this
+//   bridge-budget.ts's isBridgeInCooldown - both mocked here, since this
 //   suite is only about the fallback orchestration, not the bridge client's
 //   own HTTP/parsing behavior (covered by claude-bridge.client.test.ts) or
 //   the cooldown record's own persistence (covered by bridge-budget.test.ts).

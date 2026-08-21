@@ -63,7 +63,7 @@ describe('generateGeminiDraft', () => {
   it('fails closed via zod rejection when the response shape is unrecognizable, rather than crashing', async () => {
     // `candidates` is fully optional in the schema, so a shape with no
     // `candidates` key at all would still parse (and just produce empty
-    // text) — use a shape where `candidates` exists but violates the schema
+    // text) - use a shape where `candidates` exists but violates the schema
     // instead, to actually exercise the rejection path.
     mockFetchJson({ candidates: 'not-an-array' });
 

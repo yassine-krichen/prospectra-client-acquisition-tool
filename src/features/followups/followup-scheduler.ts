@@ -11,7 +11,7 @@ import { signalSchema } from '@/features/prospects/prospect.types';
 // send-queue.service.ts (`sendEmail` from resend.client.ts) and the exact
 // same daily-cap gate (`getEffectiveDailyCap()`/`getTodaysSendCount()`,
 // re-checked fresh immediately before every individual send, never cached
-// across the batch) — a follow-up send is still a send, so it must never be
+// across the batch) - a follow-up send is still a send, so it must never be
 // able to blow through the cap via a separate, weaker code path.
 
 // Spec allows "3-5 days apart"; 4 is the midpoint, and a single fixed
@@ -22,7 +22,7 @@ export const FOLLOWUP_INTERVAL_DAYS = 4;
 // "3-4 touches ... auto-dead after 4 unanswered touches" is read here as: 4
 // TOTAL touches (the original send counts as touch 1), with `dead` firing
 // once the 4th touch (`followup_3`) has itself gone unanswered past its own
-// follow-up window — not a same-tick "send touch 4 then instantly mark
+// follow-up window - not a same-tick "send touch 4 then instantly mark
 // dead". Concretely:
 //   sent (touch 1 sent, followupCount 0)
 //     -> stale by FOLLOWUP_INTERVAL_DAYS -> send touch 2 -> followup_1 (count 1)
@@ -35,7 +35,7 @@ export const MAX_TOTAL_TOUCHES = 4;
 // by status + doNotContact only (Prisma can't cheaply filter on the computed
 // "stale by N days from lastFollowupAt-or-sentAt" condition without raw SQL);
 // staleness is filtered in memory and the result sliced to this limit before
-// any send is attempted. Fine at this app's current prospect volume — revisit
+// any send is attempted. Fine at this app's current prospect volume - revisit
 // with a raw/indexed query if that stops being true.
 export const FOLLOWUP_BATCH_SIZE = 20;
 
@@ -50,7 +50,7 @@ const FOLLOWUP_ELIGIBLE_STATUSES = [
 
 // Maps a prospect's *current* status to the next touch it's due for and the
 // status it advances to on a successful send. `followup_3` is deliberately
-// absent — it has no "next touch": once stale again it goes to `dead`
+// absent - it has no "next touch": once stale again it goes to `dead`
 // instead (handled separately in the scheduling loop below).
 const TOUCH_TRANSITIONS: Partial<
   Record<PrismaProspectStatus, { touch: FollowupTouchNumber; nextStatus: PrismaProspectStatus }>
@@ -89,7 +89,7 @@ function isStale(lastTouchAt: Date, referenceDate: Date): boolean {
 }
 
 /** `lastFollowupAt` if a follow-up has already gone out, else `sentAt` (the
- * original send) — the reference point every staleness check is measured
+ * original send) - the reference point every staleness check is measured
  * from. `null` (neither field set) means this prospect isn't actually in a
  * followable state yet; the caller skips it. */
 function referenceTouchDate(candidate: CandidateProspect): Date | null {
@@ -105,7 +105,7 @@ async function fetchOriginalSubject(activeDraftId: string | null): Promise<strin
 /**
  * Marks a `followup_3` prospect whose window has elapsed again (touch 4 sent
  * and unanswered) as permanently `dead`. Uses the same atomic-claim pattern
- * as a send below — `updateMany` with `status: followup_3` in the `WHERE` —
+ * as a send below - `updateMany` with `status: followup_3` in the `WHERE` -
  * so a reply arriving concurrently (which would have already advanced status
  * to `replied`) makes this a no-op instead of overwriting a reply.
  */
@@ -129,9 +129,9 @@ async function markDead(candidate: CandidateProspect): Promise<FollowupOutcome> 
 
 /**
  * Attempts one follow-up send for a candidate already confirmed stale and
- * eligible for `touch`/`nextStatus`. The atomic claim below — a single
+ * eligible for `touch`/`nextStatus`. The atomic claim below - a single
  * `updateMany` conditioned on `status` still equalling the exact status this
- * candidate was read at, plus `doNotContact: false` — is what actually closes
+ * candidate was read at, plus `doNotContact: false` - is what actually closes
  * the reply-vs-follow-up race: if a reply webhook has already advanced this
  * prospect's status to `replied` (or flipped `doNotContact`) since this
  * candidate was read, the claim matches zero rows and this function aborts
@@ -179,7 +179,7 @@ async function attemptFollowupSend(
   if (claim.count !== 1) {
     // Lost the race: a reply arrived (status is no longer what we read it
     // as), doNotContact flipped true, or a concurrent scheduler run already
-    // claimed this prospect. Fail closed — never send.
+    // claimed this prospect. Fail closed - never send.
     return { prospectId: candidate.id, outcome: 'skipped_not_eligible' };
   }
 
@@ -190,7 +190,7 @@ async function attemptFollowupSend(
   });
 
   if (!sendResult.ok) {
-    // Roll back the claim so a later scheduler run can legitimately retry —
+    // Roll back the claim so a later scheduler run can legitimately retry -
     // a failed send must never permanently strand a prospect mid-sequence.
     // Conditioned on `status: nextStatus` (the status THIS call's claim just
     // set) rather than an unconditional update: if a reply landed during the
@@ -215,7 +215,7 @@ async function attemptFollowupSend(
 
 /**
  * Finds prospects due for their next follow-up touch and sends it (or marks
- * them `dead` once touch 4 has itself gone unanswered — see
+ * them `dead` once touch 4 has itself gone unanswered - see
  * `MAX_TOTAL_TOUCHES`'s doc comment). Eligibility:
  *
  *   - `status` in `sent`/`followup_1`/`followup_2`/`followup_3`
@@ -225,7 +225,7 @@ async function attemptFollowupSend(
  *
  * The daily send cap (`getEffectiveDailyCap()`/`getTodaysSendCount()`) is
  * re-checked fresh immediately before each send attempt, exactly like
- * send-queue.service.ts's `approveDrafts` — once the cap is hit, every
+ * send-queue.service.ts's `approveDrafts` - once the cap is hit, every
  * remaining eligible prospect in this batch is reported `skipped_cap`
  * without an atomic claim ever being attempted for it.
  */

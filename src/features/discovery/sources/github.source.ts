@@ -9,14 +9,14 @@ const GITHUB_API_BASE_URL = 'https://api.github.com';
 const REPOS_PER_QUERY = 20;
 
 // Unauthenticated GitHub API calls are capped at 60 requests/hour. Each repo
-// can cost up to 3 requests (README, then — only if no hiring signal was
-// found — CI-workflows + root-contents checked together), so this run stops
+// can cost up to 3 requests (README, then - only if no hiring signal was
+// found - CI-workflows + root-contents checked together), so this run stops
 // picking up new repos once the last-seen `x-ratelimit-remaining` count
 // drops to (or below) the most any single remaining repo could still cost,
 // rather than pressing on and exhausting the tier mid-run.
 const RATE_LIMIT_SAFETY_MARGIN = 3;
 
-// GitHub search only looks at repos pushed within this window — "recent
+// GitHub search only looks at repos pushed within this window - "recent
 // commits" per the spec, not the whole repo's lifetime history.
 const RECENT_PUSH_WINDOW_DAYS = 30;
 
@@ -110,11 +110,11 @@ async function hasCiWorkflows(fullName: string, headers: HeadersInit, rateLimitS
   const response = await fetch(`${GITHUB_API_BASE_URL}/repos/${fullName}/contents/.github/workflows`, {
     headers,
   }).catch(() => null);
-  // A 404 means no workflows directory — no CI configured. Any other
+  // A 404 means no workflows directory - no CI configured. Any other
   // non-2xx (rate limit, private repo, etc) is treated as "unknown", not
   // "no CI", so this doesn't fabricate a signal from an inconclusive check.
   // A 403 specifically also flips `rateLimitState.limited`, which the caller
-  // uses to stop picking up further repos this run — it's never treated as
+  // uses to stop picking up further repos this run - it's never treated as
   // "no CI" either, since that would mask the rate-limit condition entirely.
   if (!response) return true; // network error: assume CI present rather than flag a false signal
   recordRateLimitState(response, rateLimitState);
@@ -124,7 +124,7 @@ async function hasCiWorkflows(fullName: string, headers: HeadersInit, rateLimitS
 
 /**
  * Scans a repo for a hiring/contributor-wanted keyword in its README or
- * description. Checked before the stack-gap signal below — an explicit
+ * description. Checked before the stack-gap signal below - an explicit
  * "we're hiring" mention is stronger, more actionable evidence than an
  * absence of CI/tests.
  */
@@ -161,7 +161,7 @@ async function detectHiringSignal(
  * Approximates technical-debt via two absence checks: no `.github/workflows`
  * (no CI) and no root-level test directory (no tests). Neither check proves
  * the repo truly lacks CI/tests elsewhere (CI could live in another
- * provider, tests could live in a non-standard path) — this is a heuristic,
+ * provider, tests could live in a non-standard path) - this is a heuristic,
  * same caveat as `stale-stack-rules.ts`'s BuiltWith-derived rules.
  */
 async function detectStackGapSignal(fullName: string, headers: HeadersInit, rateLimitState: RateLimitState): Promise<Signal | null> {
@@ -172,7 +172,7 @@ async function detectStackGapSignal(fullName: string, headers: HeadersInit, rate
 
   const hasTestDirectory =
     rootContents === null
-      ? true // inconclusive — don't flag a false signal off a failed contents fetch
+      ? true // inconclusive - don't flag a false signal off a failed contents fetch
       : rootContents.some((entry) => entry.type === 'dir' && TEST_DIRECTORY_NAMES.has(entry.name.toLowerCase()));
 
   if (hasCi && hasTestDirectory) return null;
@@ -193,7 +193,7 @@ async function detectStackGapSignal(fullName: string, headers: HeadersInit, rate
  * Searches GitHub for repos matching `query.category` as a topic keyword,
  * pushed within the last `RECENT_PUSH_WINDOW_DAYS` days, then checks each
  * for a hiring signal (README/description keyword scan) or, failing that, a
- * stack-gap signal (missing CI/tests). `query.geography` is ignored — repo
+ * stack-gap signal (missing CI/tests). `query.geography` is ignored - repo
  * activity has no location. `GITHUB_TOKEN` is optional: unlike the other
  * Branch B sources, this one still runs unauthenticated, just at GitHub's
  * much lower unauthenticated rate limit, so its absence is never reported
@@ -238,7 +238,7 @@ export async function runGitHubSource(query: DiscoveryQuery): Promise<SourceResu
   for (const repo of parsed.data.items) {
     // Stop picking up new repos once GitHub itself has refused a call with a
     // 403 (`limited`), or once the last-reported remaining budget is too
-    // thin to safely cover another repo's worth of calls — rather than
+    // thin to safely cover another repo's worth of calls - rather than
     // pressing on and exhausting the unauthenticated tier mid-run.
     if (rateLimitState.limited || (rateLimitState.remaining !== null && rateLimitState.remaining <= RATE_LIMIT_SAFETY_MARGIN)) {
       stoppedForRateLimit = true;
@@ -263,8 +263,6 @@ export async function runGitHubSource(query: DiscoveryQuery): Promise<SourceResu
       sourceUrl: repo.html_url,
       discoveredAt: new Date(),
       signal,
-      projectFit: 'unclear',
-      estimatedBudget: 'unknown',
     });
   }
 
@@ -272,7 +270,7 @@ export async function runGitHubSource(query: DiscoveryQuery): Promise<SourceResu
     return {
       ok: true,
       prospects,
-      degradedReason: `GitHub rate limit reached after processing ${processedCount}/${parsed.data.items.length} repos this run — remaining repos were skipped rather than risk exhausting the unauthenticated tier`,
+      degradedReason: `GitHub rate limit reached after processing ${processedCount}/${parsed.data.items.length} repos this run - remaining repos were skipped rather than risk exhausting the unauthenticated tier`,
     };
   }
 

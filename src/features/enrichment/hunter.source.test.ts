@@ -1,8 +1,10 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Only `HUNTER_API_KEY` is overridden per test below — `DATABASE_URL` and
+import { assertDestructiveTestsAllowed } from '@/common/testing/require-destructive-test-guard';
+
+// Only `HUNTER_API_KEY` is overridden per test below - `DATABASE_URL` and
 // everything else must stay real, since this suite makes real Prisma calls
-// against the Postgres test DB (via the un-mocked `prisma` import below,
+// against the real Postgres DB (via the un-mocked `prisma` import below,
 // which itself reads `env.DATABASE_URL` to connect).
 const envMock = vi.hoisted(() => ({ HUNTER_API_KEY: 'test-hunter-key' as string | undefined }));
 vi.mock('@/common/config/env', async (importOriginal) => {
@@ -17,18 +19,26 @@ vi.mock('@/common/config/env', async (importOriginal) => {
   };
 });
 
-import { prisma } from '@/common/db/client';
+import { prisma } from '@/common/testing/test-db-client';
+
+// Redirects every layer of `runHunterEnrichment`'s own call chain (not just
+// this file's direct calls) to the isolated test database - see
+// require-destructive-test-guard.ts.
+vi.mock('@/common/db/client', async () => {
+  const { prisma } = await import('@/common/testing/test-db-client');
+  return { prisma };
+});
 
 import { runHunterEnrichment } from './hunter.source';
 
-// Integration test against the real Postgres test DB (see
-// prospects.repository.test.ts's own doc comment) — only the external
+// Integration test against the real Postgres DB (see
+// prospects.repository.test.ts's own doc comment) - only the external
 // Hunter.io API call itself is mocked. This is the one piece of Branch C
 // worth a real-DB test: the quota reservation race-safety comes from
 // Postgres evaluating `count: { lt: cap }` as part of the UPDATE itself,
 // which a mocked Prisma client can't meaningfully exercise.
 const USAGE_SOURCE = 'hunter';
-const MONTHLY_FREE_TIER_CAP = 25;
+const MONTHLY_FREE_TIER_CAP = 50;
 
 function currentYearMonth(): string {
   return new Date().toISOString().slice(0, 7);
@@ -56,6 +66,10 @@ const input = { domain: 'acme.com', companyName: 'Acme Inc', contactName: null a
 const domainSearchSuccessBody = {
   data: { emails: [{ value: 'jane@acme.com', confidence: 90, first_name: 'Jane', last_name: 'Doe' }] },
 };
+
+beforeAll(() => {
+  assertDestructiveTestsAllowed('hunter.source.test.ts');
+});
 
 beforeEach(async () => {
   envMock.HUNTER_API_KEY = 'test-hunter-key';
@@ -104,7 +118,7 @@ describe('runHunterEnrichment quota gate', () => {
     expect(counter).toMatchObject({ source: USAGE_SOURCE, yearMonth: currentYearMonth(), count: 1 });
   });
 
-  it('allows the 25th call of the month through and brings the counter to exactly the cap', async () => {
+  it('allows the last call before the cap through and brings the counter to exactly the cap', async () => {
     await prisma.apiUsageCounter.create({
       data: { source: USAGE_SOURCE, yearMonth: currentYearMonth(), count: MONTHLY_FREE_TIER_CAP - 1 },
     });
@@ -146,9 +160,9 @@ describe('runHunterEnrichment quota gate', () => {
   });
 
   // The implementation reserves quota (increments the counter) *before*
-  // making the Hunter API call. If the `fetch` call itself throws — a
+  // making the Hunter API call. If the `fetch` call itself throws - a
   // network-level failure, meaning the request never reached Hunter's
-  // servers — the reservation is rolled back, since Hunter could not
+  // servers - the reservation is rolled back, since Hunter could not
   // possibly have counted a request it never received against the real
   // account quota.
   it('rolls back the reserved quota unit when the Hunter API request itself throws (network failure)', async () => {
@@ -161,8 +175,8 @@ describe('runHunterEnrichment quota gate', () => {
   });
 
   // A non-2xx response means Hunter's API did receive and process the
-  // request — per Hunter's own billing, it was likely already counted
-  // against the real account quota — so the reservation must NOT be rolled
+  // request - per Hunter's own billing, it was likely already counted
+  // against the real account quota - so the reservation must NOT be rolled
   // back here, unlike the network-failure case above.
   it('still consumes the reserved quota unit when Hunter responds with a non-2xx status', async () => {
     mockFetchJson({}, { ok: false, status: 500 });

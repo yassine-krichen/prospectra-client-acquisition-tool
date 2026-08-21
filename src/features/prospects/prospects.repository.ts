@@ -1,19 +1,24 @@
 import { Prisma } from '@/lib/generated/prisma/client';
 import { prisma } from '@/common/db/client';
 import { fromPrismaCompanySize } from '@/features/prospects/company-size.mapper';
+import { fromPrismaModelUsed } from '@/features/drafting/model-used.mapper';
 import type {
+  DraftFailure,
   Industry,
   Location,
+  Prospect,
   ProjectFit,
   ProspectListItem,
   ProspectSource,
   ProspectStatus,
+  ServiceSuggestion,
   Signal,
   SignalStrength,
   SignalType,
+  StatusHistoryEntry,
 } from '@/features/prospects/prospect.types';
 
-// Explicit projection matching `ProspectListItem` — the list view never
+// Explicit projection matching `ProspectListItem` - the list view never
 // needs drafts, statusHistory, contact details, or follow-up/reply
 // tracking, so those columns aren't selected (see "Explicit data
 // selection" in engineering standards).
@@ -35,23 +40,29 @@ const LIST_ITEM_SELECT = {
   signal: true,
   projectFit: true,
   estimatedBudget: true,
+  suggestedServices: true,
   priorityScore: true,
   status: true,
   sentAt: true,
+  seen: true,
+  lastDraftFailure: true,
 } as const satisfies Prisma.ProspectSelect;
 
 type ProspectListRow = Prisma.ProspectGetPayload<{ select: typeof LIST_ITEM_SELECT }>;
 
-// `location`/`signal` are untyped `Json` columns in the schema — this app
-// only ever writes them in the `Location`/`Signal` shape, so it's safe to
-// assert that shape back on read. Kept in sync by hand with
-// `prospect.types.ts`, same as that file's own header comment describes.
+// `location`/`signal`/`suggestedServices` are untyped `Json` columns in the
+// schema - this app only ever writes them in the `Location`/`Signal`/
+// `ServiceSuggestion[]` shape, so it's safe to assert that shape back on
+// read. Kept in sync by hand with `prospect.types.ts`, same as that file's
+// own header comment describes.
 function toListItem(row: ProspectListRow): ProspectListItem {
   return {
     ...row,
     companySize: fromPrismaCompanySize(row.companySize),
     location: row.location as Location,
     signal: row.signal as Signal,
+    suggestedServices: row.suggestedServices as ServiceSuggestion[],
+    lastDraftFailure: row.lastDraftFailure as DraftFailure | null,
   };
 }
 
@@ -68,6 +79,8 @@ export interface ListProspectsFilters {
   priorityScoreMin?: number;
   priorityScoreMax?: number;
   hasVerifiedEmail?: boolean;
+  seen?: boolean;
+  hasDraftFailure?: boolean;
 }
 
 export interface ListProspectsOptions {
@@ -89,11 +102,11 @@ const MAX_LIMIT = 100;
 // The cursor is keyed on the CURRENT `sortField`'s value (+ `id` as a
 // tiebreak for equal values), not hardcoded to `createdAt`. Cursor-based
 // pagination is only sound when the WHERE clause filters on the same field
-// the results are ordered by — filtering on `createdAt` while sorting by
+// the results are ordered by - filtering on `createdAt` while sorting by
 // `priorityScore`/`sentAt`/a `discoveredAt` that diverges from insertion
 // order silently skips or repeats rows across pages. Callers aren't expected
-// to change `sortField`/`sortDirection` mid-pagination — changing sort
-// resets to page 1 in the UI — so a cursor is only ever re-decoded against
+// to change `sortField`/`sortDirection` mid-pagination - changing sort
+// resets to page 1 in the UI - so a cursor is only ever re-decoded against
 // the same sort it was encoded under.
 interface DecodedCursor {
   sortValue: string | number | null;
@@ -119,7 +132,7 @@ function decodeCursor(raw: string): DecodedCursor | null {
 
 // `sentAt` is nullable and ordered with `nulls: 'last'` (see `listProspects`)
 // regardless of sort direction, so a null-valued cursor row means "already
-// in the trailing null bucket" — the next page is the rest of that bucket,
+// in the trailing null bucket" - the next page is the rest of that bucket,
 // tie-broken by `id` only. A non-null cursor value still needs an explicit
 // `OR sentAt IS NULL` branch, since every null row sorts after it either way.
 function buildCursorWhere(
@@ -167,6 +180,10 @@ function buildWhere(
   if (filters.projectFit) where.projectFit = filters.projectFit;
   if (filters.status) where.status = filters.status;
   if (filters.hasVerifiedEmail !== undefined) where.emailVerified = filters.hasVerifiedEmail;
+  if (filters.seen !== undefined) where.seen = filters.seen;
+  if (filters.hasDraftFailure !== undefined) {
+    where.lastDraftFailure = filters.hasDraftFailure ? { not: Prisma.DbNull } : { equals: Prisma.DbNull };
+  }
 
   if (filters.priorityScoreMin !== undefined || filters.priorityScoreMax !== undefined) {
     where.priorityScore = {
@@ -207,9 +224,9 @@ function extractSortValue(row: ProspectListRow, sortField: ProspectSortField): s
 /**
  * Cursor-paginated, filterable, sortable prospect listing. Cursor is opaque
  * to callers (base64url-encoded `{ sortValue, id }` for whatever `sortField`
- * was in effect) — pass back the `nextCursor` from the previous response
+ * was in effect) - pass back the `nextCursor` from the previous response
  * unmodified to fetch the next page. Changing `sortField`/`sortDirection`
- * mid-pagination is unsupported — the caller must reset to page 1 first.
+ * mid-pagination is unsupported - the caller must reset to page 1 first.
  */
 export async function listProspects(options: ListProspectsOptions = {}): Promise<ListProspectsResult> {
   const limit = Math.min(options.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
@@ -242,4 +259,72 @@ export async function listProspects(options: ListProspectsOptions = {}): Promise
     hasMore && last ? encodeCursor({ sortValue: extractSortValue(last, sortField), id: last.id }) : null;
 
   return { prospects: page.map(toListItem), nextCursor };
+}
+
+// Every column plus `drafts` - the detail dialog is the one place this app
+// shows the FULL Prospect record (contact info, statusHistory, drafts,
+// follow-up/reply tracking) rather than the trimmed `LIST_ITEM_SELECT`
+// projection above.
+const FULL_PROSPECT_SELECT = {
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  companyName: true,
+  domain: true,
+  websiteUrl: true,
+  industry: true,
+  location: true,
+  companySize: true,
+  contactName: true,
+  contactTitle: true,
+  contactEmail: true,
+  emailVerified: true,
+  emailConfidence: true,
+  linkedinUrl: true,
+  source: true,
+  sourceUrl: true,
+  discoveredAt: true,
+  signal: true,
+  projectFit: true,
+  estimatedBudget: true,
+  suggestedServices: true,
+  priorityScore: true,
+  status: true,
+  statusHistory: true,
+  seen: true,
+  lastDraftFailure: true,
+  activeDraftId: true,
+  sentAt: true,
+  lastFollowupAt: true,
+  followupCount: true,
+  repliedAt: true,
+  replySentiment: true,
+  doNotContact: true,
+  unsubscribedAt: true,
+  notes: true,
+  tags: true,
+  drafts: {
+    orderBy: { variant: 'asc' },
+  },
+} as const satisfies Prisma.ProspectSelect;
+
+type FullProspectRow = Prisma.ProspectGetPayload<{ select: typeof FULL_PROSPECT_SELECT }>;
+
+function toFullProspect(row: FullProspectRow): Prospect {
+  return {
+    ...row,
+    companySize: fromPrismaCompanySize(row.companySize),
+    location: row.location as Location,
+    signal: row.signal as Signal,
+    suggestedServices: row.suggestedServices as ServiceSuggestion[],
+    statusHistory: row.statusHistory as unknown as StatusHistoryEntry[],
+    lastDraftFailure: row.lastDraftFailure as DraftFailure | null,
+    drafts: row.drafts.map((draft) => ({ ...draft, modelUsed: fromPrismaModelUsed(draft.modelUsed) })),
+  };
+}
+
+/** Full detail fetch for the prospect detail dialog. `null` if no prospect exists with `id`. */
+export async function getProspectById(id: string): Promise<Prospect | null> {
+  const row = await prisma.prospect.findUnique({ where: { id }, select: FULL_PROSPECT_SELECT });
+  return row ? toFullProspect(row) : null;
 }

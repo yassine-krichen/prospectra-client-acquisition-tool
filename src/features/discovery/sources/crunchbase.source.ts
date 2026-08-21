@@ -72,14 +72,14 @@ function formatFundingEvidence(
  * Searches Crunchbase's v4 Search API for funding rounds announced within
  * the last `LOOKBACK_DAYS`, then fetches each funded organization's website.
  * `query.category` is used as a loose keyword filter on the funded
- * organization's name — Crunchbase's category taxonomy requires resolving
+ * organization's name - Crunchbase's category taxonomy requires resolving
  * category UUIDs via a separate lookup this source doesn't perform, so this
  * is an approximation, not a true category-taxonomy filter (same caveat as
  * Google Places' "recently opened" heuristic in google-places.source.ts).
  * `query.geography` isn't applied as a location filter for the same reason
  * (Crunchbase location filters are also UUID-based); it's only used as a
  * location fallback on the resulting prospects.
- * Returns a typed "unavailable" result — rather than throwing — when
+ * Returns a typed "unavailable" result - rather than throwing - when
  * CRUNCHBASE_API_KEY is unset or the API call fails.
  */
 export async function runCrunchbaseSource(query: DiscoveryQuery): Promise<SourceResult> {
@@ -151,8 +151,6 @@ export async function runCrunchbaseSource(query: DiscoveryQuery): Promise<Source
         ),
         strength: 'strong',
       },
-      projectFit: 'unclear',
-      estimatedBudget: 'unknown',
     });
   }
 

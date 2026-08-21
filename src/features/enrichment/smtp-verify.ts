@@ -1,7 +1,7 @@
 import { resolveMx } from 'node:dns/promises';
 
-// Verifies a guessed email's domain is *plausible* to receive mail — an MX
-// record exists — without ever attempting a real SMTP RCPT-TO handshake.
+// Verifies a guessed email's domain is *plausible* to receive mail - an MX
+// record exists - without ever attempting a real SMTP RCPT-TO handshake.
 // Raw SMTP over port 25 is commonly blocked on serverless/PaaS hosting
 // (this project targets Vercel serverless), so this deliberately stops at
 // MX-existence + basic domain format validity. That's meaningfully weaker
@@ -14,7 +14,7 @@ const DOMAIN_PATTERN = /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/i;
 /**
  * Checks that `domain` is syntactically a domain and has at least one MX
  * record. Returns `false` (rather than throwing) for a malformed domain, a
- * domain with no MX records, or a DNS resolution failure — all of which mean
+ * domain with no MX records, or a DNS resolution failure - all of which mean
  * "don't trust a guessed email at this domain".
  */
 export async function domainAcceptsEmail(domain: string): Promise<boolean> {

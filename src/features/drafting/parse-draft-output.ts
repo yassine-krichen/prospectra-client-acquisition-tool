@@ -8,7 +8,7 @@ export interface ParsedDraftOutput {
  * `SUBJECT: ...` / `BODY: ...` format requested in prompt-templates.ts.
  * Deliberately tolerant of minor formatting drift (leading/trailing
  * whitespace, the body spanning one escaped-`\n` line or several real
- * lines, extra text before/after) rather than requiring an exact match —
+ * lines, extra text before/after) rather than requiring an exact match -
  * models don't always follow instructions to the letter. Returns `null`
  * (rather than throwing) when either field can't be found at all, which
  * both provider clients treat as a generation failure.
