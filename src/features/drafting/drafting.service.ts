@@ -1,4 +1,4 @@
-import { ModelUsed as PrismaModelUsed, ProspectStatus as PrismaProspectStatus } from '@/lib/generated/prisma/client';
+import { ModelUsed as PrismaModelUsed, Prisma, ProspectStatus as PrismaProspectStatus } from '@/lib/generated/prisma/client';
 import { prisma } from '@/common/db/client';
 import { humanize } from '@/features/drafting/claude-bridge.client';
 import { fromPrismaModelUsed, toPrismaModelUsed } from '@/features/drafting/model-used.mapper';
@@ -119,6 +119,24 @@ async function generateValidatedDraft(prompt: string, isHighPriority: boolean): 
   };
 }
 
+/**
+ * Persists a flagged/failure outcome to `Prospect.lastDraftFailure` so the
+ * dashboard can surface "what failed" after the fact - both the missing/
+ * invalid-signal and the no-LLM/failed-validation failure paths are
+ * transient API-response-only outcomes otherwise (see this module's return
+ * points below).
+ */
+async function recordDraftFailure(
+  prospectId: string,
+  flagged: 'missing_signal' | 'no_llm_available' | 'invalid_draft_output',
+  message: string
+): Promise<void> {
+  await prisma.prospect.update({
+    where: { id: prospectId },
+    data: { lastDraftFailure: { flagged, message, occurredAt: new Date().toISOString() } },
+  });
+}
+
 function toDraftView(row: DraftRow): Draft {
   return {
     id: row.id,
@@ -163,12 +181,10 @@ export async function draftProspect(prospectId: string): Promise<DraftProspectOu
 
   const signalResult = signalSchema.safeParse(existing.signal);
   if (!signalResult.success) {
-    return {
-      ok: false,
-      flagged: 'missing_signal',
-      message:
-        'prospect has no valid signal on file - drafting requires signal.description/evidence as the one allowed observation',
-    };
+    const message =
+      'prospect has no valid signal on file - drafting requires signal.description/evidence as the one allowed observation';
+    await recordDraftFailure(prospectId, 'missing_signal', message);
+    return { ok: false, flagged: 'missing_signal', message };
   }
 
   const prospectData = {
@@ -200,6 +216,7 @@ export async function draftProspect(prospectId: string): Promise<DraftProspectOu
     const prompt = buildDraftPrompt(prospectData, frameworkId);
     const result = await generateValidatedDraft(prompt, isHighPriority);
     if (!result.ok) {
+      await recordDraftFailure(prospectId, result.flagged, result.reason);
       return { ok: false, flagged: result.flagged, message: result.reason };
     }
     generations.push({ ...result, framework: frameworkId });
@@ -247,7 +264,7 @@ export async function draftProspect(prospectId: string): Promise<DraftProspectOu
 
     await tx.prospect.update({
       where: { id: prospectId },
-      data: { status: nextStatus, statusHistory: nextStatusHistory },
+      data: { status: nextStatus, statusHistory: nextStatusHistory, lastDraftFailure: Prisma.DbNull },
     });
 
     return rows;

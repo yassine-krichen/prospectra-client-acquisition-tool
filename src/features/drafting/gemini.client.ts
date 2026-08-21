@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { parseDraftOutput } from '@/features/drafting/parse-draft-output';
 import type { DraftGenerationResult } from '@/features/drafting/drafting.types';
 
-const GEMINI_MODEL = 'gemini-2.0-flash';
+const GEMINI_MODEL = 'gemini-3.6-flash';
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
 // Minimal subset of Gemini's generateContent response shape this client

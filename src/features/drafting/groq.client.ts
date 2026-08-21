@@ -4,7 +4,7 @@ import { parseDraftOutput } from '@/features/drafting/parse-draft-output';
 import type { DraftGenerationResult } from '@/features/drafting/drafting.types';
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_MODEL = 'llama-3.1-8b-instant';
+const GROQ_MODEL = 'openai/gpt-oss-20b';
 
 // Groq's API is OpenAI-chat-completions-compatible. Minimal subset of that
 // response shape this client relies on.

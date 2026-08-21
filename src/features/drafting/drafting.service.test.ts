@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { Prisma } from '@/lib/generated/prisma/client';
+
 import { ACTIVE_FRAMEWORKS } from './prompt-templates';
 
 // This is an orchestration test: gemini.client.ts/groq.client.ts and
@@ -149,6 +151,23 @@ describe('draftProspect', () => {
     expect(createDraftMock).not.toHaveBeenCalled();
   });
 
+  it('persists the missing_signal failure to Prospect.lastDraftFailure', async () => {
+    findUniqueMock.mockResolvedValue(buildProspectRow({ signal: null }));
+
+    await draftProspect('prospect-1');
+
+    expect(updateProspectMock).toHaveBeenCalledWith({
+      where: { id: 'prospect-1' },
+      data: {
+        lastDraftFailure: {
+          flagged: 'missing_signal',
+          message: expect.stringContaining('no valid signal'),
+          occurredAt: expect.any(String),
+        },
+      },
+    });
+  });
+
   it('flags missing_signal for a signal object that fails schema validation (e.g. wrong shape)', async () => {
     findUniqueMock.mockResolvedValue(buildProspectRow({ signal: { type: 'not-a-real-type' } }));
 
@@ -234,6 +253,16 @@ describe('draftProspect', () => {
     });
     expect(createDraftMock).not.toHaveBeenCalled();
     expect(transactionMock).not.toHaveBeenCalled();
+    expect(updateProspectMock).toHaveBeenCalledWith({
+      where: { id: 'prospect-1' },
+      data: {
+        lastDraftFailure: {
+          flagged: 'no_llm_available',
+          message: 'no LLM available: gemini/groq unconfigured',
+          occurredAt: expect.any(String),
+        },
+      },
+    });
   });
 
   it('retries a variant once through the rotation when the first generation fails post-generation validation, and persists the compliant retry', async () => {
@@ -268,6 +297,16 @@ describe('draftProspect', () => {
     expect(generateDraftWithFallbackMock).toHaveBeenCalledTimes(2);
     expect(createDraftMock).not.toHaveBeenCalled();
     expect(transactionMock).not.toHaveBeenCalled();
+    expect(updateProspectMock).toHaveBeenCalledWith({
+      where: { id: 'prospect-1' },
+      data: {
+        lastDraftFailure: {
+          flagged: 'invalid_draft_output',
+          message: expect.stringContaining('failed post-generation validation twice'),
+          occurredAt: expect.any(String),
+        },
+      },
+    });
   });
 
   it('never calls humanize for variants 2 and 3, only ever variant 1', async () => {
@@ -364,11 +403,29 @@ describe('draftProspect', () => {
     await draftProspect('prospect-1');
 
     const call = updateProspectMock.mock.calls[0][0] as {
-      data: { status: string; statusHistory: Array<{ status: string }> };
+      data: { status: string; statusHistory: Array<{ status: string }>; lastDraftFailure: unknown };
     };
     expect(call.data.status).toBe('drafted');
     expect(call.data.statusHistory).toHaveLength(1);
     expect(call.data.statusHistory[0].status).toBe('drafted');
+    expect(call.data.lastDraftFailure).toBe(Prisma.DbNull);
+  });
+
+  it('clears a previously recorded lastDraftFailure once a later draft attempt for the same prospect succeeds', async () => {
+    findUniqueMock.mockResolvedValue(buildProspectRow());
+    generateDraftWithFallbackMock
+      .mockResolvedValueOnce(draftGeneration('one'))
+      .mockResolvedValueOnce(draftGeneration('two'))
+      .mockResolvedValueOnce(draftGeneration('three'));
+
+    await draftProspect('prospect-1');
+
+    expect(updateProspectMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'prospect-1' },
+        data: expect.objectContaining({ lastDraftFailure: Prisma.DbNull }),
+      })
+    );
   });
 });
 
