@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { buildNoSignalDetectedFallback, detectWebsiteSignals } from '@/features/discovery/signal-detection';
 import { extractDomain } from '@/features/discovery/normalize-domain';
-import { geocodeToOsmArea } from '@/features/discovery/sources/geocode-nominatim';
+import { geocodeToOsmArea, OSM_USER_AGENT } from '@/features/discovery/sources/geocode-nominatim';
 import type { DiscoveredProspect, DiscoveryQuery, SourceResult } from '@/features/discovery/discovery.types';
 
 const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
@@ -165,7 +165,11 @@ export async function runOverpassSource(query: DiscoveryQuery): Promise<SourceRe
 
   let response: Response;
   try {
-    response = await fetch(OVERPASS_URL, { method: 'POST', body: overpassQuery });
+    response = await fetch(OVERPASS_URL, {
+      method: 'POST',
+      headers: { 'User-Agent': OSM_USER_AGENT, 'Content-Type': 'text/plain' },
+      body: overpassQuery,
+    });
   } catch (error) {
     return {
       ok: false,

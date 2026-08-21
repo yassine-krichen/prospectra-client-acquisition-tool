@@ -10,7 +10,12 @@ import { z } from 'zod';
 // is called at most once per discovery run per query, well under that.
 
 const NOMINATIM_SEARCH_URL = 'https://nominatim.openstreetmap.org/search';
-const NOMINATIM_USER_AGENT = 'biz-scraper/1.0 (cold-outreach discovery pipeline)';
+
+// Shared across every OSM-family request this app makes (Nominatim here, and
+// Overpass in overpass.source.ts) - both are run by the OSM community and
+// both reject/406 requests that don't identify themselves with a real,
+// descriptive User-Agent (not a browser UA, not the runtime's default).
+export const OSM_USER_AGENT = 'biz-scraper/1.0 (cold-outreach discovery pipeline)';
 
 // Overpass's `area()` query element expects an area-id, not a raw OSM
 // id/type pair - relations and ways are offset by these fixed conventions
@@ -47,7 +52,7 @@ export async function geocodeToOsmArea(geography: string): Promise<GeocodedArea 
 
   let response: Response;
   try {
-    response = await fetch(url, { headers: { 'User-Agent': NOMINATIM_USER_AGENT } });
+    response = await fetch(url, { headers: { 'User-Agent': OSM_USER_AGENT } });
   } catch {
     return null;
   }
