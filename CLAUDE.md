@@ -2,6 +2,9 @@
 
 Read this first in any new session on this repo. Written 2026-08-05 to survive a context clear.
 
+**On branch `feat/discovery-engine-v2`?** Read `docs/discovery-engine-roadmap.md` first - it has
+the full discovery-engine vision and exactly what this branch is (and isn't) building.
+
 ## What this is
 
 Cold-outreach pipeline for a solo dev/agency operator: discover companies whose own public
