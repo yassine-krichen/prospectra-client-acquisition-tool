@@ -19,7 +19,7 @@ export async function isAuthorizedByCronHeader(request: Request): Promise<boolea
   return matchesCronSecret(request.headers.get('x-cron-secret'));
 }
 
-// Vercel's own Cron Jobs feature only ever issues GET requests and
+// Vercel own Cron Jobs feature only ever issues GET requests and
 // auto-attaches `Authorization: Bearer <value>` using whatever the
 // project's `CRON_SECRET` env var holds - this is Vercel's convention, not
 // this app's `x-cron-secret` header, so routes that Vercel Cron calls
