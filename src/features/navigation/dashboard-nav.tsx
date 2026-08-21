@@ -12,6 +12,7 @@ import {
 } from '@hugeicons/core-free-icons';
 
 import { SystemHealthTrigger } from '@/features/system/system-health-trigger';
+import { UserMenu } from '@/features/navigation/user-menu';
 
 // Trivially safe by design - no server-only imports, ever. Every dashboard
 // page renders inside a layout that includes this component, so it must
@@ -58,7 +59,10 @@ export function DashboardNav(): React.JSX.Element {
         );
       })}
 
-      <SystemHealthTrigger />
+      <div className="mt-auto flex flex-col gap-1">
+        <SystemHealthTrigger />
+        <UserMenu />
+      </div>
     </nav>
   );
 }
