@@ -85,14 +85,48 @@ verify their own signature/secret instead of a session, since their callers - Re
 scheduler - never have a browser session cookie).
 
 **Two auth patterns for triggering pipeline stages** - don't confuse them:
-1. `app/api/cron/{discover,draft-batch,followups,retention}/route.ts` - authenticate via
-   `x-cron-secret` header (`env.CRON_SECRET`), meant for an actual scheduler (none configured yet,
-   no `vercel.json` cron schedule exists - everything is manually triggered today).
+1. `app/api/cron/{discover,draft-batch,followups,retention}/route.ts` - `POST` accepts the
+   `x-cron-secret` header (`env.CRON_SECRET`) for manual/ad-hoc triggering (curl, one-off backfills).
+   `discover` and `daily` also have a `GET` handler authenticated via `Authorization: Bearer
+   <CRON_SECRET>` instead - that's Vercel's own Cron Jobs convention (GET-only, auto-attaches that
+   header from the project's `CRON_SECRET` env var), and is what `vercel.json` actually points at.
+   Shared auth helpers live in `src/common/auth/cron-auth.ts`
+   (`isAuthorizedByCronHeader`/`isAuthorizedByCronBearer`) - don't duplicate the check inline again.
 2. `app/api/pipeline/{discover,draft-batch,followups,retention}/route.ts` - session-gated only (no
    cron-secret check, proxy.ts handles auth), call the exact same service functions directly. These
    are what the dashboard UI's Discovery and Pipeline pages actually call. Don't add a cron-secret
    check to these or have the browser send the secret - that was a deliberate design choice to keep
    the browser from ever handling that secret.
+
+## Automated cron (`vercel.json`, added 2026-08-21)
+
+Vercel's Hobby plan (what this project is on) caps Cron Jobs to a small fixed count and once-a-day
+frequency - not the "every 6 hours" originally floated - so two daily jobs cover everything instead
+of one per pipeline stage:
+- `GET /api/cron/discover` (12:00 UTC) - cycles through a fixed New York category list
+  (`src/features/discovery/ny-target-categories.ts`, `NY_TARGET_CATEGORIES`/`pickDailyCategory`),
+  deterministically by UTC calendar date (no persisted "last run" pointer - stateless by design for
+  a serverless cron). Categories are deliberately upscale/professional-services only (law firms,
+  dental practices, real estate agencies, etc.) - low-budget categories were excluded on purpose, a
+  business call, not an oversight. Runs `branch: 'both'` since Branch B sources ignore geography
+  anyway. `maxDuration = 60` (scraper sources can be slow with retry-with-backoff).
+- `GET /api/cron/daily` (14:00 UTC, new route) - runs drafting → follow-ups → retention back to
+  back in one invocation (`draftBatch`, `humanizeBatch`, `runFollowupScheduler`,
+  `runRetentionScheduler`), consolidated onto one route specifically to fit inside the 2-cron-job
+  Hobby cap. Each stage is independently batch-size-bounded and follow-ups/retention re-check the
+  daily send cap themselves, so chaining them is safe. `maxDuration = 60`.
+
+Enrichment has deliberately **no** cron - newly discovered prospects sit at `new` status until a
+human enriches them from `/prospects` (avoids burning paid Hunter/PeopleDataLabs quota on
+low-quality/spam discoveries before a human's had a look - see the Recommended Action column, which
+flags likely-spam domains as "Ignore").
+
+If moving to Vercel Pro later (unlocks arbitrary cron frequency/count): the per-stage cron routes
+still exist and work unchanged (`discover`, `draft-batch`, `followups`, `retention`, each with their
+own `POST`/`x-cron-secret` path) - `vercel.json` would just need separate entries pointed at them
+instead of (or alongside) the consolidated `daily` route, and `draft-batch`/`followups`/`retention`
+would each need their own `GET` handler added (only `discover` and `daily` have one today, since
+those are the two `vercel.json` actually calls).
 
 ## Session 2026-08-21 changes: dashboard polish & reliability
 
