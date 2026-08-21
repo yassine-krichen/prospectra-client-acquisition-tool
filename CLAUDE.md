@@ -34,9 +34,9 @@ deleted, and there's no local DB to start. `./setup.ps1` from repo root (PowerSh
 checks Node/npm, creates `.env` from `.env.example` with generated secrets if missing, `npm install`,
 `npx prisma generate`, migrates the DB (`DATABASE_URL`), runs the full test suite. **You must create
 the Neon database yourself first** (free project at https://neon.tech) and paste its connection
-string into `.env` before running the script - it has no way to provision it for you. There's a
-single database, shared by the app and the test suite - see the Testing section below on what that
-means for `npm test`.
+string into `.env` before running the script - it has no way to provision it for you. The app's
+`DATABASE_URL` and the test suite's `TEST_DATABASE_URL` are separate Neon branches - see the Testing
+section below for what that means for `npm test` and for setting up `TEST_DATABASE_URL`.
 
 Then `npm run dev`, open `http://localhost:3000`, log in with `DASHBOARD_PASSWORD` from `.env`.
 
@@ -94,6 +94,35 @@ scheduler - never have a browser session cookie).
    check to these or have the browser send the secret - that was a deliberate design choice to keep
    the browser from ever handling that secret.
 
+## Session 2026-08-21 changes: dashboard polish & reliability
+
+**Discovery sources registry** (`src/features/discovery/discovery-source-registry.ts`): Single source
+of truth for which discovery sources exist, metadata (displayName, paid/free, required env var,
+branch assignment, known issues), used by both `discovery.service.ts` (server orchestration) and
+`discovery-trigger-form.tsx` (source checklist UI). Replaces hand-duplicated source metadata that
+was scattered across multiple files.
+
+**Discovery history**: New `GET /api/discovery/runs` endpoint returns past discovery runs. UI shows
+history below the discovery form (most recent first), highlights when a duplicate search already
+exists (same category/geography/branch).
+
+**Queue 3-variant rework**: The approval queue now displays all generated draft variants per prospect
+side-by-side (radio-button selection between them). Approval submits whichever variant is currently
+highlighted. Drafts can still be edited inline before approval. Bulk-approve via prospect checkboxes.
+
+**Bulk prospect actions**: New `/api/prospects/bulk/{seen,enrich,draft,match,win}` endpoints for
+row-level checkboxes in the prospects table. Checkbox state is client-side only (no persistence).
+
+**Dead-letter tracking**: `Prospect.lastDraftFailure` (failed draft attempts) and `Draft.lastSendFailure`
+(failed send attempts) now track the most recent failure for each, cleared on the next success.
+Enables dashboard visibility into what failed and why, without swallowing the error.
+
+**Auth UX**: Logout via `POST /api/auth/logout` (new endpoint). Theme toggle (light/dark/system) in
+top-right menu via `next-themes`. Greeting in sidebar footer.
+
+**Discovery reliability**: Added retry-with-backoff for scraper-based sources (Yellow Pages, Indie
+Hackers) to handle transient network/selector failures. Fixed selector bugs in `indiehackers.source.ts`.
+
 ## The recurring bug class this session fixed 3 times - read this before touching any 'use client' file
 
 `src/common/config/env.ts` validates server secrets (`DATABASE_URL`, `DASHBOARD_PASSWORD`, etc.) at
@@ -122,60 +151,81 @@ imports, transitively), check the imported file doesn't import `@/common/config/
 handlers (`app/api/**/route.ts`) are exempt from this concern - they're server-only regardless of
 what they import, the hazard is specifically the client-component bundle.
 
-## UI map (everything is now reachable - full buildout done 2026-08-05)
+## UI map (everything is now reachable - full buildout done 2026-08-05, polish pass 2026-08-21)
 
 Sidebar nav (`src/features/navigation/dashboard-nav.tsx`, rendered by
 `app/(dashboard)/layout.tsx`): Prospects / Queue / Clients / Discovery / Pipeline.
 
+Top-right auth menu (`src/features/navigation/user-menu.tsx`): greeting + theme toggle (light/dark/system) +
+logout button (`POST /api/auth/logout`).
+
 - `/prospects` - table with filters, an Actions column (Enrich/Draft/Match/Win buttons per row,
   wired to `app/api/prospects/[id]/{enrich,draft,match,win}/route.ts` via
-  `src/features/prospects/prospect-actions.ts`).
-- `/queue` - approval queue (`src/features/sending/approval-queue-table.tsx`), the only screen that
-  can actually cause an email to send.
+  `src/features/prospects/prospect-actions.ts`). Row-level bulk actions via checkboxes for seen/enrich/draft/match/win
+  (`POST /api/prospects/bulk/{seen,enrich,draft,match,win}`).
+- `/queue` - approval queue (`src/features/sending/approval-queue-table.tsx`). Each prospect now displays
+  all generated draft variants side-by-side with radio buttons for selection; approval sends whichever
+  variant is currently highlighted. Inline editing of draft bodies. Batch-approve via checkboxes. Only
+  screen that can actually cause an email to send.
 - `/clients` - list (`src/features/clients/clients-table.tsx`), links to detail.
 - `/clients/[clientId]` - client info, Jobs table with activate/deliver buttons, create-Job form
   with a live price-range lookup (`GET /api/pricing/catalog?companySize=...`).
-- `/discovery` - form to trigger discovery (category/geography/branch), shows per-source result
-  summary. Calls `POST /api/pipeline/discover`.
+- `/discovery` - form to trigger discovery. Source checklist (Branch A/B selector, per-source checkboxes with
+  Paid/Free and Configured/Not configured badges, known issues surfaced inline) backed by
+  `src/features/discovery/discovery-source-registry.ts` as the single source of truth for source metadata.
+  Per-run result summary below form. Discovery run history below that, most recent first, showing past
+  searches that match the current category/geography/branch combination
+  (via `GET /api/discovery/runs`). Calls `POST /api/pipeline/discover`.
 - `/pipeline` - three buttons (draft-batch / follow-ups / retention), each with independent
   loading/result state. Calls `POST /api/pipeline/{draft-batch,followups,retention}`.
 
-## Current data state (as of last check, 2026-08-05)
+## Current data state
 
-28 prospects discovered (branch `a`, category `plumber`, geography `Austin, TX`, via yellowpages -
-Google Places failed on that run due to the billing issue above). 0 clients, 0 jobs - nothing's
-been drafted/approved/won yet. This will obviously drift; check `/prospects` and `/clients`
-directly rather than trusting this number.
+Not tracked in this file — drift is inevitable and fast. Check `/prospects` and `/clients` directly
+in the dashboard. The database was wiped and rebuilt multiple times during the 2026-08-21 polish pass
+(test-DB isolation fixes, discovery reliability improvements), so any prior counts are stale.
 
 ## Testing
 
-`npm test -- --run` (Vitest). 747 tests passing as of commit `c792420`. Convention: route handlers
-and services get colocated `*.test.ts` files; React components do NOT get test files in this
-codebase (verified - no `.tsx` test files exist anywhere) - don't add them unless the user asks or
-the convention changes. Integration tests (discovery.service.dnc-preservation.test.ts,
-bridge-budget.test.ts, hunter.source.test.ts, prospects.repository.test.ts,
-daily-send-counter.test.ts, followup-scheduler.cap-integration.test.ts,
-retention-scheduler.cap-integration.test.ts) hit the real Postgres DB at whatever `DATABASE_URL`
-points at - **there is only one database, shared with the app**, so `npm test` writes/deletes real
-rows there (`fileParallelism: false` in `vitest.config.ts` - these run sequentially, not racing each
-other). Deliberate tradeoff, not an oversight.
+`npm test -- --run` (Vitest). Convention: route handlers and services get colocated `*.test.ts`
+files; React components do NOT get test files in this codebase (verified - no `.tsx` test files
+exist anywhere) - don't add them unless the user asks or the convention changes.
 
-**This already cost real data once** (a full set of discovered prospects, wiped by a routine
-`npx vitest run` during the pro-UI-redesign session). All 7 of the files above now call
-`assertDestructiveTestsAllowed()` (`src/common/testing/require-destructive-test-guard.ts`) in a
-`beforeAll`, which throws immediately unless `CONFIRM_DESTRUCTIVE_TESTS=true` is set in the
-environment - plain `npm test` / `npx vitest run` now fails those 7 files loudly (skipping their
-tests, touching nothing) instead of silently wiping data. Only set that env var when you actually
-mean to run them against a database you're fine losing data from - e.g.
-`CONFIRM_DESTRUCTIVE_TESTS=true npx vitest run`.
+**Database isolation (fixed 2026-08-21, after losing real data twice).** The app's `DATABASE_URL`
+and the test suite's database are now two separate Neon branches - they used to be the same
+database, and a routine `npx vitest run` silently wiped the Prospect/Client/Job/ApiUsageCounter
+tables via table-wide `deleteMany()` calls in 7 integration test files, twice, before anyone
+noticed. Those 7 files (discovery.service.dnc-preservation.test.ts, bridge-budget.test.ts,
+hunter.source.test.ts, prospects.repository.test.ts, daily-send-counter.test.ts,
+followup-scheduler.cap-integration.test.ts, retention-scheduler.cap-integration.test.ts) now hit
+`TEST_DATABASE_URL` (a dedicated Neon branch, see `.env.example`) via
+`src/common/testing/test-db-client.ts`, never `DATABASE_URL` - each file `vi.mock`s
+`@/common/db/client` to redirect the production service code under test onto the test client too,
+not just the test's own direct Prisma calls (`fileParallelism: false` in `vitest.config.ts` still
+applies - these run sequentially, not racing each other).
+
+Each of the 7 files calls `assertDestructiveTestsAllowed()`
+(`src/common/testing/require-destructive-test-guard.ts`) in a `beforeAll`, which enforces three
+independent conditions before letting the file proceed, each with its own error message: (1)
+`CONFIRM_DESTRUCTIVE_TESTS=true` is set, (2) `TEST_DATABASE_URL` is actually configured, (3)
+`TEST_DATABASE_URL` is not the same value as `DATABASE_URL` (refused regardless of the flag - the
+direct guard against the exact mistake that caused both incidents). Plain `npm test` / `npx vitest
+run` fails those 7 files loudly (skipping their tests, touching nothing) instead of silently
+wiping data.
+
+**Migrations must be applied to both databases going forward.** After running `npx prisma migrate
+dev` (or any schema change) against the app's `DATABASE_URL`, also run `npm run db:migrate:test`
+(`scripts/migrate-test-db.mjs`) to bring the isolated test branch's schema up to date before next
+running the 7 files above - this is an ongoing step, not a one-time setup task.
 
 `npm run typecheck` and `npx eslint .` should both be clean before committing anything.
 
 ## Working-style notes for this repo specifically
 
 - Database is Neon (hosted Postgres), not local Docker - Docker is no longer part of this project at
-  all (`docker-compose.yml` removed, `setup.ps1` no longer touches it). One `DATABASE_URL` in `.env`
-  (never committed), shared by the app and the test suite - see Testing above.
+  all (`docker-compose.yml` removed, `setup.ps1` no longer touches it). Two separate Neon branches
+  in `.env` (never committed): `DATABASE_URL` for the app, `TEST_DATABASE_URL` for the 7
+  destructive integration tests - see Testing above.
 - User is caveman-mode-terse in chat but expects normal prose in code/commits/PRs (per their global
   CLAUDE.md).
 - Delegation policy (user's global CLAUDE.md): planner before non-trivial features, plan approval
