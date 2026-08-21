@@ -1,10 +1,18 @@
 import { randomUUID } from 'node:crypto';
 
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { prisma } from '@/common/db/client';
 import { assertDestructiveTestsAllowed } from '@/common/testing/require-destructive-test-guard';
+import { prisma } from '@/common/testing/test-db-client';
 import { getTodaysSendCount } from '@/features/sending/daily-send-counter';
+
+// Redirects every layer of `getTodaysSendCount`'s own call chain (not just
+// this file's direct calls) to the isolated test database - see
+// require-destructive-test-guard.ts.
+vi.mock('@/common/db/client', async () => {
+  const { prisma } = await import('@/common/testing/test-db-client');
+  return { prisma };
+});
 
 // Integration test against the real Postgres DB (DATABASE_URL - the same
 // database the app uses, see vitest.setup.ts), same pattern as

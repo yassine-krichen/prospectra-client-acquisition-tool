@@ -19,7 +19,15 @@ vi.mock('@/common/config/env', async (importOriginal) => {
   };
 });
 
-import { prisma } from '@/common/db/client';
+import { prisma } from '@/common/testing/test-db-client';
+
+// Redirects every layer of `runHunterEnrichment`'s own call chain (not just
+// this file's direct calls) to the isolated test database - see
+// require-destructive-test-guard.ts.
+vi.mock('@/common/db/client', async () => {
+  const { prisma } = await import('@/common/testing/test-db-client');
+  return { prisma };
+});
 
 import { runHunterEnrichment } from './hunter.source';
 

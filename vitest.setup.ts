@@ -6,15 +6,17 @@ import "dotenv/config"
 // case to exercise the validation failure paths directly.
 //
 // DATABASE_URL comes from `.env` (loaded above via dotenv/config) - the same
-// Neon database the app itself uses. The integration tests that hit a real
-// Postgres (discovery.service.dnc-preservation.test.ts, bridge-budget.test.ts,
-// hunter.source.test.ts, prospects.repository.test.ts,
+// Neon database the app itself uses. The 7 integration tests that truncate
+// real tables (discovery.service.dnc-preservation.test.ts,
+// bridge-budget.test.ts, hunter.source.test.ts, prospects.repository.test.ts,
 // daily-send-counter.test.ts, followup-scheduler.cap-integration.test.ts,
-// retention-scheduler.cap-integration.test.ts) truncate/write real rows
-// there, so `npm test` will touch whatever DATABASE_URL points at. Falls
-// back to an unreachable-but-URL-shaped placeholder when `.env` doesn't
-// define DATABASE_URL at all, so env.ts's `.url()` validation still passes
-// for every other test file.
+// retention-scheduler.cap-integration.test.ts) now read/write against the
+// isolated TEST_DATABASE_URL Neon branch instead (see
+// require-destructive-test-guard.ts and @/common/testing/test-db-client), so
+// `npm test` no longer touches DATABASE_URL at all. Falls back to an
+// unreachable-but-URL-shaped placeholder when `.env` doesn't define
+// DATABASE_URL at all, so env.ts's `.url()` validation still passes for
+// every other test file.
 process.env.DATABASE_URL ??= "postgresql://unset:unset@localhost:5432/unset?schema=public"
 process.env.DASHBOARD_PASSWORD ??= "test-password"
 process.env.SESSION_SECRET ??= "test-session-secret-32-characters"

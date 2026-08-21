@@ -113,6 +113,13 @@ const envSchema = z.object({
   // Project Settings > General, or via GET /api/v2/projects).
   NEON_API_KEY: optionalString(z.string().min(1)),
   NEON_PROJECT_ID: optionalString(z.string().min(1)),
+  // Connection string for the isolated Neon branch the 7 destructive
+  // integration tests write/truncate real rows in - see
+  // require-destructive-test-guard.ts. The running app never reads this; it
+  // exists here purely so `.env.example` documents it alongside every other
+  // env var, and so a malformed value fails loudly at boot like everything
+  // else rather than surfacing only inside `test-db-client.ts`.
+  TEST_DATABASE_URL: optionalString(z.string().url()),
 });
 
 export type Env = z.infer<typeof envSchema>;

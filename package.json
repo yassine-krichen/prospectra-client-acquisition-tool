@@ -11,7 +11,8 @@
     "format": "prettier --write \"**/*.{ts,tsx}\"",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "db:migrate:test": "node scripts/migrate-test-db.mjs"
   },
   "dependencies": {
     "@hugeicons/core-free-icons": "^4.2.3",

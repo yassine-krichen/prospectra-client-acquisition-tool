@@ -40,7 +40,15 @@ vi.mock('@/features/discovery/sources/indiehackers.source', () => ({
   runIndieHackersSource: runIndieHackersSourceMock,
 }));
 
-const { prisma } = await import('@/common/db/client');
+// Redirects every layer of `runDiscovery`'s own call chain (not just this
+// file's direct calls) to the isolated test database - see
+// require-destructive-test-guard.ts.
+vi.mock('@/common/db/client', async () => {
+  const { prisma } = await import('@/common/testing/test-db-client');
+  return { prisma };
+});
+
+const { prisma } = await import('@/common/testing/test-db-client');
 const { runDiscovery } = await import('./discovery.service');
 
 const query = { category: 'plumber', geography: 'Austin, TX' };
