@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { Prisma } from '@/lib/generated/prisma/client';
+
 // This is the single riskiest orchestration test in the repo: approveDrafts
 // is the ONLY function in the codebase permitted to call sendEmail, and it
 // carries the core project invariant - "no code path may send an email
@@ -300,8 +302,33 @@ describe('approveDrafts send outcome persistence - the core safety boundary', ()
       where: { id: 'draft-1', approved: false, prospect: { doNotContact: false } },
       data: { approved: true },
     });
-    expect(updateDraftMock).toHaveBeenCalledWith({ where: { id: 'draft-1' }, data: { approved: false } });
+    expect(updateDraftMock).toHaveBeenCalledWith({
+      where: { id: 'draft-1' },
+      data: {
+        approved: false,
+        lastSendFailure: { reason: 'resend responded with 422', occurredAt: expect.any(String) },
+      },
+    });
     expect(updateProspectMock).not.toHaveBeenCalled();
+  });
+
+  it('clears a previously recorded lastSendFailure once a later approval of the same draft succeeds', async () => {
+    findManyDraftMock.mockResolvedValue([buildDraftRow({ id: 'draft-1' })]);
+    sendEmailMock.mockResolvedValueOnce({ ok: false, reason: 'network error' });
+
+    await approveDrafts([{ draftId: 'draft-1' }]);
+    expect(updateDraftMock).toHaveBeenCalledWith({
+      where: { id: 'draft-1' },
+      data: { approved: false, lastSendFailure: { reason: 'network error', occurredAt: expect.any(String) } },
+    });
+
+    updateDraftMock.mockClear();
+    sendEmailMock.mockResolvedValueOnce({ ok: true, id: 'resend-message-id' });
+
+    const results = await approveDrafts([{ draftId: 'draft-1' }]);
+
+    expect(results).toEqual([{ draftId: 'draft-1', outcome: 'sent' }]);
+    expect(updateDraftMock).toHaveBeenCalledWith({ where: { id: 'draft-1' }, data: { lastSendFailure: Prisma.DbNull } });
   });
 
   it('sets Draft.approved=true and Prospect.status=sent/sentAt/activeDraftId, appending statusHistory, only after a successful send', async () => {
@@ -321,8 +348,12 @@ describe('approveDrafts send outcome persistence - the core safety boundary', ()
       where: { id: 'draft-1', approved: false, prospect: { doNotContact: false } },
       data: { approved: true },
     });
-    // The rollback path (draft.update) must never fire on a successful send.
-    expect(updateDraftMock).not.toHaveBeenCalled();
+    // The rollback-with-failure-reason shape must never fire on a successful
+    // send - only the "clear any prior failure" shape may.
+    expect(updateDraftMock).toHaveBeenCalledWith({ where: { id: 'draft-1' }, data: { lastSendFailure: Prisma.DbNull } });
+    expect(updateDraftMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ approved: false }) })
+    );
 
     const prospectUpdateCall = updateProspectMock.mock.calls.find(
       (call) => (call[0] as { data: { status?: string } }).data.status === 'sent'
@@ -376,9 +407,13 @@ describe('approveDrafts editedBody handling', () => {
       where: { id: 'draft-1', approved: false, prospect: { doNotContact: false } },
       data: { approved: true, body: 'edited body', edited: true },
     });
-    // The rollback only resets `approved` - it must not also revert the
-    // body edit, or a human's edit would be silently lost on a failed send.
-    expect(updateDraftMock).toHaveBeenCalledWith({ where: { id: 'draft-1' }, data: { approved: false } });
+    // The rollback only resets `approved` (plus recording the failure) - it
+    // must not also revert the body edit, or a human's edit would be
+    // silently lost on a failed send.
+    expect(updateDraftMock).toHaveBeenCalledWith({
+      where: { id: 'draft-1' },
+      data: { approved: false, lastSendFailure: { reason: 'network error', occurredAt: expect.any(String) } },
+    });
     expect(updateDraftMock).not.toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ body: expect.anything() }) })
     );
@@ -497,7 +532,10 @@ describe('approveDrafts concurrent requests for the same draftId (cross-request 
     expect(firstAttempt).toEqual([{ draftId: 'draft-1', outcome: 'failed', reason: 'network error' }]);
     // Rolled back - a second, later approval of the same draft is not
     // permanently blocked by the failed first attempt.
-    expect(updateDraftMock).toHaveBeenCalledWith({ where: { id: 'draft-1' }, data: { approved: false } });
+    expect(updateDraftMock).toHaveBeenCalledWith({
+      where: { id: 'draft-1' },
+      data: { approved: false, lastSendFailure: { reason: 'network error', occurredAt: expect.any(String) } },
+    });
 
     const secondAttempt = await approveDrafts([{ draftId: 'draft-1' }]);
     expect(secondAttempt).toEqual([{ draftId: 'draft-1', outcome: 'sent' }]);

@@ -190,14 +190,28 @@ export async function approveDrafts(items: ApprovalRequestItem[]): Promise<Appro
       // draft later - a failed send must never permanently lock a draft
       // out of ever being sent. The edited body (if any) is kept: it was
       // applied above regardless of send outcome, so a human's edit is
-      // never lost just because the send attempt failed.
-      await prisma.draft.update({ where: { id: draft.id }, data: { approved: false } });
+      // never lost just because the send attempt failed. Also persisted to
+      // `lastSendFailure` - otherwise this outcome only ever exists in the
+      // transient API response, with no way to find "what failed" later.
+      await prisma.draft.update({
+        where: { id: draft.id },
+        data: {
+          approved: false,
+          lastSendFailure: { reason: sendResult.reason, occurredAt: new Date().toISOString() },
+        },
+      });
       outcomeByDraftId.set(item.draftId, { draftId: item.draftId, outcome: 'failed', reason: sendResult.reason });
       continue;
     }
 
     const statusHistory = Array.isArray(draft.prospect.statusHistory) ? draft.prospect.statusHistory : [];
     const sentAt = new Date();
+
+    // Clears any prior send failure recorded on this exact draft (e.g. a
+    // previous approval attempt that failed and was retried) now that a send
+    // has actually succeeded - dead-letter tracking should never keep
+    // reporting a stale failure for a draft that has since gone out fine.
+    await prisma.draft.update({ where: { id: draft.id }, data: { lastSendFailure: Prisma.DbNull } });
 
     // Draft.approved is already committed (via the claim above) by the
     // time the email actually goes out, so this is just advancing the

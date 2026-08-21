@@ -79,11 +79,21 @@ export type ApprovalBatchResponse = z.infer<typeof approvalBatchResponseSchema>;
 export const queueDraftViewSchema = z.object({
   id: z.string(),
   variant: z.number().int(),
+  // Which copywriting framework (drafting/prompt-templates.ts's
+  // `FrameworkId`) generated this variant, e.g. "pas". Null for older rows
+  // predating this column - see `Draft.framework`'s doc comment in
+  // prisma/schema.prisma.
+  framework: z.string().nullable(),
   subject: z.string(),
   body: z.string(),
   humanizedBody: z.string().nullable(),
   edited: z.boolean(),
   approved: z.boolean(),
+  // Whether `Draft.lastSendFailure` is set - see that column's doc comment
+  // in prisma/schema.prisma. Only the boolean crosses the wire (not the
+  // failure detail itself): this is a minimal "something went wrong, retry
+  // or investigate" indicator for the queue UI, not a dedicated failures view.
+  hasSendFailure: z.boolean(),
 });
 export type QueueDraftView = z.infer<typeof queueDraftViewSchema>;
 
@@ -94,8 +104,18 @@ export const queueItemViewSchema = z.object({
   contactEmail: z.string().nullable(),
   doNotContact: z.boolean(),
   priorityScore: z.number().int(),
-  /** Null only if a `drafted`-status prospect somehow has zero draft rows. */
-  draft: queueDraftViewSchema.nullable(),
+  /**
+   * Every draft variant this prospect has (normally 3), sorted by variant
+   * ascending. Empty only if a `drafted`-status prospect somehow has zero
+   * draft rows.
+   */
+  drafts: z.array(queueDraftViewSchema),
+  /**
+   * Which `drafts[].id` `pickDisplayDraft` (queue-listing.ts) would choose -
+   * the variant the queue UI pre-selects/highlights by default. Null only
+   * when `drafts` is empty.
+   */
+  defaultDraftId: z.string().nullable(),
 });
 export type QueueItemView = z.infer<typeof queueItemViewSchema>;
 

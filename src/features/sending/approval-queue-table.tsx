@@ -3,7 +3,14 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Alert02Icon, ClipboardListIcon, InboxIcon, SentIcon } from '@hugeicons/core-free-icons';
+import {
+  Alert02Icon,
+  AlertCircleIcon,
+  CheckmarkCircle02Icon,
+  ClipboardListIcon,
+  InboxIcon,
+  SentIcon,
+} from '@hugeicons/core-free-icons';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -11,12 +18,12 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
 import {
   approvalBatchResponseSchema,
   queueListResultSchema,
   type ApprovalOutcome,
+  type QueueDraftView,
   type QueueItemView,
   type QueueListResult,
 } from '@/features/sending/sending.types';
@@ -48,12 +55,24 @@ async function submitApprovals(
   return approvalBatchResponseSchema.parse(body).results;
 }
 
-// The text a draft's textarea starts out showing: the humanized body if the
-// prospect has one, else the raw draft body - same "prefer humanized"
+// The text a draft variant's textarea starts out showing: the humanized body
+// if this variant has one, else its raw draft body - same "prefer humanized"
 // convention as pickDisplayDraft in queue-listing.ts.
-function displayBody(item: QueueItemView): string {
-  if (!item.draft) return '';
-  return item.draft.humanizedBody ?? item.draft.body;
+function displayBody(draft: QueueDraftView): string {
+  return draft.humanizedBody ?? draft.body;
+}
+
+// `Draft.framework` is a plain lowercase/underscored id (e.g. "social_proof",
+// see prompt-templates.ts's FrameworkId) - this is purely cosmetic
+// title-casing for display, not a mapping back to prompt-templates.ts (which
+// isn't safe to import from a client component - see queue-listing.ts's
+// comment on why `framework` crosses the wire as a plain nullable string).
+function frameworkLabel(framework: string | null): string {
+  if (!framework) return 'Variant';
+  return framework
+    .split('_')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
 }
 
 function outcomeLabel(outcome: ApprovalOutcome): string {
@@ -79,6 +98,23 @@ function outcomeBadgeVariant(outcome: ApprovalOutcome): 'default' | 'destructive
   return 'outline';
 }
 
+function outcomeIcon(outcome: ApprovalOutcome): typeof CheckmarkCircle02Icon {
+  if (outcome.outcome === 'sent') return CheckmarkCircle02Icon;
+  if (outcome.outcome === 'failed' || outcome.outcome === 'not_found') return AlertCircleIcon;
+  return Alert02Icon;
+}
+
+// prospectId -> its default (pre-selected) draft, falling back to the first
+// variant if the server somehow didn't nominate one but drafts exist.
+function initialChosenDraftIds(items: QueueItemView[]): Record<string, string> {
+  const next: Record<string, string> = {};
+  for (const item of items) {
+    const chosen = item.defaultDraftId ?? item.drafts[0]?.id;
+    if (chosen) next[item.prospectId] = chosen;
+  }
+  return next;
+}
+
 /**
  * Turns a just-submitted batch of approval outcomes into one toast: title
  * states the headline (N sent / N failed / N skipped), description lists
@@ -87,9 +123,11 @@ function outcomeBadgeVariant(outcome: ApprovalOutcome): 'default' | 'destructive
  * rolled back" vs "blocked by the daily cap" are materially different
  * things a human approving real outbound email needs to actually see.
  */
-function toastApprovalResults(results: ApprovalOutcome[], items: QueueItemView[]): void {
-  const nameFor = (draftId: string): string =>
-    items.find((item) => item.draft?.id === draftId)?.companyName ?? draftId;
+function toastApprovalResults(
+  results: ApprovalOutcome[],
+  companyNameByDraftId: Map<string, string>
+): void {
+  const nameFor = (draftId: string): string => companyNameByDraftId.get(draftId) ?? draftId;
 
   const description = results.map((result) => `${nameFor(result.draftId)}: ${outcomeLabel(result)}`).join('\n');
 
@@ -120,7 +158,15 @@ export function ApprovalQueueTable(): React.JSX.Element {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [editedBodies, setEditedBodies] = useState<Record<string, string>>({});
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Which draft variant is currently highlighted/chosen per prospect - what
+  // a radio-button selection inside each card controls. Defaults to
+  // `defaultDraftId` (pickDisplayDraft's pick) on every load.
+  const [chosenDraftId, setChosenDraftId] = useState<Record<string, string>>({});
+  // Which prospects (by prospectId) are checked for the bulk "Approve
+  // selected" action - resolved to a draftId via `chosenDraftId` at submit
+  // time, so bulk-approving always sends whichever variant is currently
+  // highlighted for that prospect.
+  const [selectedProspects, setSelectedProspects] = useState<Set<string>>(new Set());
   const [pendingDraftIds, setPendingDraftIds] = useState<Set<string>>(new Set());
   const [lastOutcomes, setLastOutcomes] = useState<Record<string, ApprovalOutcome>>({});
   // Bumped after every approval submission to re-trigger the load effect
@@ -141,10 +187,11 @@ export function ApprovalQueueTable(): React.JSX.Element {
         setItems(result.items);
         setCapStatus(result.capStatus);
         setLoadError(null);
-        // Reset per-draft edit state to match whatever the server now
-        // considers each draft's body.
+        // Reset per-draft edit/selection state to match whatever the server
+        // now considers each prospect's drafts.
         setEditedBodies({});
-        setSelected(new Set());
+        setSelectedProspects(new Set());
+        setChosenDraftId(initialChosenDraftIds(result.items));
       })
       .catch(() => {
         if (!cancelled) {
@@ -171,31 +218,44 @@ export function ApprovalQueueTable(): React.JSX.Element {
     return Math.min((capStatus.sentToday / capStatus.effectiveDailyCap) * 100, 100);
   }, [capStatus]);
 
-  function bodyFor(item: QueueItemView): string {
-    if (!item.draft) return '';
-    return editedBodies[item.draft.id] ?? displayBody(item);
+  // Flat draftId -> company name lookup, used by the post-submit toast -
+  // company name lives on the parent QueueItemView, not the draft itself.
+  const companyNameByDraftId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const item of items) {
+      for (const draft of item.drafts) map.set(draft.id, item.companyName);
+    }
+    return map;
+  }, [items]);
+
+  function bodyFor(draft: QueueDraftView): string {
+    return editedBodies[draft.id] ?? displayBody(draft);
   }
 
   function updateBody(draftId: string, value: string): void {
     setEditedBodies((prev) => ({ ...prev, [draftId]: value }));
   }
 
-  function toggleSelected(draftId: string): void {
-    setSelected((prev) => {
+  function selectVariant(prospectId: string, draftId: string): void {
+    setChosenDraftId((prev) => ({ ...prev, [prospectId]: draftId }));
+  }
+
+  function toggleProspectSelected(prospectId: string): void {
+    setSelectedProspects((prev) => {
       const next = new Set(prev);
-      if (next.has(draftId)) next.delete(draftId);
-      else next.add(draftId);
+      if (next.has(prospectId)) next.delete(prospectId);
+      else next.add(prospectId);
       return next;
     });
   }
 
-  function selectableDraftIds(): string[] {
-    return items.filter((item) => item.draft && !item.doNotContact).map((item) => item.draft!.id);
+  function selectableProspectIds(): string[] {
+    return items.filter((item) => item.drafts.length > 0 && !item.doNotContact).map((item) => item.prospectId);
   }
 
   function toggleSelectAll(): void {
-    const selectable = selectableDraftIds();
-    setSelected((prev) => (prev.size === selectable.length ? new Set() : new Set(selectable)));
+    const selectable = selectableProspectIds();
+    setSelectedProspects((prev) => (prev.size === selectable.length ? new Set() : new Set(selectable)));
   }
 
   // Builds the approval payload for one or more draftIds, attaching
@@ -203,8 +263,8 @@ export function ApprovalQueueTable(): React.JSX.Element {
   // queue originally showed them.
   function buildApprovalPayload(draftIds: string[]): Array<{ draftId: string; editedBody?: string }> {
     return draftIds.map((draftId) => {
-      const item = items.find((candidate) => candidate.draft?.id === draftId);
-      const original = item ? displayBody(item) : undefined;
+      const draft = items.flatMap((item) => item.drafts).find((candidate) => candidate.id === draftId);
+      const original = draft ? displayBody(draft) : undefined;
       const current = editedBodies[draftId];
       const wasEdited = current !== undefined && current !== original;
       return wasEdited ? { draftId, editedBody: current } : { draftId };
@@ -223,7 +283,7 @@ export function ApprovalQueueTable(): React.JSX.Element {
         for (const result of results) next[result.draftId] = result;
         return next;
       });
-      toastApprovalResults(results, items);
+      toastApprovalResults(results, companyNameByDraftId);
       setRefreshIndex((prev) => prev + 1);
     } catch {
       toastError('Failed to submit the approval request.', 'Nothing was sent - try again.');
@@ -236,7 +296,16 @@ export function ApprovalQueueTable(): React.JSX.Element {
     }
   }
 
-  const selectableCount = selectableDraftIds().length;
+  // Resolves each selected prospect to its currently-chosen variant's
+  // draftId, then approves all of them in one batch.
+  function approveSelected(): void {
+    const draftIds = [...selectedProspects]
+      .map((prospectId) => chosenDraftId[prospectId])
+      .filter((draftId): draftId is string => draftId !== undefined);
+    void approve(draftIds);
+  }
+
+  const selectableCount = selectableProspectIds().length;
 
   return (
     <div className="flex flex-col gap-4 p-6">
@@ -283,20 +352,27 @@ export function ApprovalQueueTable(): React.JSX.Element {
       <Separator />
 
       <div className="flex items-center gap-2">
+        <Checkbox
+          checked={selectedProspects.size > 0 && selectedProspects.size === selectableCount}
+          disabled={selectableCount === 0}
+          onCheckedChange={toggleSelectAll}
+          aria-label="Select all"
+        />
+        <span className="text-muted-foreground text-sm">Select all</span>
         <Button
           variant="outline"
-          disabled={selected.size === 0 || pendingDraftIds.size > 0}
-          onClick={() => approve([...selected])}
+          disabled={selectedProspects.size === 0 || pendingDraftIds.size > 0}
+          onClick={approveSelected}
         >
-          Approve selected ({selected.size})
+          Approve selected ({selectedProspects.size})
         </Button>
       </div>
 
       {isLoading ? (
         <div className="flex flex-col gap-2">
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-40 w-full" />
+          <Skeleton className="h-40 w-full" />
+          <Skeleton className="h-40 w-full" />
         </div>
       ) : items.length === 0 ? (
         <div className="bg-card flex flex-col items-center gap-3 rounded-lg py-16 text-center ring-1 ring-foreground/10">
@@ -313,91 +389,103 @@ export function ApprovalQueueTable(): React.JSX.Element {
           </div>
         </div>
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>
-                <Checkbox
-                  checked={selected.size > 0 && selected.size === selectableCount}
-                  disabled={selectableCount === 0}
-                  onCheckedChange={toggleSelectAll}
-                  aria-label="Select all"
-                />
-              </TableHead>
-              <TableHead>Company</TableHead>
-              <TableHead>Contact</TableHead>
-              <TableHead>Priority</TableHead>
-              <TableHead>Subject</TableHead>
-              <TableHead>Body</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Action</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {items.map((item) => {
-              const draftId = item.draft?.id;
-              const isPending = draftId ? pendingDraftIds.has(draftId) : false;
-              const outcome = draftId ? lastOutcomes[draftId] : undefined;
-              const blocked = item.doNotContact || !item.draft;
+        <div className="flex flex-col gap-4">
+          {items.map((item) => {
+            const blocked = item.doNotContact || item.drafts.length === 0;
+            const selectedVariantId = chosenDraftId[item.prospectId];
 
-              return (
-                <TableRow key={item.prospectId}>
-                  <TableCell>
-                    {draftId ? (
-                      <Checkbox
-                        checked={selected.has(draftId)}
-                        disabled={blocked}
-                        onCheckedChange={() => toggleSelected(draftId)}
-                        aria-label={`Select ${item.companyName}`}
-                      />
-                    ) : null}
-                  </TableCell>
-                  <TableCell className="font-medium">{item.companyName}</TableCell>
-                  <TableCell>
-                    {item.contactName ?? '-'}
-                    <br />
-                    <span className="text-muted-foreground text-xs">{item.contactEmail ?? 'no email on file'}</span>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="secondary">{item.priorityScore}</Badge>
-                  </TableCell>
-                  <TableCell>{item.draft?.subject ?? '-'}</TableCell>
-                  <TableCell>
-                    {item.draft ? (
-                      <textarea
-                        className="border-input bg-background w-80 rounded-md border p-2 text-sm"
-                        rows={4}
-                        value={bodyFor(item)}
-                        disabled={blocked}
-                        onChange={(event) => updateBody(item.draft!.id, event.target.value)}
-                      />
-                    ) : (
-                      '-'
-                    )}
-                  </TableCell>
-                  <TableCell className="text-sm">
+            return (
+              <div key={item.prospectId} className="bg-card flex flex-col gap-3 rounded-lg p-4 ring-1 ring-foreground/10">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="flex items-start gap-3">
+                    <Checkbox
+                      checked={selectedProspects.has(item.prospectId)}
+                      disabled={blocked}
+                      onCheckedChange={() => toggleProspectSelected(item.prospectId)}
+                      aria-label={`Select ${item.companyName}`}
+                      className="mt-1"
+                    />
+                    <div className="flex flex-col">
+                      <span className="font-medium">{item.companyName}</span>
+                      <span className="text-muted-foreground text-xs">
+                        {item.contactName ?? '-'} - {item.contactEmail ?? 'no email on file'}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary">Priority {item.priorityScore}</Badge>
                     {item.doNotContact ? (
-                      <Badge variant="destructive">Do not contact</Badge>
-                    ) : outcome ? (
-                      <Badge variant={outcomeBadgeVariant(outcome)}>{outcomeLabel(outcome)}</Badge>
-                    ) : (
-                      '-'
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <Button
-                      size="sm"
-                      disabled={blocked || isPending}
-                      onClick={() => draftId && approve([draftId])}
-                    >
-                      {isPending ? 'Approving…' : 'Approve'}
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
+                      <Badge variant="destructive">
+                        <HugeiconsIcon icon={AlertCircleIcon} data-icon="inline-start" strokeWidth={2} />
+                        Do not contact
+                      </Badge>
+                    ) : null}
+                  </div>
+                </div>
+
+                {item.drafts.length === 0 ? (
+                  <p className="text-muted-foreground text-sm">No drafts on file for this prospect.</p>
+                ) : (
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                    {item.drafts.map((draft) => {
+                      const isChosen = draft.id === selectedVariantId;
+                      const isPending = pendingDraftIds.has(draft.id);
+                      const outcome = lastOutcomes[draft.id];
+
+                      return (
+                        <div
+                          key={draft.id}
+                          className={`flex flex-col gap-2 rounded-md border p-3 ${
+                            isChosen ? 'border-primary ring-1 ring-primary' : 'border-input'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <label className="flex items-center gap-1.5 text-sm font-medium">
+                              <input
+                                type="radio"
+                                name={`variant-${item.prospectId}`}
+                                checked={isChosen}
+                                disabled={blocked}
+                                onChange={() => selectVariant(item.prospectId, draft.id)}
+                              />
+                              {frameworkLabel(draft.framework)}
+                            </label>
+                            {draft.hasSendFailure ? <Badge variant="destructive">Send failed</Badge> : null}
+                          </div>
+
+                          <p className="text-sm font-medium">{draft.subject}</p>
+
+                          <textarea
+                            className="border-input bg-background w-full flex-1 rounded-md border p-2 text-sm"
+                            rows={8}
+                            value={bodyFor(draft)}
+                            disabled={blocked}
+                            onChange={(event) => updateBody(draft.id, event.target.value)}
+                          />
+
+                          {outcome ? (
+                            <Badge variant={outcomeBadgeVariant(outcome)}>
+                              <HugeiconsIcon icon={outcomeIcon(outcome)} data-icon="inline-start" strokeWidth={2} />
+                              {outcomeLabel(outcome)}
+                            </Badge>
+                          ) : null}
+
+                          <Button
+                            size="sm"
+                            disabled={blocked || isPending}
+                            onClick={() => approve([draft.id])}
+                          >
+                            {isPending ? 'Approving…' : 'Approve this variant'}
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );
