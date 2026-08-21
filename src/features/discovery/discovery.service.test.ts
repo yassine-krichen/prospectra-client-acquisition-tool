@@ -8,20 +8,25 @@ import type { Signal } from '@/features/prospects/prospect.types';
 // tested elsewhere, so both are mocked here and only `discovery.service.ts`'s
 // own orchestration logic (dedupe, enrichment gating, priority scoring,
 // persistence branching, source-unavailable reporting) is under test.
-const { prospectMock, findFirstMock, createMock, updateMock } = vi.hoisted(() => {
-  const findFirst = vi.fn();
-  const create = vi.fn();
-  const update = vi.fn();
-  return {
-    prospectMock: { findFirst, create, update },
-    findFirstMock: findFirst,
-    createMock: create,
-    updateMock: update,
-  };
-});
+const { prospectMock, findFirstMock, createMock, updateMock, discoveryRunCreateMock, discoveryRunFindManyMock } =
+  vi.hoisted(() => {
+    const findFirst = vi.fn();
+    const create = vi.fn();
+    const update = vi.fn();
+    const discoveryRunCreate = vi.fn();
+    const discoveryRunFindMany = vi.fn();
+    return {
+      prospectMock: { findFirst, create, update },
+      findFirstMock: findFirst,
+      createMock: create,
+      updateMock: update,
+      discoveryRunCreateMock: discoveryRunCreate,
+      discoveryRunFindManyMock: discoveryRunFindMany,
+    };
+  });
 
 vi.mock('@/common/db/client', () => ({
-  prisma: { prospect: prospectMock },
+  prisma: { prospect: prospectMock, discoveryRun: { create: discoveryRunCreateMock, findMany: discoveryRunFindManyMock } },
 }));
 
 const envMock: { BUILTWITH_API_KEY: string | undefined } = { BUILTWITH_API_KEY: undefined };
@@ -62,7 +67,7 @@ vi.mock('@/features/discovery/sources/indiehackers.source', () => ({
   runIndieHackersSource: runIndieHackersSourceMock,
 }));
 
-const { runDiscovery } = await import('./discovery.service');
+const { runDiscovery, listRecentDiscoveryRuns } = await import('./discovery.service');
 
 function buildSignal(overrides: Partial<Signal> = {}): Signal {
   return {
@@ -104,6 +109,7 @@ beforeEach(() => {
   findFirstMock.mockResolvedValue(null);
   createMock.mockResolvedValue(undefined);
   updateMock.mockResolvedValue(undefined);
+  discoveryRunCreateMock.mockResolvedValue(undefined);
 });
 
 describe('runDiscovery', () => {
@@ -282,6 +288,53 @@ describe('runDiscovery', () => {
   it('rejects an invalid query missing required fields', async () => {
     await expect(runDiscovery({ category: '' })).rejects.toThrow();
   });
+
+  it('persists a DiscoveryRun row recording the query, branch, and outcome counts', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({ ok: true, prospects: [buildProspect()] });
+
+    const summary = await runDiscovery(query, 'a');
+
+    expect(discoveryRunCreateMock).toHaveBeenCalledWith({
+      data: {
+        category: 'plumber',
+        geography: 'Austin, TX',
+        branch: 'a',
+        totalFound: summary.totalFound,
+        inserted: summary.inserted,
+        updated: summary.updated,
+        skippedDoNotContact: summary.skippedDoNotContact,
+        sources: summary.sources,
+      },
+    });
+  });
+
+  it('does not fail the discovery run when persisting the DiscoveryRun row fails', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({ ok: true, prospects: [buildProspect()] });
+    discoveryRunCreateMock.mockRejectedValue(new Error('db unavailable'));
+
+    const summary = await runDiscovery(query);
+
+    expect(summary.inserted).toBe(1);
+  });
+});
+
+describe('listRecentDiscoveryRuns', () => {
+  it('returns the discoveryRun.findMany result ordered newest first, defaulting to a limit of 20', async () => {
+    discoveryRunFindManyMock.mockResolvedValue([{ id: 'run-1' }]);
+
+    const result = await listRecentDiscoveryRuns();
+
+    expect(discoveryRunFindManyMock).toHaveBeenCalledWith({ orderBy: { createdAt: 'desc' }, take: 20 });
+    expect(result).toEqual([{ id: 'run-1' }]);
+  });
+
+  it('passes a custom limit through to discoveryRun.findMany', async () => {
+    discoveryRunFindManyMock.mockResolvedValue([]);
+
+    await listRecentDiscoveryRuns(5);
+
+    expect(discoveryRunFindManyMock).toHaveBeenCalledWith({ orderBy: { createdAt: 'desc' }, take: 5 });
+  });
 });
 
 describe('runDiscovery branch selection', () => {
@@ -368,5 +421,57 @@ describe('runDiscovery branch selection', () => {
 
     expect(summary.totalFound).toBe(2);
     expect(createMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('runDiscovery enabledSources filtering', () => {
+  it('runs every source for the branch, unfiltered, when enabledSources is omitted (backward compat)', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({ ok: true, prospects: [buildProspect()] });
+
+    const summary = await runDiscovery(query, 'a');
+
+    expect(runGooglePlacesSourceMock).toHaveBeenCalledTimes(1);
+    expect(runYellowPagesSourceMock).toHaveBeenCalledTimes(1);
+    expect(summary.sources.every((s) => s.reason !== 'disabled for this run')).toBe(true);
+  });
+
+  it('skips a source not listed in enabledSources instead of calling it', async () => {
+    const summary = await runDiscovery(query, 'a', ['yellowpages']);
+
+    expect(runGooglePlacesSourceMock).not.toHaveBeenCalled();
+    expect(runYellowPagesSourceMock).toHaveBeenCalledTimes(1);
+    expect(summary.sources.find((s) => s.source === 'google_places')).toEqual({
+      source: 'google_places',
+      ran: false,
+      reason: 'disabled for this run',
+      count: 0,
+    });
+  });
+
+  it('applies the enabledSources filter to builtwith too, in addition to its own env-var check', async () => {
+    envMock.BUILTWITH_API_KEY = 'test-key';
+    runGooglePlacesSourceMock.mockResolvedValue({ ok: true, prospects: [buildProspect()] });
+
+    const summary = await runDiscovery(query, 'a', ['google_places', 'yellowpages']);
+
+    const builtwithSummary = summary.sources.find((s) => s.source === 'builtwith');
+    expect(builtwithSummary).toEqual({
+      source: 'builtwith',
+      ran: false,
+      reason: 'disabled for this run',
+      count: 0,
+    });
+    expect(lookupStaleStackMock).not.toHaveBeenCalled();
+  });
+
+  it('runs builtwith when it is both configured and included in enabledSources', async () => {
+    envMock.BUILTWITH_API_KEY = 'test-key';
+    runGooglePlacesSourceMock.mockResolvedValue({ ok: true, prospects: [buildProspect()] });
+    lookupStaleStackMock.mockResolvedValue({ ok: false });
+
+    const summary = await runDiscovery(query, 'a', ['google_places', 'yellowpages', 'builtwith']);
+
+    const builtwithSummary = summary.sources.find((s) => s.source === 'builtwith');
+    expect(builtwithSummary?.ran).toBe(true);
   });
 });

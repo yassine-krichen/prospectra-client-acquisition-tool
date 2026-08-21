@@ -25,7 +25,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'category and geography are required.' }, { status: 400 });
   }
 
-  const { category, geography, branch } = parsed.data;
-  const summary = await runDiscovery({ category, geography }, branch);
+  const { category, geography, branch, sources } = parsed.data;
+  const summary = await runDiscovery({ category, geography }, branch, sources);
   return NextResponse.json(summary);
 }

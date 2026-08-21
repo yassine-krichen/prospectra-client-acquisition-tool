@@ -39,7 +39,7 @@ describe('POST /api/pipeline/discover', () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(runDiscoveryMock).toHaveBeenCalledWith({ category: 'plumber', geography: 'Austin, TX' }, 'a');
+    expect(runDiscoveryMock).toHaveBeenCalledWith({ category: 'plumber', geography: 'Austin, TX' }, 'a', undefined);
     expect(body).toEqual(summary);
   });
 
@@ -49,7 +49,7 @@ describe('POST /api/pipeline/discover', () => {
     const response = await POST(queryRequest('category=plumber&geography=Austin%2C+TX'));
 
     expect(response.status).toBe(200);
-    expect(runDiscoveryMock).toHaveBeenCalledWith({ category: 'plumber', geography: 'Austin, TX' }, 'a');
+    expect(runDiscoveryMock).toHaveBeenCalledWith({ category: 'plumber', geography: 'Austin, TX' }, 'a', undefined);
   });
 
   it('passes the branch through to runDiscovery when provided in the JSON body', async () => {
@@ -57,7 +57,19 @@ describe('POST /api/pipeline/discover', () => {
 
     await POST(jsonRequest({ category: 'plumber', geography: 'Austin, TX', branch: 'b' }));
 
-    expect(runDiscoveryMock).toHaveBeenCalledWith({ category: 'plumber', geography: 'Austin, TX' }, 'b');
+    expect(runDiscoveryMock).toHaveBeenCalledWith({ category: 'plumber', geography: 'Austin, TX' }, 'b', undefined);
+  });
+
+  it('passes sources through to runDiscovery when provided in the JSON body', async () => {
+    runDiscoveryMock.mockResolvedValue(summary);
+
+    await POST(jsonRequest({ category: 'plumber', geography: 'Austin, TX', sources: ['yellowpages'] }));
+
+    expect(runDiscoveryMock).toHaveBeenCalledWith(
+      { category: 'plumber', geography: 'Austin, TX' },
+      'a',
+      ['yellowpages']
+    );
   });
 
   it('returns 400 and never calls runDiscovery when neither the body nor the query params supply category/geography', async () => {

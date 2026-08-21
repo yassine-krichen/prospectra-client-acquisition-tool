@@ -1,6 +1,9 @@
 import { z } from 'zod';
 
+import { DISCOVERY_SOURCES } from '@/features/discovery/discovery-source-registry';
 import type { CompanySize, Industry, Location, ProspectSource, Signal } from '@/features/prospects/prospect.types';
+
+const DISCOVERY_SOURCE_KEYS = DISCOVERY_SOURCES.map((source) => source.key) as [string, ...string[]];
 
 // A category + geography search input shared by every Branch A discovery
 // source (e.g. category: "plumber", geography: "Austin, TX").
@@ -17,6 +20,11 @@ export type DiscoveryQuery = z.infer<typeof discoveryQuerySchema>;
 // discovery routes so the request shape is defined exactly once.
 export const discoverRequestSchema = discoveryQuerySchema.extend({
   branch: z.enum(['a', 'b', 'both']).default('a'),
+  // Which sources to actually run for this request, filtered by `branch` -
+  // see `runDiscovery`'s `enabledSources` parameter. Omitted (the cron
+  // route never sends this) means "run every source for the branch",
+  // preserving prior behavior.
+  sources: z.array(z.enum(DISCOVERY_SOURCE_KEYS)).optional(),
 });
 export type DiscoverRequest = z.infer<typeof discoverRequestSchema>;
 
@@ -85,3 +93,24 @@ export const discoveryRunSummarySchema = z.object({
   skippedDoNotContact: z.number().int(),
 });
 export type DiscoveryRunSummary = z.infer<typeof discoveryRunSummarySchema>;
+
+// Client-safe mirror of the `DiscoveryRun` Prisma model (discovery.service.ts's
+// `listRecentDiscoveryRuns`), duplicated here for the same reason as
+// `discoveryRunSummarySchema` above: client components validate the
+// `GET /api/discovery/runs` response without importing `discovery.service.ts`
+// (which pulls in `@/common/config/env` and `@/common/db/client`).
+export const discoveryRunHistoryEntrySchema = z.object({
+  id: z.string(),
+  category: z.string(),
+  geography: z.string(),
+  branch: z.enum(['a', 'b', 'both']),
+  totalFound: z.number().int(),
+  inserted: z.number().int(),
+  updated: z.number().int(),
+  skippedDoNotContact: z.number().int(),
+  sources: z.array(sourceRunSummarySchema),
+  createdAt: z.coerce.date(),
+});
+export type DiscoveryRunHistoryEntry = z.infer<typeof discoveryRunHistoryEntrySchema>;
+
+export const discoveryRunHistorySchema = z.array(discoveryRunHistoryEntrySchema);
