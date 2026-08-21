@@ -71,13 +71,16 @@ Scoped down from the above to what's realistically buildable free-of-cost, witho
 infrastructure (no PostGIS, no per-country registry connectors, no job-board scraping, no
 search-engine scraping), and without repeating the "build everything at once" mistake:
 
-1. **Benchmark Patchright vs. the current hand-rolled Playwright stealth setup**, on the two
-   scrapers that actually fight Cloudflare (`yellowpages.source.ts`, `indiehackers.source.ts`).
-   Not adopted on faith - measured. Patchright patches real Playwright-specific automation leaks
-   (CDP `Runtime.enable`/`Console.enable`, command-flag leakage) that the current manual UA/Client
-   Hints spoofing doesn't touch at all, and avoids the risk of a spoofed identity drifting out of
-   sync with the real browser build over time. It does NOT solve TLS/JA4 fingerprint or IP
-   reputation - that limitation stands regardless of which browser layer wins the benchmark.
+1. ~~**Benchmark Patchright vs. the current hand-rolled Playwright stealth setup.**~~ **DONE,
+   2026-08-21 - not adopted.** A maintained Node.js port exists (`patchright` on npm, drop-in
+   replacement, same maintainer as the Python original) and was actually benchmarked against the
+   current setup on yellowpages.com (n=5) and a neutral fingerprint site, bot.sannysoft.com (n=20).
+   Result: no improvement either target - Patchright's own docs are explicit that its stealth
+   advantage requires **headed** mode ("much easier to detect when headless"), and this app runs
+   headless on a server with no display. Decision: keep the current manual UA/Client-Hints/
+   `navigator.webdriver` setup, don't add the dependency. If server-side headed automation (e.g.
+   via a virtual display/Xvfb) ever becomes worth the complexity, this is worth re-benchmarking
+   then - not before, since the constraint that killed it here (no display) wouldn't have changed.
 2. **Add OpenStreetMap/Overpass as a new Branch A discovery source.** Genuinely free, structured
    API (no scraping, no anti-bot fight), real geographic POI discovery. Public Overpass instances
    are usable for this workload without needing a paid key or self-hosted instance yet.
