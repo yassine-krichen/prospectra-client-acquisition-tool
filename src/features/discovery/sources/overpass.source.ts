@@ -1,0 +1,191 @@
+import { z } from 'zod';
+
+import { buildNoSignalDetectedFallback, detectWebsiteSignals } from '@/features/discovery/signal-detection';
+import { extractDomain } from '@/features/discovery/normalize-domain';
+import { geocodeToOsmArea } from '@/features/discovery/sources/geocode-nominatim';
+import type { DiscoveredProspect, DiscoveryQuery, SourceResult } from '@/features/discovery/discovery.types';
+
+const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
+
+interface OsmTag {
+  key: string;
+  value: string;
+}
+
+// Overpass is tag-based, not free-text search - this maps common category
+// keywords to the OSM tag that actually identifies that kind of business.
+// Deliberately small and specific to the categories this app's discovery
+// form is actually used with; anything not covered here falls back to a
+// noisier name-regex search (see `buildFallbackQuery`).
+const CATEGORY_TAG_MAP: { keywords: string[]; tag: OsmTag }[] = [
+  { keywords: ['plumber'], tag: { key: 'craft', value: 'plumber' } },
+  { keywords: ['mechanic', 'auto repair', 'car repair'], tag: { key: 'shop', value: 'car_repair' } },
+  { keywords: ['electrician'], tag: { key: 'craft', value: 'electrician' } },
+  { keywords: ['restaurant'], tag: { key: 'amenity', value: 'restaurant' } },
+  { keywords: ['cafe', 'coffee'], tag: { key: 'amenity', value: 'cafe' } },
+  { keywords: ['dentist'], tag: { key: 'amenity', value: 'dentist' } },
+  { keywords: ['hair salon', 'barber', 'hairdresser'], tag: { key: 'shop', value: 'hairdresser' } },
+  { keywords: ['bakery'], tag: { key: 'shop', value: 'bakery' } },
+  { keywords: ['gym', 'fitness'], tag: { key: 'leisure', value: 'fitness_centre' } },
+];
+
+// Generic tag keys searched by the name-regex fallback when `category`
+// doesn't match anything in `CATEGORY_TAG_MAP` - covers the vast majority of
+// small-business POIs on OSM without needing a keyword for every possible
+// category.
+const FALLBACK_TAG_KEYS = ['shop', 'amenity', 'craft', 'office'];
+
+function resolveOsmTag(category: string): OsmTag | null {
+  const normalized = category.trim().toLowerCase();
+  const match = CATEGORY_TAG_MAP.find(({ keywords }) => keywords.some((keyword) => normalized.includes(keyword)));
+  return match?.tag ?? null;
+}
+
+// Overpass QL string literals are double-quoted; escape both regex
+// metacharacters (so the category string is matched literally, not
+// interpreted as a pattern) and the quote/backslash characters that would
+// otherwise break out of the literal.
+function escapeForOverpassRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/"/g, '\\"');
+}
+
+function buildTagQuery(areaId: number, tag: OsmTag): string {
+  return `
+[out:json][timeout:25];
+area(${areaId})->.searchArea;
+(
+  node["${tag.key}"="${tag.value}"](area.searchArea);
+  way["${tag.key}"="${tag.value}"](area.searchArea);
+);
+out center tags;`;
+}
+
+function buildFallbackQuery(areaId: number, category: string): string {
+  const pattern = escapeForOverpassRegex(category.trim());
+  const clauses = FALLBACK_TAG_KEYS.flatMap((key) => [
+    `  node["${key}"]["name"~"${pattern}",i](area.searchArea);`,
+    `  way["${key}"]["name"~"${pattern}",i](area.searchArea);`,
+  ]).join('\n');
+
+  return `
+[out:json][timeout:25];
+area(${areaId})->.searchArea;
+(
+${clauses}
+);
+out center tags;`;
+}
+
+const overpassElementSchema = z.object({
+  type: z.enum(['node', 'way', 'relation']),
+  id: z.number(),
+  lat: z.number().optional(),
+  lon: z.number().optional(),
+  center: z.object({ lat: z.number(), lon: z.number() }).optional(),
+  tags: z.record(z.string(), z.string()).optional(),
+});
+
+const overpassResponseSchema = z.object({
+  elements: z.array(overpassElementSchema).default([]),
+});
+
+/**
+ * Builds a street address from OSM's `addr:*` tags, or `null` when none of
+ * them are present. OSM tag coverage varies heavily by region - many
+ * elements will have a name but no address (or no phone/website) at all;
+ * that's expected data sparsity, not a parsing bug.
+ */
+function buildAddress(tags: Record<string, string>): string | null {
+  const parts = [tags['addr:housenumber'], tags['addr:street']].filter(Boolean).join(' ');
+  const cityAndPostcode = [tags['addr:city'], tags['addr:postcode']].filter(Boolean).join(' ');
+  const address = [parts, cityAndPostcode].filter(Boolean).join(', ');
+  return address || null;
+}
+
+async function mapElementToProspect(
+  element: z.infer<typeof overpassElementSchema>,
+  query: DiscoveryQuery
+): Promise<DiscoveredProspect | null> {
+  const tags = element.tags ?? {};
+  const companyName = tags.name;
+  // Unnamed POIs (very common on OSM - a node tagged shop=car_repair with no
+  // `name`) aren't actionable as an outreach target, so they're skipped
+  // rather than surfaced with a placeholder name.
+  if (!companyName) return null;
+
+  const websiteUrl = tags.website ?? tags['contact:website'] ?? null;
+  const phone = tags.phone ?? tags['contact:phone'] ?? null;
+  const address = buildAddress(tags);
+
+  const lat = element.lat ?? element.center?.lat ?? null;
+  const lng = element.lon ?? element.center?.lon ?? null;
+
+  const signal = websiteUrl
+    ? ((await detectWebsiteSignals(websiteUrl)) ?? buildNoSignalDetectedFallback(websiteUrl))
+    : { type: 'no_website' as const, description: 'No website tagged on OpenStreetMap', evidence: null, strength: 'strong' as const };
+
+  return {
+    companyName,
+    domain: extractDomain(websiteUrl),
+    websiteUrl,
+    industry: 'local_service',
+    location: { city: query.geography, country: null, lat, lng },
+    companySize: 'unknown',
+    // ProspectSource has no `overpass` value (same situation as
+    // yellowpages.source.ts - extending that enum is a schema migration out
+    // of scope for this phase). `manual` is the closest existing value;
+    // revisit if OSM becomes a first-class source later.
+    source: 'manual',
+    sourceUrl: `https://www.openstreetmap.org/${element.type}/${element.id}`,
+    discoveredAt: new Date(),
+    phone,
+    address,
+    signal,
+  };
+}
+
+/**
+ * Discovers businesses via OpenStreetMap's Overpass API: geocodes
+ * `query.geography` to an OSM area via Nominatim (see `geocode-nominatim.ts`),
+ * maps `query.category` to an OSM tag (falling back to a noisier name-regex
+ * search across common business tag keys when no mapping exists), and maps
+ * matching elements to prospects. Returns a typed "unavailable" result -
+ * rather than throwing - when geocoding or the Overpass request fails, so
+ * a bad geography string or a down Overpass instance doesn't crash discovery.
+ */
+export async function runOverpassSource(query: DiscoveryQuery): Promise<SourceResult> {
+  const area = await geocodeToOsmArea(query.geography);
+  if (!area) {
+    return { ok: false, reason: 'source unavailable: could not resolve geography to a location' };
+  }
+
+  const tag = resolveOsmTag(query.category);
+  const overpassQuery = tag ? buildTagQuery(area.areaId, tag) : buildFallbackQuery(area.areaId, query.category);
+
+  let response: Response;
+  try {
+    response = await fetch(OVERPASS_URL, { method: 'POST', body: overpassQuery });
+  } catch (error) {
+    return {
+      ok: false,
+      reason: `source unavailable: Overpass request failed (${(error as Error).message})`,
+    };
+  }
+
+  if (!response.ok) {
+    return { ok: false, reason: `source unavailable: Overpass responded with ${response.status}` };
+  }
+
+  const parsed = overpassResponseSchema.safeParse(await response.json().catch(() => null));
+  if (!parsed.success) {
+    return { ok: false, reason: 'source unavailable: Overpass response did not match the expected shape' };
+  }
+
+  const prospects: DiscoveredProspect[] = [];
+  for (const element of parsed.data.elements) {
+    const prospect = await mapElementToProspect(element, query);
+    if (prospect) prospects.push(prospect);
+  }
+
+  return { ok: true, prospects };
+}
