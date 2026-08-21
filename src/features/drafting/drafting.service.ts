@@ -6,7 +6,7 @@ import { generateDraftWithFallback } from '@/features/drafting/model-rotation';
 import { buildDraftPrompt, sampleFrameworks } from '@/features/drafting/prompt-templates';
 import { validateDraftOutput } from '@/features/drafting/validate-draft-output';
 import { signalSchema } from '@/features/prospects/prospect.types';
-import type { Draft, EstimatedBudget, Industry, ProjectFit } from '@/features/prospects/prospect.types';
+import type { Draft, EstimatedBudget, Industry, ProjectFit, SignalStrength } from '@/features/prospects/prospect.types';
 import type {
   DraftingProvider,
   DraftProspectOutcome,
@@ -273,15 +273,30 @@ export async function draftProspect(prospectId: string): Promise<DraftProspectOu
   return { ok: true, drafts: createdRows.map(toDraftView), humanize: humanizeOutcome };
 }
 
+export interface DraftBatchOptions {
+  // Restricts candidates to prospects whose `signal.strength` matches
+  // exactly - used by the fully-automated Vercel Cron path
+  // (app/api/cron/daily/route.ts) to only auto-draft `strong` ("High")
+  // signal prospects, so unattended runs spend LLM calls on the best
+  // leads only. Manual triggering (the dashboard's Pipeline page, and the
+  // ad-hoc `POST /api/cron/draft-batch`) omits this and drafts across
+  // every signal strength, unchanged from before this option existed.
+  signalStrength?: SignalStrength;
+}
+
 /**
  * Runs `draftProspect` for up to `limit` `enriched`-status prospects
  * (highest `priorityScore` first), for the draft-batch cron's part (a).
  */
-export async function draftBatch(limit: number = DRAFT_BATCH_SIZE): Promise<
-  Array<{ prospectId: string; outcome: DraftProspectOutcome }>
-> {
+export async function draftBatch(
+  limit: number = DRAFT_BATCH_SIZE,
+  options: DraftBatchOptions = {}
+): Promise<Array<{ prospectId: string; outcome: DraftProspectOutcome }>> {
   const candidates = await prisma.prospect.findMany({
-    where: { status: PrismaProspectStatus.enriched },
+    where: {
+      status: PrismaProspectStatus.enriched,
+      ...(options.signalStrength ? { signal: { path: ['strength'], equals: options.signalStrength } } : {}),
+    },
     select: { id: true },
     take: limit,
     orderBy: { priorityScore: 'desc' },
@@ -316,12 +331,18 @@ export async function draftBatch(limit: number = DRAFT_BATCH_SIZE): Promise<
  * certainly hit the same wall, so continuing would just burn further calls
  * against a budget/bridge already known to be unavailable this run.
  */
-export async function humanizeBatch(limit: number = HUMANIZE_BATCH_SIZE): Promise<HumanizeBatchSummary> {
+export async function humanizeBatch(
+  limit: number = HUMANIZE_BATCH_SIZE,
+  options: DraftBatchOptions = {}
+): Promise<HumanizeBatchSummary> {
   const candidates = await prisma.draft.findMany({
     where: {
       variant: 1,
       humanizedBody: null,
-      prospect: { status: PrismaProspectStatus.drafted },
+      prospect: {
+        status: PrismaProspectStatus.drafted,
+        ...(options.signalStrength ? { signal: { path: ['strength'], equals: options.signalStrength } } : {}),
+      },
     },
     take: limit,
     orderBy: [{ prospect: { priorityScore: 'desc' } }, { generatedAt: 'asc' }],

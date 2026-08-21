@@ -10,6 +10,8 @@ const runRetentionSchedulerMock = vi.fn();
 vi.mock('@/features/drafting/drafting.service', () => ({
   draftBatch: draftBatchMock,
   humanizeBatch: humanizeBatchMock,
+  DRAFT_BATCH_SIZE: 10,
+  HUMANIZE_BATCH_SIZE: 5,
 }));
 vi.mock('@/features/followups/followup-scheduler', () => ({
   runFollowupScheduler: runFollowupSchedulerMock,
@@ -55,8 +57,8 @@ describe('GET /api/cron/daily', () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(draftBatchMock).toHaveBeenCalled();
-    expect(humanizeBatchMock).toHaveBeenCalled();
+    expect(draftBatchMock).toHaveBeenCalledWith(10, { signalStrength: 'strong' });
+    expect(humanizeBatchMock).toHaveBeenCalledWith(5, { signalStrength: 'strong' });
     expect(runFollowupSchedulerMock).toHaveBeenCalled();
     expect(runRetentionSchedulerMock).toHaveBeenCalled();
     expect(body).toEqual({

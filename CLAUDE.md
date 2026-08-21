@@ -114,7 +114,12 @@ of one per pipeline stage:
   back in one invocation (`draftBatch`, `humanizeBatch`, `runFollowupScheduler`,
   `runRetentionScheduler`), consolidated onto one route specifically to fit inside the 2-cron-job
   Hobby cap. Each stage is independently batch-size-bounded and follow-ups/retention re-check the
-  daily send cap themselves, so chaining them is safe. `maxDuration = 60`.
+  daily send cap themselves, so chaining them is safe. `maxDuration = 60`. `draftBatch`/
+  `humanizeBatch` are called here with `{ signalStrength: 'strong' }` (`DraftBatchOptions` in
+  `drafting.service.ts`) - this fully-unattended path only auto-drafts/humanizes `strong` ("High")
+  signal prospects, leaving medium/weak-signal ones for a human to draft manually from the
+  dashboard's Pipeline page if they judge it worthwhile. Manual triggering (Pipeline page,
+  `POST /api/cron/draft-batch`) omits the option and is unrestricted, unchanged from before.
 
 Enrichment has deliberately **no** cron - newly discovered prospects sit at `new` status until a
 human enriches them from `/prospects` (avoids burning paid Hunter/PeopleDataLabs quota on
