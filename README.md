@@ -293,7 +293,7 @@ Built by [yassine krichen](https://github.com/) · 2026
 
 <details>
 <summary>LICENSE (MIT) - click to expand</summary>
-
+ 
 ```
 MIT License
 
