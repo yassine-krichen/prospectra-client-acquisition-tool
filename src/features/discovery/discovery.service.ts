@@ -16,8 +16,9 @@ import { lookupGitHubEvidence } from '@/features/discovery/sources/github.source
 import { runIndieHackersSource } from '@/features/discovery/sources/indiehackers.source';
 import { isBaselineSignal } from '@/features/discovery/signal-detection';
 import { computeServiceSuggestions, deriveProjectFitAndBudget } from '@/features/matching/service-matching-rules';
+import { computePriorityScore } from '@/features/matching/priority-scoring';
 import { toPrismaCompanySize } from '@/features/prospects/company-size.mapper';
-import type { Signal, SignalStrength } from '@/features/prospects/prospect.types';
+import type { SignalStrength } from '@/features/prospects/prospect.types';
 
 // Branch A = local/SMB discovery (category+geography search: Google Places,
 // yellowpages). Branch B = startup/SaaS discovery (topic/recency-based:
@@ -29,8 +30,10 @@ import type { Signal, SignalStrength } from '@/features/prospects/prospect.types
 // enrichment-only, same as BuiltWith (see `ENRICHERS`/`enrichWithGitHub`).
 export type DiscoveryBranch = 'a' | 'b' | 'both';
 
-// Stub scoring for this phase - real weighting arrives in Phase 7. For now,
-// priority is just the strength of the single strongest signal found.
+// Ordinal comparison only (NOT the priorityScore formula - see
+// priority-scoring.ts for that) - used by the enrichers below to decide
+// whether a newly-found signal is strictly stronger than what a prospect
+// already has, so a later enricher never downgrades an earlier one's finding.
 const SIGNAL_STRENGTH_SCORE: Record<SignalStrength, number> = {
   weak: 1,
   medium: 2,
@@ -77,10 +80,6 @@ const SOURCE_RUNNERS: Record<string, (query: DiscoveryQuery) => Promise<SourceRe
   crunchbase: runCrunchbaseSource,
   indiehackers: runIndieHackersSource,
 };
-
-function computePriorityScore(signal: Signal): number {
-  return SIGNAL_STRENGTH_SCORE[signal.strength];
-}
 
 type EnrichResult = { prospect: DiscoveredProspect; enriched: boolean };
 
@@ -174,9 +173,13 @@ function isThinProspect(prospect: DiscoveredProspect): boolean {
  * priority order: normalized domain first, then normalized phone, then
  * normalized address - first key that matches an already-seen prospect
  * wins, and that earlier prospect is kept ("first-seen wins", unchanged
- * from the domain-only version). This is a deliberately minimal extension
- * (see docs/discovery-engine-roadmap.md item 5) - it does not merge/
- * reconcile signals between matched duplicates, and it is not a scored
+ * from the domain-only version). A later prospect matching an already-kept
+ * one is no longer silently discarded: it increments the kept prospect's
+ * `corroboratingSourceCount` by 1, preserving the fact that a second source
+ * independently found the same business (see `priority-scoring.ts`'s
+ * corroboration bonus). This is still a deliberately minimal extension (see
+ * docs/discovery-engine-roadmap.md item 5) - it does not merge/reconcile
+ * signals between matched duplicates, and it is not a scored
  * entity-resolution engine.
  */
 function dedupeProspects(prospects: DiscoveredProspect[]): DiscoveredProspect[] {
@@ -190,12 +193,15 @@ function dedupeProspects(prospects: DiscoveredProspect[]): DiscoveredProspect[] 
     const phoneKey = normalizePhone(prospect.phone);
     const addressKey = normalizeAddress(prospect.address);
 
-    const isDuplicate =
-      (domainKey !== null && byDomain.has(domainKey)) ||
-      (phoneKey !== null && byPhone.has(phoneKey)) ||
-      (addressKey !== null && byAddress.has(addressKey));
+    const matched =
+      (domainKey !== null ? byDomain.get(domainKey) : undefined) ??
+      (phoneKey !== null ? byPhone.get(phoneKey) : undefined) ??
+      (addressKey !== null ? byAddress.get(addressKey) : undefined);
 
-    if (isDuplicate) continue;
+    if (matched) {
+      matched.corroboratingSourceCount += 1;
+      continue;
+    }
 
     result.push(prospect);
     if (domainKey !== null) byDomain.set(domainKey, prospect);
@@ -248,8 +254,10 @@ async function findExistingProspect(
  * refreshed, so a routine re-scrape can never pull a permanently-opted-out
  * prospect back into the normal discovery/drafting/sending flow.
  */
-async function persistProspect(prospect: DiscoveredProspect): Promise<'inserted' | 'updated' | 'skipped_do_not_contact'> {
-  const priorityScore = computePriorityScore(prospect.signal);
+async function persistProspect(
+  prospect: DiscoveredProspect,
+  query: DiscoveryQuery
+): Promise<'inserted' | 'updated' | 'skipped_do_not_contact'> {
   const normalizedPhone = normalizePhone(prospect.phone);
   const normalizedAddress = normalizeAddress(prospect.address);
 
@@ -258,6 +266,16 @@ async function persistProspect(prospect: DiscoveredProspect): Promise<'inserted'
   if (existing?.doNotContact) {
     return 'skipped_do_not_contact';
   }
+
+  // Monotonic: an already-persisted row's own count is added to (never
+  // overwritten by this run's in-memory count, which only reflects sources
+  // seen in this one run) - see `Prospect.corroboratingSourceCount`'s doc
+  // comment in prisma/schema.prisma.
+  const corroboratingSourceCount = existing
+    ? existing.corroboratingSourceCount + prospect.corroboratingSourceCount
+    : prospect.corroboratingSourceCount;
+
+  const priorityScore = computePriorityScore({ ...prospect, corroboratingSourceCount }, { geography: query.geography });
 
   // Computed centrally (rather than supplied by each discovery source) so
   // every source shares one matching engine - see service-matching-rules.ts.
@@ -280,6 +298,7 @@ async function persistProspect(prospect: DiscoveredProspect): Promise<'inserted'
         websiteUrl: prospect.websiteUrl,
         signal: prospect.signal,
         priorityScore,
+        corroboratingSourceCount,
         location: prospect.location,
         phone: normalizedPhone,
         address: normalizedAddress,
@@ -318,6 +337,7 @@ async function persistProspect(prospect: DiscoveredProspect): Promise<'inserted'
       // avoids only because it's a single object, not an array.
       suggestedServices: suggestedServices as unknown as Prisma.InputJsonValue,
       priorityScore,
+      corroboratingSourceCount,
     },
   });
   return 'inserted';
@@ -326,10 +346,10 @@ async function persistProspect(prospect: DiscoveredProspect): Promise<'inserted'
 /**
  * Orchestrates discovery sources for a category+geography query: runs
  * whatever sources are configured for the requested `branch`, dedupes by
- * domain/phone/address (see `dedupeProspects`), computes a stub priority
- * score, and persists new/updated
- * prospects. Never fails the whole run because one source lacks an API
- * key - each source's availability and outcome is reported in `sources`.
+ * domain/phone/address (see `dedupeProspects`), computes a weighted priority
+ * score (see `priority-scoring.ts`), and persists new/updated prospects.
+ * Never fails the whole run because one source lacks an API key - each
+ * source's availability and outcome is reported in `sources`.
  *
  * `branch` selects which sources run: `'a'` (default) = local/SMB discovery
  * (Google Places, yellowpages), `'b'` = startup/SaaS discovery (Product
@@ -440,7 +460,7 @@ export async function runDiscovery(
   let updated = 0;
   let skippedDoNotContact = 0;
   for (const prospect of actionable) {
-    const outcome = await persistProspect(prospect);
+    const outcome = await persistProspect(prospect, query);
     if (outcome === 'inserted') inserted += 1;
     else if (outcome === 'updated') updated += 1;
     else skippedDoNotContact += 1;

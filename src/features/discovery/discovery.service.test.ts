@@ -103,6 +103,7 @@ function buildProspect(overrides: Partial<DiscoveredProspect> = {}): DiscoveredP
     signal: buildSignal(),
     phone: null,
     address: null,
+    corroboratingSourceCount: 1,
     ...overrides,
   };
 }
@@ -139,7 +140,7 @@ describe('runDiscovery', () => {
 
   it('updates instead of inserting when a prospect with the same domain already exists', async () => {
     runGooglePlacesSourceMock.mockResolvedValue({ ok: true, prospects: [buildProspect()] });
-    findFirstMock.mockResolvedValue({ id: 'existing-id' });
+    findFirstMock.mockResolvedValue({ id: 'existing-id', corroboratingSourceCount: 1 });
 
     const summary = await runDiscovery(query);
 
@@ -151,6 +152,17 @@ describe('runDiscovery', () => {
     expect(createMock).not.toHaveBeenCalled();
   });
 
+  it('adds this run\'s corroboratingSourceCount to the persisted row\'s existing count (monotonic), rather than overwriting it', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({ ok: true, prospects: [buildProspect()] });
+    findFirstMock.mockResolvedValue({ id: 'existing-id', corroboratingSourceCount: 3 });
+
+    await runDiscovery(query);
+
+    expect(updateMock).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ corroboratingSourceCount: 4 }) })
+    );
+  });
+
   it('updates instead of inserting when a no-domain prospect matches an existing record by normalized phone', async () => {
     runGooglePlacesSourceMock.mockResolvedValue({
       ok: true,
@@ -159,7 +171,7 @@ describe('runDiscovery', () => {
     // First findFirst call is the domain lookup (skipped because domain is
     // null - see the implementation guard), so the phone lookup is the first
     // one actually invoked here.
-    findFirstMock.mockResolvedValueOnce({ id: 'existing-id' });
+    findFirstMock.mockResolvedValueOnce({ id: 'existing-id', corroboratingSourceCount: 1 });
 
     const summary = await runDiscovery(query);
 
@@ -174,7 +186,7 @@ describe('runDiscovery', () => {
       ok: true,
       prospects: [buildProspect({ domain: null, phone: null, address: '123 Main St' })],
     });
-    findFirstMock.mockResolvedValueOnce({ id: 'existing-id' });
+    findFirstMock.mockResolvedValueOnce({ id: 'existing-id', corroboratingSourceCount: 1 });
 
     const summary = await runDiscovery(query);
 
@@ -190,7 +202,7 @@ describe('runDiscovery', () => {
       ok: true,
       prospects: [buildProspect({ domain: null, phone: '512-766-0970' })],
     });
-    findFirstMock.mockResolvedValueOnce({ id: 'existing-id' });
+    findFirstMock.mockResolvedValueOnce({ id: 'existing-id', corroboratingSourceCount: 1 });
 
     await runDiscovery(query);
 
@@ -206,7 +218,7 @@ describe('runDiscovery', () => {
       ok: true,
       prospects: [buildProspect({ signal: buildSignal({ type: 'no_https' }) })],
     });
-    findFirstMock.mockResolvedValue({ id: 'existing-id' });
+    findFirstMock.mockResolvedValue({ id: 'existing-id', corroboratingSourceCount: 1 });
 
     await runDiscovery(query);
 
@@ -231,6 +243,31 @@ describe('runDiscovery', () => {
 
     expect(summary.totalFound).toBe(1);
     expect(createMock).toHaveBeenCalledTimes(1);
+    expect(createMock).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ corroboratingSourceCount: 2 }) })
+    );
+  });
+
+  it('accumulates corroboratingSourceCount across more than two sources reporting the same domain', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ domain: 'acme.com', companyName: 'From Google' })],
+    });
+    runYellowPagesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ domain: 'acme.com', companyName: 'From YellowPages' })],
+    });
+    runOverpassSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ domain: 'acme.com', companyName: 'From Overpass' })],
+    });
+
+    await runDiscovery(query);
+
+    expect(createMock).toHaveBeenCalledTimes(1);
+    expect(createMock).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ corroboratingSourceCount: 3 }) })
+    );
   });
 
   it('does not dedupe two prospects from different domains', async () => {
@@ -259,6 +296,9 @@ describe('runDiscovery', () => {
 
     expect(summary.totalFound).toBe(1);
     expect(createMock).toHaveBeenCalledTimes(1);
+    expect(createMock).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ corroboratingSourceCount: 2 }) })
+    );
   });
 
   it('dedupes two no-domain, no-phone prospects reporting the same normalized address', async () => {
@@ -279,6 +319,9 @@ describe('runDiscovery', () => {
 
     expect(summary.totalFound).toBe(1);
     expect(createMock).toHaveBeenCalledTimes(1);
+    expect(createMock).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ corroboratingSourceCount: 2 }) })
+    );
   });
 
   it('does not dedupe two no-domain prospects with different phone and address', async () => {
@@ -350,7 +393,7 @@ describe('runDiscovery', () => {
     expect(builtwithSummary?.ran).toBe(true);
     expect(builtwithSummary?.count).toBe(1);
     expect(createMock).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ signal: staleStackSignal, priorityScore: 3 }) })
+      expect.objectContaining({ data: expect.objectContaining({ signal: staleStackSignal, priorityScore: 45 }) })
     );
   });
 
@@ -375,7 +418,7 @@ describe('runDiscovery', () => {
     const builtwithSummary = summary.sources.find((s) => s.source === 'builtwith');
     expect(builtwithSummary?.count).toBe(0);
     expect(createMock).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ signal: strongExistingSignal, priorityScore: 3 }) })
+      expect.objectContaining({ data: expect.objectContaining({ signal: strongExistingSignal, priorityScore: 45 }) })
     );
   });
 
@@ -396,7 +439,7 @@ describe('runDiscovery', () => {
     expect(techStackSummary?.ran).toBe(true);
     expect(techStackSummary?.count).toBe(1);
     expect(createMock).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ signal: detectedSignal, priorityScore: 3 }) })
+      expect.objectContaining({ data: expect.objectContaining({ signal: detectedSignal, priorityScore: 45 }) })
     );
   });
 
@@ -435,7 +478,7 @@ describe('runDiscovery', () => {
     expect(summary.sources.find((s) => s.source === 'tech_stack_detector')?.count).toBe(1);
     expect(summary.sources.find((s) => s.source === 'builtwith')?.count).toBe(1);
     expect(createMock).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ signal: builtwithSignal, priorityScore: 3 }) })
+      expect.objectContaining({ data: expect.objectContaining({ signal: builtwithSignal, priorityScore: 45 }) })
     );
   });
 
@@ -507,9 +550,9 @@ describe('runDiscovery', () => {
   });
 
   it.each([
-    ['strong', 3],
-    ['medium', 2],
-    ['weak', 1],
+    ['strong', 45],
+    ['medium', 35],
+    ['weak', 25],
   ] as const)('computes a priorityScore of %s for a %s signal strength', async (strength, expectedScore) => {
     runGooglePlacesSourceMock.mockResolvedValue({
       ok: true,
@@ -651,6 +694,9 @@ describe('runDiscovery branch selection', () => {
 
     expect(summary.totalFound).toBe(1);
     expect(createMock).toHaveBeenCalledTimes(1);
+    expect(createMock).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ corroboratingSourceCount: 2 }) })
+    );
   });
 
   it('does not dedupe a Branch A and a Branch B prospect from genuinely different domains when branch is "both"', async () => {
