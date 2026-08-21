@@ -141,6 +141,8 @@ export async function runCrunchbaseSource(query: DiscoveryQuery): Promise<Source
       source: 'crunchbase',
       sourceUrl: `https://www.crunchbase.com/organization/${org.permalink}`,
       discoveredAt: new Date(),
+      phone: null,
+      address: null,
       signal: {
         type: 'funding_event',
         description: 'Recently announced funding round',

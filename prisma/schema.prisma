@@ -136,6 +136,14 @@ model Prospect {
 
   companySize CompanySize
 
+  // Discovery-time contact fields (e.g. scraped straight off a yellowpages
+  // listing) - distinct from `contactName`/`contactTitle`/`contactEmail`
+  // below, which are populated later by enrichment. Also used as secondary
+  // dedupe keys in discovery.service.ts's `dedupeProspects`/`persistProspect`
+  // for prospects with no domain.
+  phone   String?
+  address String?
+
   contactName     String?
   contactTitle    String?
   contactEmail    String?

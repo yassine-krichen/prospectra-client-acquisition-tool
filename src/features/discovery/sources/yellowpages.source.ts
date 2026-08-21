@@ -121,6 +121,8 @@ export async function runYellowPagesSource(query: DiscoveryQuery): Promise<Sourc
       source: 'manual',
       sourceUrl: searchUrl,
       discoveredAt: new Date(),
+      phone: listing.phone,
+      address: listing.address,
       signal,
     });
   }
