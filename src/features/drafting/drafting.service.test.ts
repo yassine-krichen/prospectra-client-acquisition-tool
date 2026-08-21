@@ -454,6 +454,18 @@ describe('draftBatch', () => {
 
     expect(results).toEqual([]);
   });
+
+  it('restricts candidates to the given signal strength when options.signalStrength is set', async () => {
+    findManyProspectMock.mockResolvedValue([]);
+
+    await draftBatch(5, { signalStrength: 'strong' });
+
+    expect(findManyProspectMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { status: 'enriched', signal: { path: ['strength'], equals: 'strong' } },
+      })
+    );
+  });
 });
 
 describe('humanizeBatch', () => {
@@ -523,5 +535,14 @@ describe('humanizeBatch', () => {
 
     expect(humanizeMock).toHaveBeenCalledTimes(2);
     expect(summary.results.map((r) => r.outcome)).toEqual(['humanized', 'stopped']);
+  });
+
+  it('restricts candidates to the given signal strength when options.signalStrength is set', async () => {
+    findManyDraftMock.mockResolvedValue([]);
+
+    await humanizeBatch(5, { signalStrength: 'strong' });
+
+    const query = findManyDraftMock.mock.calls[0][0] as { where: { prospect: Record<string, unknown> } };
+    expect(query.where.prospect).toEqual({ status: 'drafted', signal: { path: ['strength'], equals: 'strong' } });
   });
 });
