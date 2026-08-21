@@ -156,6 +156,70 @@ export async function setProspectSeen(prospectId: string, seen: boolean): Promis
   return seenResponseSchema.parse(body);
 }
 
+// --- bulk actions ---
+
+// Shared shape every bulk route returns: one outcome per requested id,
+// so the caller can report "N succeeded, M failed" instead of an
+// all-or-nothing result. `clientId` is only ever populated by bulk win.
+const bulkResultSchema = z.object({
+  id: z.string(),
+  ok: z.boolean(),
+  reason: z.string().optional(),
+  clientId: z.string().optional(),
+});
+export type BulkActionResult = z.infer<typeof bulkResultSchema>;
+
+const bulkResponseSchema = z.object({ results: z.array(bulkResultSchema) });
+
+async function postBulk(path: string, ids: string[]): Promise<BulkActionResult[]> {
+  const response = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  if (!response.ok) {
+    throw new Error(`Bulk request to ${path} failed (status ${response.status}).`);
+  }
+
+  const body: unknown = await response.json();
+  return bulkResponseSchema.parse(body).results;
+}
+
+/** Bulk counterpart to `enrichProspect` - see `POST /api/prospects/bulk/enrich`. */
+export async function bulkEnrichProspects(ids: string[]): Promise<BulkActionResult[]> {
+  return postBulk('/api/prospects/bulk/enrich', ids);
+}
+
+/** Bulk counterpart to `draftProspect` - see `POST /api/prospects/bulk/draft`. */
+export async function bulkDraftProspects(ids: string[]): Promise<BulkActionResult[]> {
+  return postBulk('/api/prospects/bulk/draft', ids);
+}
+
+/** Bulk counterpart to `matchProspect` - see `POST /api/prospects/bulk/match`. */
+export async function bulkMatchProspects(ids: string[]): Promise<BulkActionResult[]> {
+  return postBulk('/api/prospects/bulk/match', ids);
+}
+
+/** Bulk counterpart to `winProspect` - see `POST /api/prospects/bulk/win`. */
+export async function bulkWinProspects(ids: string[]): Promise<BulkActionResult[]> {
+  return postBulk('/api/prospects/bulk/win', ids);
+}
+
+/** Bulk counterpart to `setProspectSeen` - see `PATCH /api/prospects/bulk/seen`. */
+export async function bulkSetProspectsSeen(ids: string[], seen: boolean): Promise<BulkActionResult[]> {
+  const response = await fetch('/api/prospects/bulk/seen', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids, seen }),
+  });
+  if (!response.ok) {
+    throw new Error(`Bulk seen request failed (status ${response.status}).`);
+  }
+
+  const body: unknown = await response.json();
+  return bulkResponseSchema.parse(body).results;
+}
+
 // --- detail ---
 
 /** Full-detail fetch for the prospect detail dialog (every column plus drafts, not the list projection). */

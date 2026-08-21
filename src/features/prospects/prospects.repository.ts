@@ -3,6 +3,7 @@ import { prisma } from '@/common/db/client';
 import { fromPrismaCompanySize } from '@/features/prospects/company-size.mapper';
 import { fromPrismaModelUsed } from '@/features/drafting/model-used.mapper';
 import type {
+  DraftFailure,
   Industry,
   Location,
   Prospect,
@@ -44,6 +45,7 @@ const LIST_ITEM_SELECT = {
   status: true,
   sentAt: true,
   seen: true,
+  lastDraftFailure: true,
 } as const satisfies Prisma.ProspectSelect;
 
 type ProspectListRow = Prisma.ProspectGetPayload<{ select: typeof LIST_ITEM_SELECT }>;
@@ -60,6 +62,7 @@ function toListItem(row: ProspectListRow): ProspectListItem {
     location: row.location as Location,
     signal: row.signal as Signal,
     suggestedServices: row.suggestedServices as ServiceSuggestion[],
+    lastDraftFailure: row.lastDraftFailure as DraftFailure | null,
   };
 }
 
@@ -77,6 +80,7 @@ export interface ListProspectsFilters {
   priorityScoreMax?: number;
   hasVerifiedEmail?: boolean;
   seen?: boolean;
+  hasDraftFailure?: boolean;
 }
 
 export interface ListProspectsOptions {
@@ -177,6 +181,9 @@ function buildWhere(
   if (filters.status) where.status = filters.status;
   if (filters.hasVerifiedEmail !== undefined) where.emailVerified = filters.hasVerifiedEmail;
   if (filters.seen !== undefined) where.seen = filters.seen;
+  if (filters.hasDraftFailure !== undefined) {
+    where.lastDraftFailure = filters.hasDraftFailure ? { not: Prisma.DbNull } : { equals: Prisma.DbNull };
+  }
 
   if (filters.priorityScoreMin !== undefined || filters.priorityScoreMax !== undefined) {
     where.priorityScore = {
@@ -285,6 +292,7 @@ const FULL_PROSPECT_SELECT = {
   status: true,
   statusHistory: true,
   seen: true,
+  lastDraftFailure: true,
   activeDraftId: true,
   sentAt: true,
   lastFollowupAt: true,
@@ -310,6 +318,7 @@ function toFullProspect(row: FullProspectRow): Prospect {
     signal: row.signal as Signal,
     suggestedServices: row.suggestedServices as ServiceSuggestion[],
     statusHistory: row.statusHistory as unknown as StatusHistoryEntry[],
+    lastDraftFailure: row.lastDraftFailure as DraftFailure | null,
     drafts: row.drafts.map((draft) => ({ ...draft, modelUsed: fromPrismaModelUsed(draft.modelUsed) })),
   };
 }

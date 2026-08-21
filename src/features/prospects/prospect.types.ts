@@ -101,6 +101,17 @@ export const serviceSuggestionSchema = z.object({
 });
 export type ServiceSuggestion = z.infer<typeof serviceSuggestionSchema>;
 
+// Mirrors `Prospect.lastDraftFailure` in prisma/schema.prisma - see that
+// column's doc comment. `flagged` is deliberately a plain string (not
+// `DraftProspectOutcome`'s narrower literal union) so an old persisted
+// record from a since-retired flag value never fails validation.
+export const draftFailureSchema = z.object({
+  flagged: z.string(),
+  message: z.string(),
+  occurredAt: z.string(),
+});
+export type DraftFailure = z.infer<typeof draftFailureSchema>;
+
 export const statusHistoryEntrySchema = z.object({
   status: z.string(),
   timestamp: z.coerce.date(),
@@ -157,6 +168,11 @@ export const prospectSchema = z.object({
   // Dashboard-only read marker - see the doc comment on `Prospect.seen` in
   // prisma/schema.prisma. Not part of the outreach pipeline's own state.
   seen: z.boolean(),
+  // Dead-letter tracking for the most recent failed `draftProspect` attempt
+  // - see the doc comment on `Prospect.lastDraftFailure` in
+  // prisma/schema.prisma. Null once the prospect has never failed drafting,
+  // or once a later attempt succeeds.
+  lastDraftFailure: draftFailureSchema.nullable(),
   drafts: z.array(draftSchema),
   activeDraftId: z.string().nullable(),
   sentAt: z.coerce.date().nullable(),

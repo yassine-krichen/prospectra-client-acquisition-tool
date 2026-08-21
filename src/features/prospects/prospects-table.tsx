@@ -5,18 +5,30 @@ import Link from 'next/link';
 import { type ColumnDef, type SortingState, type VisibilityState, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { z } from 'zod';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Compass01Icon, ArrowUp01Icon, ArrowDown01Icon } from '@hugeicons/core-free-icons';
+import {
+  Alert02Icon,
+  AlertCircleIcon,
+  ArrowDown01Icon,
+  ArrowUp01Icon,
+  CheckmarkCircle02Icon,
+  Clock01Icon,
+  Compass01Icon,
+  DotIcon,
+} from '@hugeicons/core-free-icons';
 
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { DataTable } from '@/components/data-table/data-table';
 import { DataTableColumnHeader } from '@/components/data-table/data-table-column-header';
 import { DataTableViewOptions } from '@/components/data-table/data-table-view-options';
 import { DataTableSkeleton } from '@/components/data-table/data-table-skeleton';
 import { DataTableCursorPagination } from '@/components/data-table/data-table-pagination';
 import { ProspectDetailDialog } from '@/features/prospects/prospect-detail-dialog';
+import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
 import {
   industrySchema,
   projectFitSchema,
@@ -33,8 +45,15 @@ import {
   type SignalStrength,
   type SignalType,
 } from '@/features/prospects/prospect.types';
-import { setProspectSeen } from '@/features/prospects/prospect-actions';
-import { cn } from '@/lib/utils';
+import {
+  bulkDraftProspects,
+  bulkEnrichProspects,
+  bulkMatchProspects,
+  bulkSetProspectsSeen,
+  bulkWinProspects,
+  setProspectSeen,
+  type BulkActionResult,
+} from '@/features/prospects/prospect-actions';
 
 // Mirrors `ProspectSortField` in `prospects.repository.ts`. Duplicated
 // (rather than imported) because that module pulls in the Prisma client,
@@ -66,6 +85,7 @@ interface FiltersState {
   priorityScoreMin: string;
   priorityScoreMax: string;
   hasVerifiedEmail: typeof ALL | 'true' | 'false';
+  hasDraftFailure: typeof ALL | 'true' | 'false';
   // Client-side-only convenience filter - translates to `seen=false` on the
   // wire (see buildQueryParams). Kept alongside the server-backed filters
   // above rather than as separate component state so `resetFilters`/the
@@ -83,6 +103,7 @@ const DEFAULT_FILTERS: FiltersState = {
   priorityScoreMin: '',
   priorityScoreMax: '',
   hasVerifiedEmail: ALL,
+  hasDraftFailure: ALL,
   hideSeen: false,
 };
 
@@ -114,6 +135,7 @@ function buildQueryParams(
   if (filters.priorityScoreMin.trim() !== '') params.set('priorityScoreMin', filters.priorityScoreMin);
   if (filters.priorityScoreMax.trim() !== '') params.set('priorityScoreMax', filters.priorityScoreMax);
   if (filters.hasVerifiedEmail !== ALL) params.set('hasVerifiedEmail', filters.hasVerifiedEmail);
+  if (filters.hasDraftFailure !== ALL) params.set('hasDraftFailure', filters.hasDraftFailure);
   if (filters.hideSeen) params.set('seen', 'false');
 
   const sort = sorting[0];
@@ -147,6 +169,31 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unknown error.';
 }
 
+// Bulk endpoints return a per-id { id, ok, reason? } result rather than an
+// all-or-nothing outcome (see app/api/prospects/bulk/*/route.ts) - this
+// turns that array into one toast reporting how many succeeded/failed,
+// naming companies (not raw ids) wherever the id is still in the currently
+// loaded page.
+function toastBulkResults(actionLabel: string, results: BulkActionResult[], prospects: ProspectListItem[]): void {
+  const nameFor = (id: string): string => prospects.find((p) => p.id === id)?.companyName ?? id;
+
+  const succeeded = results.filter((r) => r.ok).length;
+  const failed = results.length - succeeded;
+  const title =
+    failed === 0
+      ? `${actionLabel}: ${succeeded} succeeded`
+      : `${actionLabel}: ${succeeded} succeeded, ${failed} failed`;
+  const description =
+    results
+      .filter((r) => !r.ok)
+      .map((r) => `${nameFor(r.id)}: ${r.reason ?? 'failed'}`)
+      .join('\n') || undefined;
+
+  if (failed === 0 && succeeded > 0) toastSuccess(title, description);
+  else if (succeeded === 0) toastError(title, description);
+  else toastInfo(title, description);
+}
+
 function isDefaultFilters(filters: FiltersState): boolean {
   return (Object.keys(DEFAULT_FILTERS) as Array<keyof FiltersState>).every((key) => filters[key] === DEFAULT_FILTERS[key]);
 }
@@ -161,10 +208,16 @@ function formatEnumLabel(value: string): string {
     .join(' ');
 }
 
-const SIGNAL_STRENGTH_TEXT_COLOR: Record<SignalStrength, string> = {
-  strong: 'text-green-500',
-  medium: 'text-orange-500',
-  weak: 'text-red-500',
+const SIGNAL_STRENGTH_BADGE_VARIANT: Record<SignalStrength, 'success' | 'warning' | 'destructive'> = {
+  strong: 'success',
+  medium: 'warning',
+  weak: 'destructive',
+};
+
+const SIGNAL_STRENGTH_ICON: Record<SignalStrength, typeof CheckmarkCircle02Icon> = {
+  strong: CheckmarkCircle02Icon,
+  medium: Alert02Icon,
+  weak: AlertCircleIcon,
 };
 
 const SIGNAL_STRENGTH_LABEL: Record<SignalStrength, string> = {
@@ -221,16 +274,33 @@ const STATUS_RECOMMENDATION: Record<ProspectStatus, Recommendation> = {
   unsubscribed: { label: 'Ignore', tone: 'red' },
 };
 
-const RECOMMENDATION_TEXT_COLOR: Record<RecommendationTone, string> = {
-  green: 'text-green-500',
-  red: 'text-red-500',
-  neutral: 'text-muted-foreground',
+const RECOMMENDATION_BADGE_VARIANT: Record<RecommendationTone, 'success' | 'destructive' | 'outline'> = {
+  green: 'success',
+  red: 'destructive',
+  neutral: 'outline',
+};
+
+const RECOMMENDATION_ICON: Record<RecommendationTone, typeof CheckmarkCircle02Icon> = {
+  green: CheckmarkCircle02Icon,
+  red: AlertCircleIcon,
+  neutral: Clock01Icon,
 };
 
 function getRecommendation(prospect: ProspectListItem): Recommendation {
   if (isLikelyLowValue(prospect)) return { label: 'Ignore', tone: 'red' };
   return STATUS_RECOMMENDATION[prospect.status];
 }
+
+type BulkActionKind = 'seen' | 'unseen' | 'enrich' | 'draft' | 'match' | 'win';
+
+const BULK_ACTION_LABEL: Record<BulkActionKind, string> = {
+  seen: 'Mark seen',
+  unseen: 'Mark unseen',
+  enrich: 'Enrich',
+  draft: 'Draft',
+  match: 'Match',
+  win: 'Win',
+};
 
 export function ProspectsTable(): React.JSX.Element {
   const [filters, setFilters] = useState<FiltersState>(DEFAULT_FILTERS);
@@ -252,6 +322,15 @@ export function ProspectsTable(): React.JSX.Element {
   // prospect-detail-dialog.tsx - rather than as buttons in this table.
   const [selectedProspectId, setSelectedProspectId] = useState<string | null>(null);
 
+  // Bulk-select state - mirrors approval-queue-table.tsx's Set<string>
+  // pattern rather than TanStack Table's built-in row-selection feature, for
+  // consistency with the one other bulk-action table in this app.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkActionPending, setBulkActionPending] = useState<BulkActionKind | null>(null);
+  // Enrich/Draft cost real external API calls, so those two require an
+  // extra confirmation step before running - see confirmBulkAction below.
+  const [confirmBulkAction, setConfirmBulkAction] = useState<'enrich' | 'draft' | null>(null);
+
   const currentCursor = cursorStack[cursorStack.length - 1];
 
   useEffect(() => {
@@ -264,6 +343,11 @@ export function ProspectsTable(): React.JSX.Element {
         if (cancelled) return;
         setProspects(result.prospects);
         setNextCursor(result.nextCursor);
+        // The previously selected ids may no longer be on the page (new
+        // filters/sort/cursor, or a refresh after a bulk action already
+        // consumed them) - start the next page with a clean selection
+        // rather than a stale one, matching approval-queue-table.tsx.
+        setSelected(new Set());
       })
       .catch((err: unknown) => {
         if (!cancelled) setError(errorMessage(err));
@@ -276,6 +360,44 @@ export function ProspectsTable(): React.JSX.Element {
       cancelled = true;
     };
   }, [filters, sorting, currentCursor, limit, refreshIndex]);
+
+  function toggleSelected(prospectId: string): void {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(prospectId)) next.delete(prospectId);
+      else next.add(prospectId);
+      return next;
+    });
+  }
+
+
+  async function runBulkAction(kind: BulkActionKind, run: (ids: string[]) => Promise<BulkActionResult[]>): Promise<void> {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+
+    setBulkActionPending(kind);
+    try {
+      const results = await run(ids);
+      toastBulkResults(BULK_ACTION_LABEL[kind], results, prospects);
+      setSelected(new Set());
+      setRefreshIndex((prev) => prev + 1);
+    } catch (err) {
+      toastError(`Bulk ${BULK_ACTION_LABEL[kind].toLowerCase()} failed`, errorMessage(err));
+    } finally {
+      setBulkActionPending(null);
+    }
+  }
+
+  function handleBulkMarkSeen(seen: boolean): void {
+    void runBulkAction(seen ? 'seen' : 'unseen', (ids) => bulkSetProspectsSeen(ids, seen));
+  }
+
+  function handleConfirmBulkAction(): void {
+    const kind = confirmBulkAction;
+    setConfirmBulkAction(null);
+    if (kind === 'enrich') void runBulkAction('enrich', bulkEnrichProspects);
+    if (kind === 'draft') void runBulkAction('draft', bulkDraftProspects);
+  }
 
   function handleToggleSeen(prospectId: string, seen: boolean): void {
     // Optimistic, silent, no refetch: this is a read marker for the user's
@@ -327,6 +449,29 @@ export function ProspectsTable(): React.JSX.Element {
   const columns = useMemo<ColumnDef<ProspectListItem>[]>(
     () => [
       {
+        id: 'select',
+        header: () => (
+          <Checkbox
+            checked={prospects.length > 0 && selected.size === prospects.length}
+            disabled={prospects.length === 0}
+            onCheckedChange={() => {
+              const visibleIds = prospects.map((p) => p.id);
+              setSelected((prev) => (prev.size === visibleIds.length ? new Set() : new Set(visibleIds)));
+            }}
+            aria-label="Select all"
+          />
+        ),
+        enableHiding: false,
+        size: 40,
+        cell: ({ row }) => (
+          <Checkbox
+            checked={selected.has(row.original.id)}
+            onCheckedChange={() => toggleSelected(row.original.id)}
+            aria-label={`Select ${row.original.companyName}`}
+          />
+        ),
+      },
+      {
         id: 'seen',
         header: 'Seen',
         enableHiding: false,
@@ -345,13 +490,28 @@ export function ProspectsTable(): React.JSX.Element {
         enableHiding: false,
         size: 200,
         cell: ({ row }) => (
-          <button
-            type="button"
-            className="block w-full truncate text-left text-white underline underline-offset-2"
-            onClick={() => setSelectedProspectId(row.original.id)}
-          >
-            {row.original.companyName}
-          </button>
+          <span className="flex min-w-0 items-center gap-1.5">
+            {!row.original.seen ? (
+              <HugeiconsIcon
+                icon={DotIcon}
+                strokeWidth={2}
+                className="text-primary size-3 shrink-0"
+                aria-label="Unseen"
+              />
+            ) : null}
+            <button
+              type="button"
+              className="min-w-0 truncate text-left text-white underline underline-offset-2"
+              onClick={() => setSelectedProspectId(row.original.id)}
+            >
+              {row.original.companyName}
+            </button>
+            {row.original.lastDraftFailure ? (
+              <Badge variant="destructive" className="shrink-0">
+                Draft failed
+              </Badge>
+            ) : null}
+          </span>
         ),
       },
       {
@@ -363,12 +523,12 @@ export function ProspectsTable(): React.JSX.Element {
         header: ({ column }) => <DataTableColumnHeader column={column} label="Signal : Reason" />,
         meta: { label: 'Signal : Reason' },
         cell: ({ row }) => (
-          <span className="block whitespace-normal">
-            <span className={cn('font-medium', SIGNAL_STRENGTH_TEXT_COLOR[row.original.signal.strength])}>
+          <span className="flex min-w-0 items-baseline gap-1.5">
+            <Badge variant={SIGNAL_STRENGTH_BADGE_VARIANT[row.original.signal.strength]} className="shrink-0">
+              <HugeiconsIcon icon={SIGNAL_STRENGTH_ICON[row.original.signal.strength]} data-icon="inline-start" strokeWidth={2} />
               {SIGNAL_STRENGTH_LABEL[row.original.signal.strength]}
-            </span>
-            {' : '}
-            {row.original.signal.description}
+            </Badge>
+            <span className="truncate">{row.original.signal.description}</span>
           </span>
         ),
       },
@@ -384,11 +544,15 @@ export function ProspectsTable(): React.JSX.Element {
         header: ({ column }) => <DataTableColumnHeader column={column} label="Status" />,
         meta: { label: 'Status' },
         size: 120,
-        cell: ({ row }) => (
-          <span className={cn('block truncate', row.original.status === 'enriched' && 'text-green-500')}>
-            {formatEnumLabel(row.original.status)}
-          </span>
-        ),
+        cell: ({ row }) =>
+          row.original.status === 'enriched' ? (
+            <Badge variant="success">
+              <HugeiconsIcon icon={CheckmarkCircle02Icon} data-icon="inline-start" strokeWidth={2} />
+              {formatEnumLabel(row.original.status)}
+            </Badge>
+          ) : (
+            <span className="block truncate">{formatEnumLabel(row.original.status)}</span>
+          ),
       },
       {
         accessorKey: 'sentAt',
@@ -406,14 +570,18 @@ export function ProspectsTable(): React.JSX.Element {
         cell: ({ row }) => {
           const recommendation = getRecommendation(row.original);
           return (
-            <span className={cn('block truncate font-medium', RECOMMENDATION_TEXT_COLOR[recommendation.tone])}>
+            <Badge variant={RECOMMENDATION_BADGE_VARIANT[recommendation.tone]}>
+              <HugeiconsIcon icon={RECOMMENDATION_ICON[recommendation.tone]} data-icon="inline-start" strokeWidth={2} />
               {recommendation.label}
-            </span>
+            </Badge>
           );
         },
       },
     ],
-    []
+    // `prospects`/`selected` deliberately included: the select column's
+    // header/row checkboxes read both directly (not through row data), so
+    // they'd otherwise render a stale checked state after either changes.
+    [prospects, selected]
   );
 
   const table = useReactTable({
@@ -480,6 +648,12 @@ export function ProspectsTable(): React.JSX.Element {
           options={['true', 'false']}
           onChange={(value) => updateFilter('hasVerifiedEmail', value as FiltersState['hasVerifiedEmail'])}
         />
+        <FilterSelect
+          label="Draft failure"
+          value={filters.hasDraftFailure}
+          options={['true', 'false']}
+          onChange={(value) => updateFilter('hasDraftFailure', value as FiltersState['hasDraftFailure'])}
+        />
         <div className="flex flex-col gap-1">
           <label className="text-muted-foreground text-xs">Priority min</label>
           <Input
@@ -527,6 +701,87 @@ export function ProspectsTable(): React.JSX.Element {
         </Button>
         <DataTableViewOptions table={table} />
       </div>
+
+      {selected.size > 0 ? (
+        <div className="bg-card flex flex-wrap items-center gap-2 rounded-lg p-3 ring-1 ring-foreground/10">
+          <span className="text-sm font-medium">{selected.size} selected</span>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={bulkActionPending !== null}
+            onClick={() => handleBulkMarkSeen(true)}
+          >
+            {bulkActionPending === 'seen' ? 'Marking seen…' : 'Mark seen'}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={bulkActionPending !== null}
+            onClick={() => handleBulkMarkSeen(false)}
+          >
+            {bulkActionPending === 'unseen' ? 'Marking unseen…' : 'Mark unseen'}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={bulkActionPending !== null}
+            onClick={() => setConfirmBulkAction('enrich')}
+          >
+            {bulkActionPending === 'enrich' ? 'Enriching…' : 'Enrich selected'}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={bulkActionPending !== null}
+            onClick={() => setConfirmBulkAction('draft')}
+          >
+            {bulkActionPending === 'draft' ? 'Drafting…' : 'Draft selected'}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={bulkActionPending !== null}
+            onClick={() => void runBulkAction('match', bulkMatchProspects)}
+          >
+            {bulkActionPending === 'match' ? 'Matching…' : 'Match selected'}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={bulkActionPending !== null}
+            onClick={() => void runBulkAction('win', bulkWinProspects)}
+          >
+            {bulkActionPending === 'win' ? 'Winning…' : 'Win selected'}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={bulkActionPending !== null}
+            onClick={() => setSelected(new Set())}
+          >
+            Clear selection
+          </Button>
+        </div>
+      ) : null}
+
+      <Dialog open={confirmBulkAction !== null} onOpenChange={(open) => !open && setConfirmBulkAction(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{confirmBulkAction === 'draft' ? 'Draft' : 'Enrich'} {selected.size} prospects?</DialogTitle>
+            <DialogDescription>
+              {confirmBulkAction === 'draft'
+                ? `This will make up to ${selected.size} AI draft generation call${selected.size === 1 ? '' : 's'}.`
+                : `This will make up to ${selected.size} Hunter/People Data Labs lookup${selected.size === 1 ? '' : 's'}.`}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmBulkAction(null)}>
+              Cancel
+            </Button>
+            <Button onClick={handleConfirmBulkAction}>Confirm</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {error ? <p className="text-destructive text-sm">Couldn&apos;t load prospects: {error}</p> : null}
 

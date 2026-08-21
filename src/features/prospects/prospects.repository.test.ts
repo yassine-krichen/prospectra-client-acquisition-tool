@@ -1,11 +1,19 @@
 import { randomUUID } from 'node:crypto';
 
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { prisma } from '@/common/db/client';
 import { assertDestructiveTestsAllowed } from '@/common/testing/require-destructive-test-guard';
+import { prisma } from '@/common/testing/test-db-client';
 import { toPrismaCompanySize } from '@/features/prospects/company-size.mapper';
 import { getProspectById, listProspects } from '@/features/prospects/prospects.repository';
+
+// Redirects every layer of `listProspects`/`getProspectById`'s own call
+// chain (not just this file's direct calls) to the isolated test database -
+// see require-destructive-test-guard.ts.
+vi.mock('@/common/db/client', async () => {
+  const { prisma } = await import('@/common/testing/test-db-client');
+  return { prisma };
+});
 import type {
   CompanySize,
   Industry,
