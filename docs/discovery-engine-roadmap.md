@@ -101,19 +101,82 @@ search-engine scraping), and without repeating the "build everything at once" mi
    light multi-field version of the concept, not the full weighted-confidence-score entity
    resolution engine described above.
 
+## Status: all 5 "doable now" items shipped (2026-08-21)
+
+Dedup/persistence fix, Overpass source, tech-stack detector, GitHub re-architected as enrichment,
+and the Patchright benchmark (measured, not adopted - see item 1 above) are all committed on this
+branch. See commits `08c68f5`..`18f0aff`.
+
+## Status: priority-score v2 shipped (2026-08-21)
+
+A second planning pass assessed every item in "explicitly deferred" below for real effort/risk/
+payoff (not just re-stating the wishlist). Finding: `computePriorityScore` in `discovery.service.ts`
+- already wired into the dashboard's prospect filter/sort UI today - was a one-line stub
+(`SIGNAL_STRENGTH_SCORE[signal.strength]`, nothing else). Upgrading it was the highest value-per-
+effort next step: no new external dependency, no anti-bot risk, one small additive migration, and
+it improves every prospect already in the DB retroactively, not just future discovery runs.
+
+Three tightly-coupled pieces, all shipped:
+
+1. **Stop discarding corroboration on dedup.** `dedupeProspects`/`findExistingProspect` currently
+   `continue`/overwrite on a matched duplicate, throwing away the fact that a second source found
+   the same business. Add `Prospect.corroboratingSourceCount Int @default(1)` (small additive
+   migration, applied to both `DATABASE_URL` and `TEST_DATABASE_URL` per the two-DB testing setup),
+   incremented (monotonic - never decremented, simplest and avoids re-scrape ordering edge cases)
+   whenever a re-discovered prospect matches an existing one by domain/phone/address.
+2. **Replace the priority-score stub with a real weighted formula**, in new
+   `src/features/matching/priority-scoring.ts` (pure function, colocated conceptually with
+   `service-matching-rules.ts`, not doing I/O, easily unit-tested): signal strength (base, dominant
+   factor) + a capped company-size bonus (bigger company, more budget capacity, but shouldn't
+   dominate) + a capped contactability bonus (has domain/phone/address - a prospect with nothing to
+   act on shouldn't outrank one with real contact info at equal signal strength) + a capped
+   corroboration bonus from item 1 (found by 2+ independent sources = more confidence it's a real,
+   active business). Flat, explicitly-commented weighted sum - not the full GPT-proposed
+   per-dimension explainable model, deliberately staying in scope.
+3. **Lightweight priority-market list as a scoring bonus, not a hard filter.** New
+   `src/features/discovery/priority-markets.ts` - a static list (the original GPT-proposed
+   high-value US-state/EU-country list), a pure `isPriorityMarket(geography)` loose-match check,
+   feeding one more additive term into item 2's formula. Geography stays free-text everywhere else
+   - this never blocks or rejects a search, same "degrade gracefully" posture as every other source
+   in this codebase.
+
+**Real bug caught in review**: the first cut of `isPriorityMarket` matched long state/country names
+by plain substring, which incorrectly scored "Charleston, **West Virginia**" as a match on
+"Virginia" - a real, distinct, non-priority state. Word-boundary regex alone doesn't fix this
+("Virginia" is a genuine whole word inside "West Virginia"). Fixed by splitting `geography` on
+commas and requiring an EXACT match on a whole segment, not a substring/word-boundary match on the
+raw string. Known accepted limitation left as-is: this still can't distinguish the US state
+"Georgia" from the country "Georgia" (an inherent ambiguity of free-text geography, not worth more
+machinery to resolve given this app's actual prospect geography today).
+
 ## Explicitly deferred to later (do not start these in this branch)
 
-- Government business registry connectors (per-country, real work, real value - own project later)
+- **Government business registry connectors** - real work, real value, own session later. Decided:
+  start with **UK Companies House** (free, English, clean documented REST API - closest analog to
+  how Overpass integrated) and **one US state registry** (not all 50 - start with **Texas**, since
+  that's where this app's actual prospect data already is, Austin - more relevant than e.g.
+  Delaware, which is popular for incorporation/legal domicile but not operational business
+  presence). Each new registry needs its own `ProspectSource` enum value/migration - fold in fixing
+  the pre-existing debt where `yellowpages`/`overpass` both currently reuse `source: 'manual'`
+  because neither has its own enum value either.
 - Job board scraping (strong signal, but real anti-bot/ToS risk - LinkedIn/Indeed are harder
-  targets than Cloudflare-on-yellowpages, not a good next fight)
-- Search-engine-as-signal-source scraping (same ToS/anti-bot risk class, arguably worse)
-- Full weighted-confidence canonical-company entity resolution engine (today's lighter dedup
-  upgrade is the stepping stone, not the destination)
-- PostGIS + Leaflet map UI
-- Full buying-signal scoring engine (this app already has a simpler analog -
-  `computeServiceSuggestions`/`projectFit`/`estimatedBudget` in `service-matching-rules.ts` - the
-  GPT-proposed model is a real upgrade to that, later)
-- Explicit target-market prioritization/config (geography stays free-text for now)
+  targets than Cloudflare-on-yellowpages, and this session's own Patchright benchmark confirmed
+  headless-only stealth doesn't even clear that bar. The `hiring_post` signal already exists and is
+  already populated safely today via Indie Hackers Jobs - low incremental value for the risk.)
+- Search-engine-as-signal-source scraping (same ToS/anti-bot risk class, arguably worse - Google's
+  anti-automation enforcement is more aggressive/automatic than Cloudflare's)
+- Full weighted-confidence canonical-company entity resolution engine (the corroboration-count step
+  above is the next stepping stone, not the full fuzzy-name/geocoordinate-radius/registration-number
+  system described earlier in this doc - that's a genuinely bigger system, later)
+- **PostGIS + Leaflet map UI** - decided: wait. Only the new Overpass source currently populates
+  `Prospect.location`'s lat/lng (confirmed via code search - every other source leaves it null), so
+  a map today would be sparse and skew entirely toward Overpass results, misrepresenting actual
+  discovery coverage. Revisit once more sources contribute coordinates (e.g. once a registry
+  connector or Google Places - once billing's fixed - adds them). Current prospect volume (dozens/
+  low-hundreds) is nowhere near needing PostGIS's actual value-add (spatial querying at scale)
+  either way - plain Leaflet + stored lat/lng would be the right scope whenever this does get built.
+- Explicit target-market prioritization/config - superseded by the lighter "next slice" item 3
+  above (a scoring bonus, not a structured field replacing free-text geography).
 
 ## Open technical question to resolve before implementation
 
@@ -122,3 +185,7 @@ port exists that's compatible with this app's Playwright-for-Node usage before c
 benchmark - if no viable Node port exists, the CDP-leak-patching benefit may need a different
 implementation path (e.g. manually patching the specific documented leaks, on the current
 Playwright base) rather than a wholesale library swap.
+
+**Resolved 2026-08-21**: yes, `patchright` on npm is a maintained, actively-published Node.js port
+(same maintainer as the Python original, explicit drop-in-replacement claim). Benchmarked against
+the current setup - not adopted (see "Status" above and item 1's update for why).
