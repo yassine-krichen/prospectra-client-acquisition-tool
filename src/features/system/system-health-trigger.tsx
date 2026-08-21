@@ -5,7 +5,7 @@ import { HugeiconsIcon } from '@hugeicons/react';
 import { Activity01Icon } from '@hugeicons/core-free-icons';
 
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { SystemHealthPanel } from '@/features/system/system-health-panel';
 import type { SystemHealth } from '@/features/system/system-health.service';
 import { deriveOverallStatus, type OverallStatus } from '@/features/system/derive-overall-status';
@@ -63,7 +63,6 @@ export function SystemHealthTrigger(): React.JSX.Element {
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>System Health</DialogTitle>
-          
         </DialogHeader>
         <SystemHealthPanel health={health} error={error} />
       </DialogContent>
