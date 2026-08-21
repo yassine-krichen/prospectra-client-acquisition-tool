@@ -161,6 +161,12 @@ model Prospect {
   // Array of { status, timestamp } — no query pattern needs it normalized.
   statusHistory Json           @default("[]")
 
+  // Dead-letter tracking for the most recent failed `draftProspect` attempt
+  // (flagged/failure path) - { flagged, message, occurredAt }. Cleared back
+  // to null on the next successful draft for this prospect. Nullable: most
+  // prospects never fail drafting at all.
+  lastDraftFailure Json?
+
   // Dashboard-only read marker, toggled by the user from the prospects table
   // (`PATCH /api/prospects/[id]/seen`). Purely a "don't make me re-scan
   // stuff I've already reviewed" UX aid — has no bearing on the outreach
@@ -216,7 +222,37 @@ model Draft {
   edited        Boolean   @default(false)
   approved      Boolean   @default(false)
 
+  // Dead-letter tracking for the most recent failed Resend send attempt for
+  // this draft - { reason, occurredAt }. Cleared back to null on the next
+  // successful send of this same draft. Nullable: most drafts never fail to
+  // send at all.
+  lastSendFailure Json?
+
   @@index([prospectId])
+}
+
+// One row per discovery run (see `runDiscovery` in discovery.service.ts) - not
+// a per-prospect audit trail, just the search inputs plus outcome counts, so
+// the dashboard can show "you already searched this" instead of the operator
+// blindly re-running an identical category+geography+branch search.
+// `branch` is deliberately a plain String (not a Prisma enum), matching
+// `Draft.framework`'s rationale: `DiscoveryBranch` is a Zod union
+// ('a' | 'b' | 'both') in discovery.types.ts, not a Prisma enum, so mirroring
+// it as a Prisma enum here would force a migration every time that union
+// changes for reasons unrelated to this table.
+model DiscoveryRun {
+  id                  String   @id @default(cuid())
+  category            String
+  geography           String
+  branch              String
+  totalFound          Int
+  inserted            Int
+  updated             Int
+  skippedDoNotContact Int
+  sources             Json
+  createdAt           DateTime @default(now())
+
+  @@index([category, geography])
 }
 
 // Tracks calls made against a hard external free-tier quota (e.g. Hunter.io's
