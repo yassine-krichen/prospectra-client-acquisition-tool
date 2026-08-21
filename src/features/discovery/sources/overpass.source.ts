@@ -140,6 +140,7 @@ async function mapElementToProspect(
     discoveredAt: new Date(),
     phone,
     address,
+    corroboratingSourceCount: 1,
     signal,
   };
 }

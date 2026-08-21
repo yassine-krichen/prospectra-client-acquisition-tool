@@ -22,6 +22,7 @@ function buildProspect(overrides: Partial<DiscoveredProspect> = {}): DiscoveredP
     signal: { type: 'outdated_site', description: 'stale', evidence: null, strength: 'weak' },
     phone: null,
     address: null,
+    corroboratingSourceCount: 1,
     ...overrides,
   };
 }

@@ -148,6 +148,7 @@ export async function runIndieHackersSource(_query: DiscoveryQuery): Promise<Sou
       discoveredAt: new Date(),
       phone: null,
       address: null,
+      corroboratingSourceCount: 1,
       signal,
     });
   }
@@ -167,6 +168,7 @@ export async function runIndieHackersSource(_query: DiscoveryQuery): Promise<Sou
       discoveredAt: new Date(),
       phone: null,
       address: null,
+      corroboratingSourceCount: 1,
       signal: {
         type: 'hiring_post',
         description: 'Actively hiring, posted on Indie Hackers Jobs',

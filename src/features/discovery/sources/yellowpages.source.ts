@@ -123,6 +123,7 @@ export async function runYellowPagesSource(query: DiscoveryQuery): Promise<Sourc
       discoveredAt: new Date(),
       phone: listing.phone,
       address: listing.address,
+      corroboratingSourceCount: 1,
       signal,
     });
   }

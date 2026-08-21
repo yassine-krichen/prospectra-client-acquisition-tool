@@ -143,6 +143,7 @@ export async function runCrunchbaseSource(query: DiscoveryQuery): Promise<Source
       discoveredAt: new Date(),
       phone: null,
       address: null,
+      corroboratingSourceCount: 1,
       signal: {
         type: 'funding_event',
         description: 'Recently announced funding round',

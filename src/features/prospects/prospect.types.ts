@@ -163,6 +163,12 @@ export const prospectSchema = z.object({
   estimatedBudget: estimatedBudgetSchema,
   suggestedServices: z.array(serviceSuggestionSchema),
   priorityScore: z.number().int(),
+  // How many independent discovery sources have found this business - see
+  // the doc comment on `Prospect.corroboratingSourceCount` in
+  // prisma/schema.prisma. Same precedent as `lastDraftFailure` below: a new
+  // Prospect field exposed to the client, not omitted from the list
+  // projection.
+  corroboratingSourceCount: z.number().int(),
   status: prospectStatusSchema,
   statusHistory: z.array(statusHistoryEntrySchema),
   // Dashboard-only read marker - see the doc comment on `Prospect.seen` in

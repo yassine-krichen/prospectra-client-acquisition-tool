@@ -51,6 +51,13 @@ export interface DiscoveredProspect {
   /** Secondary dedupe key for prospects with no domain - see
    * discovery.service.ts's `dedupeProspects`/`persistProspect`. */
   address: string | null;
+  /** How many independent sources have found this business - starts at 1
+   * for a freshly-discovered prospect, incremented by `dedupeProspects` when
+   * a later prospect in the same run matches it, and further incremented in
+   * `persistProspect` against a previously-persisted row's own count. See
+   * `Prospect.corroboratingSourceCount` in prisma/schema.prisma and
+   * `priority-scoring.ts`'s corroboration bonus. */
+  corroboratingSourceCount: number;
 }
 
 export interface SourceUnavailable {

@@ -149,6 +149,7 @@ export async function runGooglePlacesSource(query: DiscoveryQuery): Promise<Sour
       discoveredAt: new Date(),
       phone: null,
       address: null,
+      corroboratingSourceCount: 1,
       signal,
     });
   }
