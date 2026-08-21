@@ -116,3 +116,16 @@ export function buildNoSignalDetectedFallback(evidence: string | null): Signal {
     strength: 'weak',
   };
 }
+
+/**
+ * True when `signal` is the baseline/no-signal-detected fallback (see
+ * `buildNoSignalDetectedFallback`) rather than a genuinely detected signal -
+ * `evidence` is deliberately ignored in this comparison, since it varies per
+ * call site but the baseline `type`/`description` don't. Used by
+ * `discovery.service.ts`'s thin-prospect filter to identify prospects with
+ * nothing actionable beyond "we found a name".
+ */
+export function isBaselineSignal(signal: Signal): boolean {
+  const baseline = buildNoSignalDetectedFallback(null);
+  return signal.type === baseline.type && signal.description === baseline.description;
+}

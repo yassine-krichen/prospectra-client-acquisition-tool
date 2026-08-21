@@ -45,6 +45,12 @@ export interface DiscoveredProspect {
   sourceUrl: string;
   discoveredAt: Date;
   signal: Signal;
+  /** Secondary dedupe key for prospects with no domain - see
+   * discovery.service.ts's `dedupeProspects`/`persistProspect`. */
+  phone: string | null;
+  /** Secondary dedupe key for prospects with no domain - see
+   * discovery.service.ts's `dedupeProspects`/`persistProspect`. */
+  address: string | null;
 }
 
 export interface SourceUnavailable {
@@ -91,6 +97,11 @@ export const discoveryRunSummarySchema = z.object({
   inserted: z.number().int(),
   updated: z.number().int(),
   skippedDoNotContact: z.number().int(),
+  // Not persisted on the `DiscoveryRun` model (see discovery.service.ts's
+  // `runDiscovery` doc comment) - only present on the live run summary
+  // returned to the caller, not on history entries loaded from the DB
+  // (see `discoveryRunHistoryEntrySchema` below, which has no such field).
+  discardedThinProspects: z.number().int(),
 });
 export type DiscoveryRunSummary = z.infer<typeof discoveryRunSummarySchema>;
 

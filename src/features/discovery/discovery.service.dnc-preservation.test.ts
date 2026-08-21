@@ -32,8 +32,11 @@ vi.mock('@/features/discovery/sources/crunchbase.source', () => ({
   runCrunchbaseSource: runCrunchbaseSourceMock,
 }));
 
-const runGitHubSourceMock = vi.fn();
-vi.mock('@/features/discovery/sources/github.source', () => ({ runGitHubSource: runGitHubSourceMock }));
+// GitHub is enrichment-only (see github.source.ts), not a discovery source -
+// still mocked here since `runDiscovery`'s enrichment chain calls it
+// unconditionally regardless of branch.
+const lookupGitHubEvidenceMock = vi.fn();
+vi.mock('@/features/discovery/sources/github.source', () => ({ lookupGitHubEvidence: lookupGitHubEvidenceMock }));
 
 const runIndieHackersSourceMock = vi.fn();
 vi.mock('@/features/discovery/sources/indiehackers.source', () => ({
@@ -64,7 +67,7 @@ beforeEach(async () => {
   runYellowPagesSourceMock.mockResolvedValue({ ok: true, prospects: [] });
   runProductHuntSourceMock.mockResolvedValue({ ok: true, prospects: [] });
   runCrunchbaseSourceMock.mockResolvedValue({ ok: true, prospects: [] });
-  runGitHubSourceMock.mockResolvedValue({ ok: true, prospects: [] });
+  lookupGitHubEvidenceMock.mockResolvedValue({ ok: true, lookup: { matched: false, signal: null } });
   runIndieHackersSourceMock.mockResolvedValue({ ok: true, prospects: [] });
 });
 

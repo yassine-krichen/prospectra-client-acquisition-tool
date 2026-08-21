@@ -42,9 +42,19 @@ vi.mock('@/features/discovery/sources/yellowpages.source', () => ({
   runYellowPagesSource: runYellowPagesSourceMock,
 }));
 
+const runOverpassSourceMock = vi.fn();
+vi.mock('@/features/discovery/sources/overpass.source', () => ({
+  runOverpassSource: runOverpassSourceMock,
+}));
+
 const lookupStaleStackMock = vi.fn();
 vi.mock('@/features/discovery/sources/builtwith.source', () => ({
   lookupStaleStack: lookupStaleStackMock,
+}));
+
+const detectTechStackMock = vi.fn();
+vi.mock('@/features/discovery/sources/tech-stack-detector.source', () => ({
+  detectTechStack: detectTechStackMock,
 }));
 
 const runProductHuntSourceMock = vi.fn();
@@ -57,9 +67,9 @@ vi.mock('@/features/discovery/sources/crunchbase.source', () => ({
   runCrunchbaseSource: runCrunchbaseSourceMock,
 }));
 
-const runGitHubSourceMock = vi.fn();
+const lookupGitHubEvidenceMock = vi.fn();
 vi.mock('@/features/discovery/sources/github.source', () => ({
-  runGitHubSource: runGitHubSourceMock,
+  lookupGitHubEvidence: lookupGitHubEvidenceMock,
 }));
 
 const runIndieHackersSourceMock = vi.fn();
@@ -91,6 +101,8 @@ function buildProspect(overrides: Partial<DiscoveredProspect> = {}): DiscoveredP
     sourceUrl: 'https://example.com/source',
     discoveredAt: new Date('2026-01-01'),
     signal: buildSignal(),
+    phone: null,
+    address: null,
     ...overrides,
   };
 }
@@ -102,10 +114,12 @@ beforeEach(() => {
   envMock.BUILTWITH_API_KEY = undefined;
   runGooglePlacesSourceMock.mockResolvedValue({ ok: true, prospects: [] });
   runYellowPagesSourceMock.mockResolvedValue({ ok: true, prospects: [] });
+  runOverpassSourceMock.mockResolvedValue({ ok: true, prospects: [] });
   runProductHuntSourceMock.mockResolvedValue({ ok: true, prospects: [] });
   runCrunchbaseSourceMock.mockResolvedValue({ ok: true, prospects: [] });
-  runGitHubSourceMock.mockResolvedValue({ ok: true, prospects: [] });
   runIndieHackersSourceMock.mockResolvedValue({ ok: true, prospects: [] });
+  detectTechStackMock.mockResolvedValue({ ok: false, reason: 'source unavailable: could not fetch' });
+  lookupGitHubEvidenceMock.mockResolvedValue({ ok: true, lookup: { matched: false, signal: null } });
   findFirstMock.mockResolvedValue(null);
   createMock.mockResolvedValue(undefined);
   updateMock.mockResolvedValue(undefined);
@@ -134,6 +148,52 @@ describe('runDiscovery', () => {
     expect(updateMock).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 'existing-id' } })
     );
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it('updates instead of inserting when a no-domain prospect matches an existing record by normalized phone', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ domain: null, phone: '(512) 766-0970' })],
+    });
+    // First findFirst call is the domain lookup (skipped because domain is
+    // null - see the implementation guard), so the phone lookup is the first
+    // one actually invoked here.
+    findFirstMock.mockResolvedValueOnce({ id: 'existing-id' });
+
+    const summary = await runDiscovery(query);
+
+    expect(summary.updated).toBe(1);
+    expect(summary.inserted).toBe(0);
+    expect(findFirstMock).toHaveBeenCalledWith({ where: { phone: '5127660970' } });
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'existing-id' } }));
+  });
+
+  it('updates instead of inserting when a no-domain, no-phone prospect matches an existing record by normalized address', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ domain: null, phone: null, address: '123 Main St' })],
+    });
+    findFirstMock.mockResolvedValueOnce({ id: 'existing-id' });
+
+    const summary = await runDiscovery(query);
+
+    expect(summary.updated).toBe(1);
+    expect(summary.inserted).toBe(0);
+    expect(findFirstMock).toHaveBeenCalledWith({ where: { address: '123 main street' } });
+  });
+
+  it('never re-inserts a no-domain prospect on every re-discovery run once it matches by phone', async () => {
+    // Regression guard for the cross-run duplication bug this change fixes:
+    // before this fix, a no-domain prospect always fell through to create().
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ domain: null, phone: '512-766-0970' })],
+    });
+    findFirstMock.mockResolvedValueOnce({ id: 'existing-id' });
+
+    await runDiscovery(query);
+
     expect(createMock).not.toHaveBeenCalled();
   });
 
@@ -177,6 +237,57 @@ describe('runDiscovery', () => {
     runGooglePlacesSourceMock.mockResolvedValue({
       ok: true,
       prospects: [buildProspect({ domain: 'acme.com' }), buildProspect({ domain: 'other.com' })],
+    });
+
+    const summary = await runDiscovery(query);
+
+    expect(summary.totalFound).toBe(2);
+    expect(createMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('dedupes two no-domain prospects reporting the same normalized phone number', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ domain: null, phone: '(512) 766-0970', companyName: 'From Google' })],
+    });
+    runYellowPagesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ domain: null, phone: '512-766-0970', companyName: 'From YellowPages' })],
+    });
+
+    const summary = await runDiscovery(query);
+
+    expect(summary.totalFound).toBe(1);
+    expect(createMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('dedupes two no-domain, no-phone prospects reporting the same normalized address', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [
+        buildProspect({ domain: null, address: '123 Main St', companyName: 'From Google' }),
+      ],
+    });
+    runYellowPagesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [
+        buildProspect({ domain: null, address: '123 Main Street', companyName: 'From YellowPages' }),
+      ],
+    });
+
+    const summary = await runDiscovery(query);
+
+    expect(summary.totalFound).toBe(1);
+    expect(createMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not dedupe two no-domain prospects with different phone and address', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [
+        buildProspect({ domain: null, phone: '512-111-1111', address: '1 First St' }),
+        buildProspect({ domain: null, phone: '512-222-2222', address: '2 Second St' }),
+      ],
     });
 
     const summary = await runDiscovery(query);
@@ -268,6 +379,133 @@ describe('runDiscovery', () => {
     );
   });
 
+  it('upgrades a prospect signal with a stronger tech-stack-detector signal, and reports it under tech_stack_detector', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ signal: buildSignal({ strength: 'weak' }) })],
+    });
+    const detectedSignal = buildSignal({ type: 'old_stack', strength: 'strong', description: 'WordPress, no modern layer' });
+    detectTechStackMock.mockResolvedValue({
+      ok: true,
+      lookup: { domain: 'acme.com', technologies: ['WordPress'], signal: detectedSignal },
+    } satisfies StaleStackResult);
+
+    const summary = await runDiscovery(query);
+
+    const techStackSummary = summary.sources.find((s) => s.source === 'tech_stack_detector');
+    expect(techStackSummary?.ran).toBe(true);
+    expect(techStackSummary?.count).toBe(1);
+    expect(createMock).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ signal: detectedSignal, priorityScore: 3 }) })
+    );
+  });
+
+  it('does not run the tech-stack detector on a prospect with no websiteUrl', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ websiteUrl: null })],
+    });
+
+    const summary = await runDiscovery(query);
+
+    expect(detectTechStackMock).not.toHaveBeenCalled();
+    const techStackSummary = summary.sources.find((s) => s.source === 'tech_stack_detector');
+    expect(techStackSummary?.count).toBe(0);
+  });
+
+  it('lets BuiltWith further strengthen a signal the tech-stack detector already upgraded, since enrichers chain in order', async () => {
+    envMock.BUILTWITH_API_KEY = 'test-key';
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ signal: buildSignal({ strength: 'weak' }) })],
+    });
+    const techStackSignal = buildSignal({ type: 'old_stack', strength: 'medium', description: 'jQuery 2.x' });
+    detectTechStackMock.mockResolvedValue({
+      ok: true,
+      lookup: { domain: 'acme.com', technologies: ['jQuery 2.2.4'], signal: techStackSignal },
+    } satisfies StaleStackResult);
+    const builtwithSignal = buildSignal({ type: 'old_stack', strength: 'strong', description: 'jQuery 1.x' });
+    lookupStaleStackMock.mockResolvedValue({
+      ok: true,
+      lookup: { domain: 'acme.com', technologies: ['jQuery 1.9.1'], signal: builtwithSignal },
+    } satisfies StaleStackResult);
+
+    const summary = await runDiscovery(query);
+
+    expect(summary.sources.find((s) => s.source === 'tech_stack_detector')?.count).toBe(1);
+    expect(summary.sources.find((s) => s.source === 'builtwith')?.count).toBe(1);
+    expect(createMock).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ signal: builtwithSignal, priorityScore: 3 }) })
+    );
+  });
+
+  it('does not run GitHub enrichment on a non-saas prospect, to conserve GitHub\'s tight unauthenticated rate limit', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ industry: 'local_service' })],
+    });
+
+    const summary = await runDiscovery(query);
+
+    expect(lookupGitHubEvidenceMock).not.toHaveBeenCalled();
+    expect(summary.sources.find((s) => s.source === 'github')).toEqual({ source: 'github', ran: true, count: 0 });
+  });
+
+  it('upgrades a saas prospect signal with a stronger GitHub evidence signal', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ industry: 'saas', signal: buildSignal({ strength: 'weak' }) })],
+    });
+    const githubSignal = buildSignal({ type: 'hiring_post', strength: 'medium', description: 'hiring keyword found' });
+    lookupGitHubEvidenceMock.mockResolvedValue({ ok: true, lookup: { matched: true, signal: githubSignal } });
+
+    const summary = await runDiscovery(query);
+
+    expect(lookupGitHubEvidenceMock).toHaveBeenCalledTimes(1);
+    const githubSummary = summary.sources.find((s) => s.source === 'github');
+    expect(githubSummary?.ran).toBe(true);
+    expect(githubSummary?.count).toBe(1);
+    expect(createMock).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ signal: githubSignal }) })
+    );
+  });
+
+  it('does not downgrade a saas prospect signal when GitHub reports a weaker signal than already found', async () => {
+    const strongExistingSignal = buildSignal({ strength: 'strong', description: 'no https' });
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ industry: 'saas', signal: strongExistingSignal })],
+    });
+    lookupGitHubEvidenceMock.mockResolvedValue({
+      ok: true,
+      lookup: { matched: true, signal: buildSignal({ type: 'hiring_post', strength: 'weak' }) },
+    });
+
+    const summary = await runDiscovery(query);
+
+    expect(summary.sources.find((s) => s.source === 'github')?.count).toBe(0);
+    expect(createMock).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ signal: strongExistingSignal }) })
+    );
+  });
+
+  it('reports github as skipped-for-this-run when it is filtered out via enabledSources', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ industry: 'saas' })],
+    });
+
+    const summary = await runDiscovery(query, 'a', ['google_places', 'yellowpages']);
+
+    expect(lookupGitHubEvidenceMock).not.toHaveBeenCalled();
+    expect(summary.sources.find((s) => s.source === 'github')).toEqual({
+      source: 'github',
+      ran: false,
+      reason: 'disabled for this run',
+      count: 0,
+    });
+  });
+
   it.each([
     ['strong', 3],
     ['medium', 2],
@@ -343,27 +581,34 @@ describe('runDiscovery branch selection', () => {
 
     expect(runGooglePlacesSourceMock).toHaveBeenCalledTimes(1);
     expect(runYellowPagesSourceMock).toHaveBeenCalledTimes(1);
+    expect(runOverpassSourceMock).toHaveBeenCalledTimes(1);
     expect(runProductHuntSourceMock).not.toHaveBeenCalled();
     expect(runCrunchbaseSourceMock).not.toHaveBeenCalled();
-    expect(runGitHubSourceMock).not.toHaveBeenCalled();
     expect(runIndieHackersSourceMock).not.toHaveBeenCalled();
   });
 
   it('runs only Branch A sources when branch is explicitly "a"', async () => {
     const summary = await runDiscovery(query, 'a');
 
-    expect(summary.sources.map((s) => s.source).sort()).toEqual(['builtwith', 'google_places', 'yellowpages']);
+    expect(summary.sources.map((s) => s.source).sort()).toEqual([
+      'builtwith',
+      'github',
+      'google_places',
+      'overpass',
+      'tech_stack_detector',
+      'yellowpages',
+    ]);
     expect(runProductHuntSourceMock).not.toHaveBeenCalled();
   });
 
-  it('runs only Branch B sources (product_hunt, crunchbase, github, indiehackers) when branch is "b"', async () => {
+  it('runs only Branch B sources (product_hunt, crunchbase, indiehackers) when branch is "b" - GitHub is not a Branch B source, it enriches regardless of branch', async () => {
     const summary = await runDiscovery(query, 'b');
 
     expect(runGooglePlacesSourceMock).not.toHaveBeenCalled();
     expect(runYellowPagesSourceMock).not.toHaveBeenCalled();
+    expect(runOverpassSourceMock).not.toHaveBeenCalled();
     expect(runProductHuntSourceMock).toHaveBeenCalledTimes(1);
     expect(runCrunchbaseSourceMock).toHaveBeenCalledTimes(1);
-    expect(runGitHubSourceMock).toHaveBeenCalledTimes(1);
     expect(runIndieHackersSourceMock).toHaveBeenCalledTimes(1);
     expect(summary.sources.map((s) => s.source).sort()).toEqual([
       'builtwith',
@@ -371,6 +616,7 @@ describe('runDiscovery branch selection', () => {
       'github',
       'indiehackers',
       'product_hunt',
+      'tech_stack_detector',
     ]);
   });
 
@@ -385,9 +631,9 @@ describe('runDiscovery branch selection', () => {
 
     expect(runGooglePlacesSourceMock).toHaveBeenCalledTimes(1);
     expect(runYellowPagesSourceMock).toHaveBeenCalledTimes(1);
+    expect(runOverpassSourceMock).toHaveBeenCalledTimes(1);
     expect(runProductHuntSourceMock).toHaveBeenCalledTimes(1);
     expect(runCrunchbaseSourceMock).toHaveBeenCalledTimes(1);
-    expect(runGitHubSourceMock).toHaveBeenCalledTimes(1);
     expect(runIndieHackersSourceMock).toHaveBeenCalledTimes(1);
   });
 
@@ -473,5 +719,102 @@ describe('runDiscovery enabledSources filtering', () => {
 
     const builtwithSummary = summary.sources.find((s) => s.source === 'builtwith');
     expect(builtwithSummary?.ran).toBe(true);
+  });
+});
+
+describe('runDiscovery thin-prospect filter', () => {
+  // The exact baseline signal `buildNoSignalDetectedFallback` produces (see
+  // signal-detection.ts) - `evidence` is deliberately varied per test since
+  // the filter (`isBaselineSignal`) ignores it.
+  function buildBaselineSignal(evidence: string | null = null): Signal {
+    return {
+      type: 'technical_debt',
+      description: 'No specific staleness signal detected on the site; included via category+geography match',
+      evidence,
+      strength: 'weak',
+    };
+  }
+
+  it('discards a prospect with no domain/website/phone/address and only a baseline signal', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [
+        buildProspect({ domain: null, websiteUrl: null, phone: null, address: null, signal: buildBaselineSignal() }),
+      ],
+    });
+
+    const summary = await runDiscovery(query);
+
+    expect(summary.discardedThinProspects).toBe(1);
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps a domain-less, contact-less prospect when it has a genuine (non-baseline) signal', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [
+        buildProspect({ domain: null, websiteUrl: null, phone: null, address: null, signal: buildSignal({ type: 'no_website', strength: 'strong' }) }),
+      ],
+    });
+
+    const summary = await runDiscovery(query);
+
+    expect(summary.discardedThinProspects).toBe(0);
+    expect(createMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a baseline-signal prospect when it has a domain', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ domain: 'acme.com', phone: null, address: null, signal: buildBaselineSignal() })],
+    });
+
+    const summary = await runDiscovery(query);
+
+    expect(summary.discardedThinProspects).toBe(0);
+    expect(createMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a baseline-signal, domain-less prospect when it has a phone', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [
+        buildProspect({ domain: null, websiteUrl: null, phone: '512-555-0100', address: null, signal: buildBaselineSignal() }),
+      ],
+    });
+
+    const summary = await runDiscovery(query);
+
+    expect(summary.discardedThinProspects).toBe(0);
+    expect(createMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a baseline-signal, domain-less, phone-less prospect when it has an address', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [
+        buildProspect({ domain: null, websiteUrl: null, phone: null, address: '123 Main St', signal: buildBaselineSignal() }),
+      ],
+    });
+
+    const summary = await runDiscovery(query);
+
+    expect(summary.discardedThinProspects).toBe(0);
+    expect(createMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not count a thin prospect toward skippedDoNotContact/inserted/updated', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [
+        buildProspect({ domain: null, websiteUrl: null, phone: null, address: null, signal: buildBaselineSignal() }),
+      ],
+    });
+
+    const summary = await runDiscovery(query);
+
+    expect(summary.inserted).toBe(0);
+    expect(summary.updated).toBe(0);
+    expect(summary.skippedDoNotContact).toBe(0);
   });
 });

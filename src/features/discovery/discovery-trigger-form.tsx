@@ -48,6 +48,7 @@ const CONFIGURED_SERVICES_KEY: Record<string, keyof SystemHealth['configuredServ
   github: 'github',
   indiehackers: null,
   builtwith: 'builtwith',
+  overpass: null,
 };
 
 // Purely for at-a-glance scanning of the source checklist - not decorative,
@@ -60,6 +61,7 @@ const SOURCE_ICONS: Record<string, IconSvgElement> = {
   github: GithubIcon,
   indiehackers: Idea01Icon,
   builtwith: SourceCodeIcon,
+  overpass: MapsLocation01Icon,
 };
 
 function isSourceConfigured(source: DiscoverySourceMeta, configuredServices: SystemHealth['configuredServices'] | null): boolean {
@@ -73,9 +75,9 @@ function isSourceConfigured(source: DiscoverySourceMeta, configuredServices: Sys
 // sources always start unchecked (manual opt-in every run, regardless of
 // configuration), free sources start checked only when configured, anything
 // unconfigured starts unchecked.
-// BuiltWith (branch: null) is always shown alongside whichever branch's own
-// sources are visible, since it's an always-available enrichment step
-// rather than belonging to either branch.
+// Branch-independent sources (`branch: null` - BuiltWith, GitHub) are always
+// shown alongside whichever branch's own sources are visible, since they're
+// always-available enrichment steps rather than belonging to either branch.
 function visibleSourcesForBranch(branch: Branch): DiscoverySourceMeta[] {
   return DISCOVERY_SOURCES.filter((source) => source.branch === null || branch === 'both' || source.branch === branch);
 }
@@ -94,7 +96,7 @@ function defaultEnabledSources(
 
 const BRANCH_HELP: Record<Branch, string> = {
   a: 'Local/SMB search. Category is a business type ("plumber", "dentist"), Geography is a city and state ("Austin, TX") - both feed Google Places and Yellow Pages searches directly.',
-  b: 'Startup/SaaS search. Category is reused as a loose topic keyword (a Product Hunt topic slug, a GitHub repo topic, a substring match on Crunchbase - Indie Hackers ignores it entirely). Geography is ignored by every source in this branch.',
+  b: 'Startup/SaaS search. Category is reused as a loose topic keyword (a Product Hunt topic slug, a substring match on Crunchbase - Indie Hackers ignores it entirely). Geography is ignored by every source in this branch. GitHub isn\'t part of either branch - it\'s an enrichment step that runs afterward against SaaS-industry prospects already found.',
   both: 'Runs every source above. Branch A sources use Category/Geography as described for "a"; Branch B sources use Category as a keyword and ignore Geography, as described for "b".',
 };
 
@@ -106,7 +108,7 @@ const BRANCH_LABELS: Record<Branch, string> = {
 
 const CATEGORY_HELP: Record<Branch, string> = {
   a: 'A business type/keyword, e.g. "plumber", "dentist", "hvac contractor". Fed directly into Google Places and Yellow Pages searches.',
-  b: 'A loose topic keyword: a Product Hunt topic slug (e.g. "saas"), a GitHub repo topic tag (e.g. "nextjs"), or a substring match against Crunchbase company names. Indie Hackers ignores this entirely and always scrapes the same pages.',
+  b: 'A loose topic keyword: a Product Hunt topic slug (e.g. "saas"), or a substring match against Crunchbase company names. Indie Hackers ignores this entirely and always scrapes the same pages.',
   both: 'Used differently by every source - see the Category tooltip on Branch A/B individually for exact meaning per source.',
 };
 
@@ -114,7 +116,7 @@ const GEOGRAPHY_HELP =
   'A "City, State" string (e.g. "Austin, TX"), used only by Branch A sources (Google Places, Yellow Pages). Every Branch B source ignores this field entirely, even when it\'s filled in.';
 
 const BRANCH_SELECT_HELP =
-  'Which discovery sources run: Branch A (local/SMB businesses via Google Places + Yellow Pages), Branch B (startups/SaaS via Product Hunt, Crunchbase, GitHub, Indie Hackers), or both.';
+  'Which discovery sources run: Branch A (local/SMB businesses via Google Places + Yellow Pages), Branch B (startups/SaaS via Product Hunt, Crunchbase, Indie Hackers), or both. BuiltWith/GitHub enrichment run afterward regardless of branch.';
 
 const SOURCE_HELP: Record<string, string> = {
   google_places: 'Google Places Text Search API - local businesses matching Category near Geography. Needs GOOGLE_PLACES_API_KEY.',
@@ -122,8 +124,11 @@ const SOURCE_HELP: Record<string, string> = {
   builtwith: 'Enrichment only (not a discovery source) - looks up each found domain\'s tech stack via the BuiltWith API to flag a stale/outdated stack. Needs BUILTWITH_API_KEY.',
   product_hunt: 'Product Hunt GraphQL API - recently launched products under the Category topic. Needs PRODUCT_HUNT_API_TOKEN.',
   crunchbase: 'Crunchbase Search API - recently funded companies (last 90 days) whose name contains Category. Needs CRUNCHBASE_API_KEY.',
-  github: 'GitHub REST API - repos tagged with the Category topic, checked for hiring/CI signals. Works unauthenticated at a lower rate limit; GITHUB_TOKEN raises it.',
+  github:
+    'Enrichment only (not a discovery source), scoped to SaaS-industry prospects - looks up each found company\'s GitHub org/user account and checks its repos for hiring/CI signals. Works unauthenticated at a lower rate limit; GITHUB_TOKEN raises it.',
   indiehackers: 'Playwright scrape of Indie Hackers\' Products and Jobs pages. Ignores Category/Geography entirely - always the same pages. No API key needed.',
+  overpass:
+    'OpenStreetMap via the Overpass API - geocodes Geography via Nominatim, then queries OSM points of interest matching Category. Free, no API key needed. Data completeness varies by region; many results will have a name only.',
 };
 
 function FieldHelp({ text }: { text: string }): React.JSX.Element {
@@ -322,7 +327,9 @@ export function DiscoveryTriggerForm(): React.JSX.Element {
   );
 
   const branchSources = DISCOVERY_SOURCES.filter((source) => source.branch !== null && (branch === 'both' || source.branch === branch));
-  const builtwithSource = DISCOVERY_SOURCES.find((source) => source.key === 'builtwith');
+  // Branch-independent enrichment sources (BuiltWith, GitHub) - rendered
+  // after the branch's own sources regardless of which branch is selected.
+  const branchIndependentSources = DISCOVERY_SOURCES.filter((source) => source.branch === null);
 
   async function handleSubmit(event: React.FormEvent): Promise<void> {
     event.preventDefault();
@@ -418,15 +425,16 @@ export function DiscoveryTriggerForm(): React.JSX.Element {
                   onCheckedChange={(checked) => toggleSource(source.key, checked)}
                 />
               ))}
-              {builtwithSource ? (
+              {branchIndependentSources.map((source) => (
                 <SourceRow
-                  source={builtwithSource}
-                  checked={enabledSources.has(builtwithSource.key)}
-                  configured={isSourceConfigured(builtwithSource, configuredServices)}
+                  key={source.key}
+                  source={source}
+                  checked={enabledSources.has(source.key)}
+                  configured={isSourceConfigured(source, configuredServices)}
                   disabled={isRunning}
-                  onCheckedChange={(checked) => toggleSource(builtwithSource.key, checked)}
+                  onCheckedChange={(checked) => toggleSource(source.key, checked)}
                 />
-              ) : null}
+              ))}
             </div>
           </CardContent>
           <CardFooter className="flex flex-col items-start gap-3">
@@ -460,7 +468,8 @@ export function DiscoveryTriggerForm(): React.JSX.Element {
             <CardTitle>Last run</CardTitle>
             <CardDescription>
               {summary.totalFound} found · {summary.inserted} inserted · {summary.updated} updated ·{' '}
-              {summary.skippedDoNotContact} skipped (do-not-contact)
+              {summary.skippedDoNotContact} skipped (do-not-contact) · {summary.discardedThinProspects} discarded (no
+              actionable info)
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-2">

@@ -1,41 +1,47 @@
 import { z } from 'zod';
 
 import { env } from '@/common/config/env';
-import { extractDomain } from '@/features/discovery/normalize-domain';
-import type { DiscoveredProspect, DiscoveryQuery, SourceResult } from '@/features/discovery/discovery.types';
+import { extractDomain, normalizeDomain } from '@/features/discovery/normalize-domain';
+import type { DiscoveredProspect } from '@/features/discovery/discovery.types';
 import type { Signal } from '@/features/prospects/prospect.types';
 
 const GITHUB_API_BASE_URL = 'https://api.github.com';
-const REPOS_PER_QUERY = 20;
+
+// Repos are checked most-recently-pushed first, capped to this many per
+// account, to bound API cost per prospect - see `lookupGitHubEvidence`'s doc
+// comment.
+const REPOS_CHECKED_PER_ACCOUNT = 3;
 
 // Unauthenticated GitHub API calls are capped at 60 requests/hour. Each repo
 // can cost up to 3 requests (README, then - only if no hiring signal was
-// found - CI-workflows + root-contents checked together), so this run stops
-// picking up new repos once the last-seen `x-ratelimit-remaining` count
-// drops to (or below) the most any single remaining repo could still cost,
-// rather than pressing on and exhausting the tier mid-run.
+// found - CI-workflows + root-contents checked together), so a per-prospect
+// enrichment pass stops picking up new repos once the last-seen
+// `x-ratelimit-remaining` count drops to (or below) the most any single
+// remaining repo could still cost, rather than pressing on and exhausting
+// the tier mid-run.
 const RATE_LIMIT_SAFETY_MARGIN = 3;
-
-// GitHub search only looks at repos pushed within this window - "recent
-// commits" per the spec, not the whole repo's lifetime history.
-const RECENT_PUSH_WINDOW_DAYS = 30;
 
 const HIRING_KEYWORD_PATTERN = /\b(we'?re hiring|hiring now|now hiring|looking for (a )?(contributor|maintainer)s?)\b/i;
 const TEST_DIRECTORY_NAMES = new Set(['test', 'tests', '__tests__', 'spec']);
 
-const repoSearchItemSchema = z.object({
-  id: z.number(),
+// Minimal subset of GitHub's org/user profile response this source relies
+// on: `login` (to build repo-list URLs) and `blog` (the account's declared
+// website, used to verify a slug match is actually the prospect's company -
+// see `accountMatchesDomain`). Same shape for both `/orgs/:slug` and
+// `/users/:slug` - GitHub returns `blog` on both.
+const accountSchema = z.object({
+  login: z.string(),
+  blog: z.string().nullable().optional(),
+});
+
+const accountRepoSchema = z.object({
   name: z.string(),
   full_name: z.string(),
   description: z.string().nullable(),
   html_url: z.string(),
   homepage: z.string().nullable(),
 });
-
-const repoSearchResponseSchema = z.object({
-  items: z.array(repoSearchItemSchema).default([]),
-  message: z.string().optional(),
-});
+const accountReposResponseSchema = z.array(accountRepoSchema);
 
 const readmeResponseSchema = z.object({
   content: z.string(),
@@ -55,12 +61,18 @@ function buildHeaders(token: string | undefined): HeadersInit {
   return headers;
 }
 
-/** Tracks GitHub's own rate-limit state across every call made in one `runGitHubSource` invocation. */
+/** Tracks GitHub's own rate-limit state across every call made in one
+ * `lookupGitHubEvidence` invocation - the account lookup(s), the repo list,
+ * and every per-repo hiring/stack-gap check, not just one bounded call. */
 interface RateLimitState {
   /** Last-seen `x-ratelimit-remaining` value, or `null` if never reported. */
   remaining: number | null;
   /** Set once any call in this run has been refused with a 403. */
   limited: boolean;
+}
+
+function rateLimitExhausted(state: RateLimitState): boolean {
+  return state.limited || (state.remaining !== null && state.remaining <= RATE_LIMIT_SAFETY_MARGIN);
 }
 
 /**
@@ -190,89 +202,125 @@ async function detectStackGapSignal(fullName: string, headers: HeadersInit, rate
 }
 
 /**
- * Searches GitHub for repos matching `query.category` as a topic keyword,
- * pushed within the last `RECENT_PUSH_WINDOW_DAYS` days, then checks each
- * for a hiring signal (README/description keyword scan) or, failing that, a
- * stack-gap signal (missing CI/tests). `query.geography` is ignored - repo
- * activity has no location. `GITHUB_TOKEN` is optional: unlike the other
- * Branch B sources, this one still runs unauthenticated, just at GitHub's
- * much lower unauthenticated rate limit, so its absence is never reported
- * as "unavailable".
+ * Slugifies a domain to a candidate GitHub org/user login: strips a leading
+ * `www.` (already done by `normalizeDomain`) and takes the first label -
+ * `acme.com` -> `acme`, `acme.co.uk` -> `acme`. A cheap heuristic, not a
+ * guarantee - `accountMatchesDomain` is what actually confirms the match,
+ * this just picks which account to look up.
  */
-export async function runGitHubSource(query: DiscoveryQuery): Promise<SourceResult> {
-  const headers = buildHeaders(env.GITHUB_TOKEN);
-  const pushedAfter = new Date(Date.now() - RECENT_PUSH_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+function domainToAccountSlug(domain: string): string {
+  return normalizeDomain(domain).split('.')[0];
+}
 
-  const url = new URL(`${GITHUB_API_BASE_URL}/search/repositories`);
-  url.searchParams.set('q', `topic:${query.category} pushed:>${pushedAfter}`);
-  url.searchParams.set('sort', 'updated');
-  url.searchParams.set('order', 'desc');
-  url.searchParams.set('per_page', String(REPOS_PER_QUERY));
-
-  let response: Response;
-  try {
-    response = await fetch(url, { headers });
-  } catch (error) {
-    return {
-      ok: false,
-      reason: `source unavailable: GitHub request failed (${(error as Error).message})`,
-    };
-  }
-
-  if (!response.ok) {
-    return { ok: false, reason: `source unavailable: GitHub responded with ${response.status}` };
-  }
-
-  const rateLimitState: RateLimitState = { remaining: null, limited: false };
+async function fetchAccount(
+  kind: 'orgs' | 'users',
+  slug: string,
+  headers: HeadersInit,
+  rateLimitState: RateLimitState
+): Promise<z.infer<typeof accountSchema> | null> {
+  const response = await fetch(`${GITHUB_API_BASE_URL}/${kind}/${slug}`, { headers }).catch(() => null);
+  if (!response) return null;
   recordRateLimitState(response, rateLimitState);
+  if (!response.ok) return null;
 
-  const parsed = repoSearchResponseSchema.safeParse(await response.json().catch(() => null));
-  if (!parsed.success) {
-    return { ok: false, reason: 'source unavailable: GitHub response did not match the expected shape' };
+  const parsed = accountSchema.safeParse(await response.json().catch(() => null));
+  return parsed.success ? parsed.data : null;
+}
+
+async function fetchAccountRepos(
+  kind: 'orgs' | 'users',
+  slug: string,
+  headers: HeadersInit,
+  rateLimitState: RateLimitState
+): Promise<Array<z.infer<typeof accountRepoSchema>>> {
+  const url = new URL(`${GITHUB_API_BASE_URL}/${kind}/${slug}/repos`);
+  url.searchParams.set('sort', 'pushed');
+  url.searchParams.set('direction', 'desc');
+  url.searchParams.set('per_page', String(REPOS_CHECKED_PER_ACCOUNT));
+
+  const response = await fetch(url, { headers }).catch(() => null);
+  if (!response) return [];
+  recordRateLimitState(response, rateLimitState);
+  if (!response.ok) return [];
+
+  const parsed = accountReposResponseSchema.safeParse(await response.json().catch(() => null));
+  return parsed.success ? parsed.data : [];
+}
+
+/**
+ * Confirms an org/user account found by slug is actually the prospect's own
+ * company, not an unrelated same-named GitHub account - the account's
+ * declared `blog` (website) field must resolve to the same normalized
+ * domain as the prospect's own domain.
+ */
+function accountMatchesDomain(account: z.infer<typeof accountSchema>, prospectDomain: string): boolean {
+  const accountDomain = extractDomain(account.blog ?? null);
+  return accountDomain !== null && accountDomain === normalizeDomain(prospectDomain);
+}
+
+export interface GitHubEvidenceLookup {
+  /** True once an org/user account was found whose declared website
+   * confirms it belongs to the prospect - see `accountMatchesDomain`. */
+  matched: boolean;
+  /** null when no account matched, or a matched account's repos yielded no
+   * hiring/stack-gap signal. */
+  signal: Signal | null;
+}
+
+export type GitHubEvidenceResult = { ok: true; lookup: GitHubEvidenceLookup } | { ok: false; reason: string };
+
+/**
+ * Looks up technical evidence for an *already-discovered* prospect via
+ * GitHub, rather than independently discovering one (GitHub previously ran
+ * as a topic-search discovery source - re-architected to enrichment-only,
+ * see docs/discovery-engine-roadmap.md item 3, mirroring how BuiltWith is
+ * already scoped). Matching strategy: slugify `prospect.domain` to a
+ * candidate org/user login (`acme.com` -> `acme`), try `GET /orgs/<slug>`
+ * then `GET /users/<slug>` (cheap exact-lookup calls, not the search API),
+ * and confirm the returned account's `blog` field actually resolves to the
+ * prospect's domain before treating it as a real match - this avoids a
+ * false-positive collision with an unrelated same-named account. Once
+ * matched, the account's top `REPOS_CHECKED_PER_ACCOUNT` most-recently-
+ * pushed repos are checked for a hiring signal or, failing that, a
+ * stack-gap signal, reusing the existing `detectHiringSignal`/
+ * `detectStackGapSignal` helpers unchanged. `GITHUB_TOKEN` is optional:
+ * unlike the other Branch B/enrichment sources, this one still runs
+ * unauthenticated, just at GitHub's much lower unauthenticated rate limit,
+ * so its absence is never reported as "unavailable".
+ */
+export async function lookupGitHubEvidence(prospect: DiscoveredProspect): Promise<GitHubEvidenceResult> {
+  if (!prospect.domain) return { ok: true, lookup: { matched: false, signal: null } };
+
+  const headers = buildHeaders(env.GITHUB_TOKEN);
+  const slug = domainToAccountSlug(prospect.domain);
+  const rateLimitState: RateLimitState = { remaining: null, limited: false };
+
+  let account = await fetchAccount('orgs', slug, headers, rateLimitState);
+  let kind: 'orgs' | 'users' = 'orgs';
+  if (!account) {
+    account = await fetchAccount('users', slug, headers, rateLimitState);
+    kind = 'users';
   }
 
-  const prospects: DiscoveredProspect[] = [];
-  let processedCount = 0;
-  let stoppedForRateLimit = false;
+  if (!account || !accountMatchesDomain(account, prospect.domain)) {
+    return { ok: true, lookup: { matched: false, signal: null } };
+  }
 
-  for (const repo of parsed.data.items) {
-    // Stop picking up new repos once GitHub itself has refused a call with a
-    // 403 (`limited`), or once the last-reported remaining budget is too
-    // thin to safely cover another repo's worth of calls - rather than
-    // pressing on and exhausting the unauthenticated tier mid-run.
-    if (rateLimitState.limited || (rateLimitState.remaining !== null && rateLimitState.remaining <= RATE_LIMIT_SAFETY_MARGIN)) {
-      stoppedForRateLimit = true;
-      break;
-    }
+  if (rateLimitExhausted(rateLimitState)) {
+    return { ok: true, lookup: { matched: true, signal: null } };
+  }
+
+  const repos = await fetchAccountRepos(kind, slug, headers, rateLimitState);
+
+  for (const repo of repos) {
+    if (rateLimitExhausted(rateLimitState)) break;
 
     const signal =
       (await detectHiringSignal(repo.description, repo.full_name, headers, rateLimitState)) ??
       (await detectStackGapSignal(repo.full_name, headers, rateLimitState));
-    processedCount += 1;
 
-    if (!signal) continue;
-
-    prospects.push({
-      companyName: repo.name,
-      domain: extractDomain(repo.homepage),
-      websiteUrl: repo.homepage,
-      industry: 'saas',
-      location: { city: null, country: null, lat: null, lng: null },
-      companySize: 'unknown',
-      source: 'github',
-      sourceUrl: repo.html_url,
-      discoveredAt: new Date(),
-      signal,
-    });
+    if (signal) return { ok: true, lookup: { matched: true, signal } };
   }
 
-  if (stoppedForRateLimit) {
-    return {
-      ok: true,
-      prospects,
-      degradedReason: `GitHub rate limit reached after processing ${processedCount}/${parsed.data.items.length} repos this run - remaining repos were skipped rather than risk exhausting the unauthenticated tier`,
-    };
-  }
-
-  return { ok: true, prospects };
+  return { ok: true, lookup: { matched: true, signal: null } };
 }
