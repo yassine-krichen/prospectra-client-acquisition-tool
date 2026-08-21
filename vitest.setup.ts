@@ -18,6 +18,5 @@ import "dotenv/config"
 // DATABASE_URL at all, so env.ts's `.url()` validation still passes for
 // every other test file.
 process.env.DATABASE_URL ??= "postgresql://unset:unset@localhost:5432/unset?schema=public"
-process.env.DASHBOARD_PASSWORD ??= "test-password"
 process.env.SESSION_SECRET ??= "test-session-secret-32-characters"
 process.env.CRON_SECRET ??= "test-cron-secret-32-characters-long"

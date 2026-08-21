@@ -26,7 +26,11 @@ const NAV_ITEMS: ReadonlyArray<{ href: string; label: string; icon: IconSvgEleme
   { href: '/pipeline', label: 'Pipeline', icon: Route01Icon, description: 'Batch operations' },
 ];
 
-export function DashboardNav(): React.JSX.Element {
+interface DashboardNavProps {
+  nickname: string | null;
+}
+
+export function DashboardNav({ nickname }: DashboardNavProps): React.JSX.Element {
   const pathname = usePathname();
 
   return (
@@ -61,7 +65,7 @@ export function DashboardNav(): React.JSX.Element {
 
       <div className="mt-auto flex flex-col gap-1">
         <SystemHealthTrigger />
-        <UserMenu />
+        <UserMenu nickname={nickname} />
       </div>
     </nav>
   );

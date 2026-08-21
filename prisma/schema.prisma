@@ -372,3 +372,33 @@ model Job {
   @@index([clientId])
   @@index([status])
 }
+
+// Fixed two-account auth (replaces the single shared DASHBOARD_PASSWORD env
+// var). Nicknames are pre-provisioned (see app/api/cron/seed-users/route.ts)
+// - there is no public registration endpoint, `nickname` is only ever one of
+// the two values in src/features/auth/known-usernames.ts. `passwordHash` is
+// null until that account's first login, at which point the submitted
+// password becomes permanent (min 8 chars, enforced in the login route, not
+// here - Prisma has no length-validation concept for a nullable String).
+model User {
+  id           String  @id @default(cuid())
+  nickname     String  @unique
+  passwordHash String?
+
+  createdAt DateTime @default(now())
+
+  // Captured once, on the login call that sets passwordHash for the first
+  // time - the very first successful sign-in for this account.
+  firstLoginAt        DateTime?
+  firstLoginIp        String?
+  firstLoginUserAgent String?
+  firstLoginDevice    String?
+  firstLoginBrowser   String?
+
+  // Overwritten on every successful login thereafter (including the first).
+  lastLoginAt        DateTime?
+  lastLoginIp        String?
+  lastLoginUserAgent String?
+  lastLoginDevice    String?
+  lastLoginBrowser   String?
+}

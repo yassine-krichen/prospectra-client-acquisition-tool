@@ -195,13 +195,21 @@ cd biz-scraper
 npm install
 cp .env.example .env
 # fill in DATABASE_URL (your Neon connection string), plus
-# DASHBOARD_PASSWORD, SESSION_SECRET, CRON_SECRET at minimum - see Configuration below
+# SESSION_SECRET, CRON_SECRET at minimum - see Configuration below
 npx prisma generate
 npx prisma migrate deploy
 npm run dev
 ```
 
-Dashboard is at http://localhost:3000 (redirects to `/login`).
+Dashboard is at http://localhost:3000 (redirects to `/login`). Before the first login, provision
+the two fixed accounts (Noel / EvilWithin) once:
+
+```bash
+curl -X POST https://<your-deployment>/api/cron/seed-users -H "x-cron-secret: <CRON_SECRET>"
+```
+
+Each account sets its own password (min 8 characters) the first time it signs in at `/login` -
+there is no registration form, and no other nickname is ever accepted.
 
 ### Test
 
@@ -214,13 +222,12 @@ npm run lint
 
 ## Configuration
 
-Only four variables are required to boot the app. Everything else is a discovery/enrichment/drafting/sending source that degrades to "unavailable, skipped" when unset - fill them in as you provision each service.
+Only three variables are required to boot the app. Everything else is a discovery/enrichment/drafting/sending source that degrades to "unavailable, skipped" when unset - fill them in as you provision each service.
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `DATABASE_URL` | Yes | - | Postgres connection string (Neon) - also used by the test suite, so a handful of test files write/delete real rows here |
-| `DASHBOARD_PASSWORD` | Yes | - | Shared password gating the dashboard (Phase 0 placeholder auth) |
-| `SESSION_SECRET` | Yes | - | ≥32 chars; signs the dashboard session cookie |
+| `SESSION_SECRET` | Yes | - | ≥32 chars; signs the dashboard session cookie (no shared password anymore - see the two-account auth system below) |
 | `CRON_SECRET` | Yes | - | ≥32 chars; required in the `x-cron-secret` header on every cron route |
 | `GOOGLE_PLACES_API_KEY` | No | - | Branch A discovery: category+geography search |
 | `BUILTWITH_API_KEY` | No | - | Tech-stack staleness enrichment |

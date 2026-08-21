@@ -18,9 +18,9 @@ export const config = {
 
 export async function proxy(request: NextRequest): Promise<NextResponse> {
   const token = request.cookies.get(SESSION_COOKIE_NAME)?.value;
-  const isAuthenticated = await verifySessionToken(token);
+  const session = await verifySessionToken(token);
 
-  if (!isAuthenticated) {
+  if (!session) {
     const loginUrl = new URL('/login', request.url);
     return NextResponse.redirect(loginUrl);
   }

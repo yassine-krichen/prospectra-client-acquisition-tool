@@ -41,7 +41,10 @@ string into `.env` before running the script - it has no way to provision it for
 `DATABASE_URL` and the test suite's `TEST_DATABASE_URL` are separate Neon branches - see the Testing
 section below for what that means for `npm test` and for setting up `TEST_DATABASE_URL`.
 
-Then `npm run dev`, open `http://localhost:3000`, log in with `DASHBOARD_PASSWORD` from `.env`.
+Then `npm run dev`, open `http://localhost:3000`. Auth is no longer a shared env-var password - see
+the Auth section below; the short version is: `POST /api/cron/seed-users` once (with
+`x-cron-secret`) to provision the two accounts, then log in as one of them at `/login` and set its
+password on first use.
 
 **Known issue**: the Turbopack dev server OOMs and auto-restarts/crashes periodically during long
 sessions (`Server is approaching the used memory threshold, restarting...`, eventually exits with
@@ -50,7 +53,7 @@ time chasing this unless it starts blocking real work.
 
 ## Env vars - what's actually configured right now
 
-Real, working keys already in `.env` (don't need touching): `DATABASE_URL`, `DASHBOARD_PASSWORD`,
+Real, working keys already in `.env` (don't need touching): `DATABASE_URL`,
 `SESSION_SECRET`, `CRON_SECRET`, `GOOGLE_PLACES_API_KEY` (key set but **billing not enabled** on
 the Google Cloud project - discovery reports `REQUEST_DENIED` for this source specifically, low
 priority fix, everything else degrades around it fine), `BUILTWITH_API_KEY`,
@@ -78,14 +81,52 @@ Feature-based folders under `src/features/<feature>/`: `discovery`, `enrichment`
 `pipeline`. Controller (route handler) → Service → Prisma. `app/api/**/route.ts` are thin;
 business logic lives in `*.service.ts`.
 
-**Prisma models**: `Prospect`, `Draft`, `ApiUsageCounter`, `BridgeCooldown`, `Client`, `Job`.
+**Prisma models**: `Prospect`, `Draft`, `ApiUsageCounter`, `BridgeCooldown`, `Client`, `Job`, `User`.
 Full enum/model list is in `prisma/schema.prisma` - read it directly rather than trusting a summary
 here if you need exact fields, this doc will drift.
 
-**Auth**: `proxy.ts` at repo root is the one gate - deny-by-default, session cookie required for
-everything except `login`, `api/login`, `api/webhooks/resend`, and `api/cron/*` (those last two
-verify their own signature/secret instead of a session, since their callers - Resend, a cron
-scheduler - never have a browser session cookie).
+**Auth (rewritten 2026-08-21 - two fixed accounts, no shared password)**: `proxy.ts` at repo root is
+the one session gate - deny-by-default for everything except `login`, `api/login` (and its
+sub-route `api/login/status`), `api/webhooks/resend`, and `api/cron/*` (those last two verify their
+own signature/secret instead of a session, since their callers - Resend, a cron scheduler - never
+have a browser session cookie).
+
+There is no `DASHBOARD_PASSWORD` anymore and no public registration. Exactly two accounts will ever
+exist - `Noel` and `EvilWithin` (`src/features/auth/known-usernames.ts`, `KNOWN_USERNAMES` - the one
+place their nicknames are defined; login rejects any other nickname without even querying the DB).
+Both are provisioned by calling `POST /api/cron/seed-users` once (`x-cron-secret` auth, same pattern
+as the other cron routes) - idempotent, never overwrites an existing row, creates each with
+`passwordHash: null` if missing.
+
+`app/api/login/route.ts` handles both first-login setup and normal login through the same endpoint,
+branching on whether the looked-up `User.passwordHash` is null:
+- **null** (first login): the submitted password becomes that account's permanent password (min 8
+  chars, enforced here) - hashed via `src/common/auth/password-hash.ts` (Node's built-in `scrypt`,
+  no new dependency, same "hand-roll the crypto" convention as `session.ts`'s HMAC signing). Also
+  stamps `firstLoginAt/Ip/UserAgent/Device/Browser` (fixed forever) and `lastLogin*` (same values,
+  overwritten on every later login) - IP via `src/common/auth/request-metadata.ts`'s
+  `getClientIp()` (reads `x-forwarded-for`, Vercel's proxy header - `NextRequest.ip` doesn't exist
+  in Next 15+), browser/device via that same module's hand-rolled `parseUserAgent()` (no UA-parsing
+  dependency added either).
+- **already set**: normal `verifyPassword` check; only `lastLogin*` gets updated on success.
+- Either way, wrong nickname / wrong password / unprovisioned nickname all return the same generic
+  401 `"Invalid nickname or password."` - never confirms which nicknames exist.
+
+`GET /api/login/status?nickname=` (session-exempt, same `api/login/` proxy carve-out) tells the
+login page which prompt to show ("create a password" vs. "enter your password") right after the
+combobox selection, without a full login attempt.
+
+**Session tokens are deliberately non-expiring** - the user's explicit call, not an oversight.
+`src/common/auth/session.ts`'s `verifySessionToken` has no age check at all; a token is valid until
+`SESSION_SECRET` changes or the cookie is cleared (logout). The token itself now carries
+`userId.nickname.issuedAt.signature` (was just `issuedAt.signature` under the old single-password
+scheme) so `proxy.ts` and `app/(dashboard)/layout.tsx` can identify *which* account is logged in
+without a DB call. The cookie's `Max-Age` is `SESSION_COOKIE_MAX_AGE_SECONDS` (400 days) purely
+because Chrome hard-caps cookie lifetime there regardless of what's set - not a server-side
+expiry, logging in again just resets that clock. `app/(dashboard)/layout.tsx` (a server component)
+reads the cookie directly to pass the signed-in nickname down to `UserMenu`'s sidebar greeting -
+safe specifically because that file is a server component, not a `'use client'` one (see the
+client-bundle warning below).
 
 **Two auth patterns for triggering pipeline stages** - don't confuse them:
 1. `app/api/cron/{discover,draft-batch,followups,retention}/route.ts` - `POST` accepts the
@@ -167,7 +208,7 @@ Hackers) to handle transient network/selector failures. Fixed selector bugs in `
 
 ## The recurring bug class this session fixed 3 times - read this before touching any 'use client' file
 
-`src/common/config/env.ts` validates server secrets (`DATABASE_URL`, `DASHBOARD_PASSWORD`, etc.) at
+`src/common/config/env.ts` validates server secrets (`DATABASE_URL`, `SESSION_SECRET`, etc.) at
 **module import time** via a top-level `export const env = loadEnv()`. If any file that gets
 imported - even transitively - by a `'use client'` component imports `env.ts`, the whole module
 gets bundled into the browser JS. In the browser, `process.env` has none of those vars, so
