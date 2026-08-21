@@ -146,6 +146,9 @@ export async function runIndieHackersSource(_query: DiscoveryQuery): Promise<Sou
       source: 'indiehackers',
       sourceUrl: launch.productPath ? `${INDIE_HACKERS_BASE_URL}${launch.productPath}` : PRODUCTS_URL,
       discoveredAt: new Date(),
+      phone: null,
+      address: null,
+      corroboratingSourceCount: 1,
       signal,
     });
   }
@@ -163,6 +166,9 @@ export async function runIndieHackersSource(_query: DiscoveryQuery): Promise<Sou
       source: 'indiehackers',
       sourceUrl: job.jobPath ? `${INDIE_HACKERS_BASE_URL}${job.jobPath}` : JOBS_URL,
       discoveredAt: new Date(),
+      phone: null,
+      address: null,
+      corroboratingSourceCount: 1,
       signal: {
         type: 'hiring_post',
         description: 'Actively hiring, posted on Indie Hackers Jobs',

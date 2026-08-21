@@ -45,6 +45,19 @@ export interface DiscoveredProspect {
   sourceUrl: string;
   discoveredAt: Date;
   signal: Signal;
+  /** Secondary dedupe key for prospects with no domain - see
+   * discovery.service.ts's `dedupeProspects`/`persistProspect`. */
+  phone: string | null;
+  /** Secondary dedupe key for prospects with no domain - see
+   * discovery.service.ts's `dedupeProspects`/`persistProspect`. */
+  address: string | null;
+  /** How many independent sources have found this business - starts at 1
+   * for a freshly-discovered prospect, incremented by `dedupeProspects` when
+   * a later prospect in the same run matches it, and further incremented in
+   * `persistProspect` against a previously-persisted row's own count. See
+   * `Prospect.corroboratingSourceCount` in prisma/schema.prisma and
+   * `priority-scoring.ts`'s corroboration bonus. */
+  corroboratingSourceCount: number;
 }
 
 export interface SourceUnavailable {
@@ -91,6 +104,11 @@ export const discoveryRunSummarySchema = z.object({
   inserted: z.number().int(),
   updated: z.number().int(),
   skippedDoNotContact: z.number().int(),
+  // Not persisted on the `DiscoveryRun` model (see discovery.service.ts's
+  // `runDiscovery` doc comment) - only present on the live run summary
+  // returned to the caller, not on history entries loaded from the DB
+  // (see `discoveryRunHistoryEntrySchema` below, which has no such field).
+  discardedThinProspects: z.number().int(),
 });
 export type DiscoveryRunSummary = z.infer<typeof discoveryRunSummarySchema>;
 

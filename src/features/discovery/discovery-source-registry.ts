@@ -14,8 +14,8 @@ export interface DiscoverySourceMeta {
    * it needs no key at all (e.g. a Playwright scrape). */
   envVarName: string | null;
   /** Which branch this source runs under, or `null` for a branch-independent
-   * source (BuiltWith, which enriches whatever prospects were already found
-   * rather than discovering its own). */
+   * source (BuiltWith, GitHub - both enrich whatever prospects were already
+   * found rather than discovering their own). */
   branch: 'a' | 'b' | null;
   /** Static, human-authored note about a known real-world problem with this
    * source (e.g. a valid-looking key that still fails at request time for a
@@ -43,6 +43,13 @@ export const DISCOVERY_SOURCES: DiscoverySourceMeta[] = [
     branch: 'a',
   },
   {
+    key: 'overpass',
+    displayName: 'OpenStreetMap (Overpass)',
+    paid: false,
+    envVarName: null,
+    branch: 'a',
+  },
+  {
     key: 'product_hunt',
     displayName: 'Product Hunt',
     paid: false,
@@ -62,7 +69,11 @@ export const DISCOVERY_SOURCES: DiscoverySourceMeta[] = [
     displayName: 'GitHub',
     paid: false,
     envVarName: 'GITHUB_TOKEN',
-    branch: 'b',
+    // Branch-independent, same as BuiltWith: GitHub is enrichment-only (see
+    // github.source.ts) - it never independently discovers a prospect, it
+    // only adds technical evidence to a company already found by a real
+    // discovery source.
+    branch: null,
   },
   {
     key: 'indiehackers',

@@ -136,6 +136,14 @@ model Prospect {
 
   companySize CompanySize
 
+  // Discovery-time contact fields (e.g. scraped straight off a yellowpages
+  // listing) - distinct from `contactName`/`contactTitle`/`contactEmail`
+  // below, which are populated later by enrichment. Also used as secondary
+  // dedupe keys in discovery.service.ts's `dedupeProspects`/`persistProspect`
+  // for prospects with no domain.
+  phone   String?
+  address String?
+
   contactName     String?
   contactTitle    String?
   contactEmail    String?
@@ -156,6 +164,15 @@ model Prospect {
   projectFit      ProjectFit
   estimatedBudget EstimatedBudget
   priorityScore   Int
+
+  // How many independent discovery sources have found this same business,
+  // across all runs - monotonic, never decremented/reset (see
+  // `dedupeProspects`/`persistProspect` in discovery.service.ts). Starts at
+  // 1 (the source that first discovered it counts as one corroborating
+  // source). Feeds `priority-scoring.ts`'s corroboration bonus - more
+  // independent sources finding the same business is stronger evidence it's
+  // real and active.
+  corroboratingSourceCount Int @default(1)
 
   status        ProspectStatus @default(new)
   // Array of { status, timestamp } — no query pattern needs it normalized.

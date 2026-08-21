@@ -107,6 +107,9 @@ export async function runProductHuntSource(query: DiscoveryQuery): Promise<Sourc
     source: 'product_hunt',
     sourceUrl: node.url,
     discoveredAt: new Date(),
+    phone: null,
+    address: null,
+    corroboratingSourceCount: 1,
     signal: {
       type: 'new_launch',
       description: 'Recently launched on Product Hunt',
