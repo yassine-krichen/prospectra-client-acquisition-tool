@@ -2,14 +2,20 @@ import { NextRequest } from 'next/server';
 import { describe, expect, it, vi } from 'vitest';
 
 const getProspectByIdMock = vi.fn();
+const deleteProspectMock = vi.fn();
 vi.mock('@/features/prospects/prospects.repository', () => ({
   getProspectById: getProspectByIdMock,
+  deleteProspect: deleteProspectMock,
 }));
 
-const { GET } = await import('./route');
+const { GET, DELETE } = await import('./route');
 
 function detailRequest(): NextRequest {
   return new NextRequest('http://localhost/api/prospects/prospect-1');
+}
+
+function deleteRequest(): NextRequest {
+  return new NextRequest('http://localhost/api/prospects/prospect-1', { method: 'DELETE' });
 }
 
 function routeParams(id: string): { params: Promise<{ id: string }> } {
@@ -42,5 +48,42 @@ describe('GET /api/prospects/[id]', () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(prospect);
+  });
+});
+
+describe('DELETE /api/prospects/[id]', () => {
+  it('returns 404 with an error message when no prospect exists with the given id', async () => {
+    deleteProspectMock.mockResolvedValue({ outcome: 'not_found' });
+
+    const response = await DELETE(deleteRequest(), routeParams('missing-id'));
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: 'Prospect not found.' });
+  });
+
+  it('calls deleteProspect with the id taken from the route params', async () => {
+    deleteProspectMock.mockResolvedValue({ outcome: 'deleted', id: 'prospect-1' });
+
+    await DELETE(deleteRequest(), routeParams('prospect-1'));
+
+    expect(deleteProspectMock).toHaveBeenCalledWith('prospect-1');
+  });
+
+  it('returns 200 with { id, deleted: true } on success', async () => {
+    deleteProspectMock.mockResolvedValue({ outcome: 'deleted', id: 'prospect-1' });
+
+    const response = await DELETE(deleteRequest(), routeParams('prospect-1'));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ id: 'prospect-1', deleted: true });
+  });
+
+  it('returns 200 (not 403) with outcome blocked_do_not_contact for a DNC prospect', async () => {
+    deleteProspectMock.mockResolvedValue({ outcome: 'blocked_do_not_contact' });
+
+    const response = await DELETE(deleteRequest(), routeParams('prospect-1'));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ outcome: 'blocked_do_not_contact' });
   });
 });

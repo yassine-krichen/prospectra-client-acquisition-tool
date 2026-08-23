@@ -2,6 +2,7 @@ import { cookies } from 'next/headers';
 
 import { SESSION_COOKIE_NAME, verifySessionToken } from '@/common/auth/session';
 import { DashboardNav } from '@/features/navigation/dashboard-nav';
+import { MobileNav } from '@/features/navigation/mobile-nav';
 
 // Server component - reads the session cookie directly (proxy.ts already
 // guarantees a valid one reaches here for every dashboard route) to pass
@@ -19,8 +20,11 @@ export default async function DashboardLayout({
   const session = await verifySessionToken(cookieStore.get(SESSION_COOKIE_NAME)?.value);
 
   return (
-    <div className="bg-muted/30 flex min-h-screen">
-      <DashboardNav nickname={session?.nickname ?? null} />
+    <div className="bg-muted/30 flex min-h-screen flex-col lg:flex-row">
+      <div className="hidden lg:flex">
+        <DashboardNav nickname={session?.nickname ?? null} />
+      </div>
+      <MobileNav nickname={session?.nickname ?? null} />
       <div className="min-w-0 flex-1">{children}</div>
     </div>
   );

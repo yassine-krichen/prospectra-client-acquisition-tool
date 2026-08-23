@@ -156,6 +156,38 @@ export async function setProspectSeen(prospectId: string, seen: boolean): Promis
   return seenResponseSchema.parse(body);
 }
 
+// --- delete ---
+
+const deleteResponseSchema = z.union([
+  z.object({ id: z.string(), deleted: z.literal(true) }),
+  z.object({ outcome: z.literal('blocked_do_not_contact') }),
+]);
+export type DeleteResult = z.infer<typeof deleteResponseSchema>;
+
+/**
+ * Permanently deletes a prospect (see `DELETE /api/prospects/[id]`) -
+ * irreversible, not a soft-delete. A 404 response throws a "not found"
+ * error, matching this file's convention for actions that don't need a
+ * typed not-found outcome (unlike `winProspect`, this action's caller
+ * always has a known-to-exist id already open in the detail dialog). A
+ * do-not-contact prospect is NOT an HTTP error - the route returns 200 with
+ * `{ outcome: 'blocked_do_not_contact' }` (mirroring `winProspect`'s own
+ * DNC block), so callers must check `result.outcome` rather than relying on
+ * this ever throwing for that case.
+ */
+export async function deleteProspect(prospectId: string): Promise<DeleteResult> {
+  const response = await fetch(`/api/prospects/${prospectId}`, { method: 'DELETE' });
+  if (response.status === 404) {
+    throw new Error('Prospect not found - it may have already been deleted.');
+  }
+  if (!response.ok) {
+    throw new Error(`Delete request failed (status ${response.status}).`);
+  }
+
+  const body: unknown = await response.json();
+  return deleteResponseSchema.parse(body);
+}
+
 // --- bulk actions ---
 
 // Shared shape every bulk route returns: one outcome per requested id,
@@ -203,6 +235,11 @@ export async function bulkMatchProspects(ids: string[]): Promise<BulkActionResul
 /** Bulk counterpart to `winProspect` - see `POST /api/prospects/bulk/win`. */
 export async function bulkWinProspects(ids: string[]): Promise<BulkActionResult[]> {
   return postBulk('/api/prospects/bulk/win', ids);
+}
+
+/** Bulk counterpart to `deleteProspect` - see `POST /api/prospects/bulk/delete`. */
+export async function bulkDeleteProspects(ids: string[]): Promise<BulkActionResult[]> {
+  return postBulk('/api/prospects/bulk/delete', ids);
 }
 
 /** Bulk counterpart to `setProspectSeen` - see `PATCH /api/prospects/bulk/seen`. */

@@ -9,9 +9,10 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { toastError, toastInfo, toastSourceResults, toastSuccess } from '@/lib/toast';
 import {
+  deleteProspect,
   draftProspect,
   enrichProspect,
   getProspectDetail,
@@ -73,7 +74,9 @@ export function ProspectDetailDialog({ prospectId, onOpenChange, onChanged }: Pr
             this subtree - a fresh component instance with its own initial
             state, rather than an effect that has to detect the id change and
             manually reset `prospect`/`wonClientId` back to null itself. */}
-        {prospectId ? <ProspectDetailContent key={prospectId} prospectId={prospectId} onChanged={onChanged} /> : null}
+        {prospectId ? (
+          <ProspectDetailContent key={prospectId} prospectId={prospectId} onChanged={onChanged} onOpenChange={onOpenChange} />
+        ) : null}
       </DialogContent>
     </Dialog>
   );
@@ -82,9 +85,10 @@ export function ProspectDetailDialog({ prospectId, onOpenChange, onChanged }: Pr
 interface ProspectDetailContentProps {
   prospectId: string;
   onChanged: () => void;
+  onOpenChange: (open: boolean) => void;
 }
 
-function ProspectDetailContent({ prospectId, onChanged }: ProspectDetailContentProps): React.JSX.Element {
+function ProspectDetailContent({ prospectId, onChanged, onOpenChange }: ProspectDetailContentProps): React.JSX.Element {
   const [prospect, setProspect] = useState<Prospect | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -92,6 +96,8 @@ function ProspectDetailContent({ prospectId, onChanged }: ProspectDetailContentP
   const [wonClientId, setWonClientId] = useState<string | null>(null);
   // Bumped after any action below succeeds, to re-trigger the fetch effect.
   const [refreshIndex, setRefreshIndex] = useState(0);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -191,6 +197,31 @@ function ProspectDetailContent({ prospectId, onChanged }: ProspectDetailContentP
           break;
       }
     });
+  }
+
+  // Deliberately NOT routed through `runAction` (which bumps `refreshIndex`
+  // to refetch this prospect on success) - after a delete, the prospect no
+  // longer exists, so refetching would 404 and flash a "not found" error
+  // before the dialog gets a chance to close. Close first, then let the
+  // caller's `onChanged` refresh the underlying table.
+  function handleDelete(): void {
+    setIsDeleting(true);
+    deleteProspect(prospectId)
+      .then((result) => {
+        if ('outcome' in result && result.outcome === 'blocked_do_not_contact') {
+          toastError('Cannot delete', 'This prospect is marked do-not-contact.');
+          return;
+        }
+        toastSuccess('Prospect deleted');
+        onOpenChange(false);
+        onChanged();
+      })
+      .catch((err: unknown) => {
+        toastError('Delete failed', err instanceof Error ? err.message : 'Unknown error.');
+      })
+      .finally(() => {
+        setIsDeleting(false);
+      });
   }
 
   const isEnriched = Boolean(prospect && (prospect.contactEmail || prospect.contactName));
@@ -297,8 +328,54 @@ function ProspectDetailContent({ prospectId, onChanged }: ProspectDetailContentP
               </Link>
             ) : null}
           </div>
+
+          <Separator />
+
+          <div className="flex flex-col items-start gap-1">
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => setConfirmDeleteOpen(true)}
+              disabled={isPending || isDeleting || prospect.doNotContact}
+              title={prospect.doNotContact ? 'Cannot delete a do-not-contact prospect.' : undefined}
+            >
+              Delete prospect
+            </Button>
+            {prospect.doNotContact ? (
+              <p className="text-muted-foreground text-xs">
+                This prospect is marked do-not-contact and cannot be deleted, so the opt-out is never lost.
+              </p>
+            ) : null}
+          </div>
         </div>
       )}
+
+      <Dialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete {prospect?.companyName ?? 'this prospect'}?</DialogTitle>
+            <DialogDescription>
+              This will permanently delete this prospect and all of its drafts and history. This cannot be undone.
+              {wonClientId ? ' This prospect has been converted to a Client - deleting it will permanently remove that link (the Client itself is not deleted).' : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmDeleteOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={isDeleting}
+              onClick={() => {
+                setConfirmDeleteOpen(false);
+                handleDelete();
+              }}
+            >
+              {isDeleting ? 'Deleting…' : 'Delete'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

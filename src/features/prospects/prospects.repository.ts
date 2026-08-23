@@ -330,3 +330,35 @@ export async function getProspectById(id: string): Promise<Prospect | null> {
   const row = await prisma.prospect.findUnique({ where: { id }, select: FULL_PROSPECT_SELECT });
   return row ? toFullProspect(row) : null;
 }
+
+export type DeleteProspectOutcome =
+  | { outcome: 'deleted'; id: string }
+  | { outcome: 'not_found' }
+  | { outcome: 'blocked_do_not_contact' };
+
+/**
+ * Permanently deletes a Prospect - a real hard delete, not a soft-delete
+ * flag, per this app's "soft deletes only when explicitly required"
+ * preference. `doNotContact` blocks deletion regardless of `status`, same
+ * compliance decision `convertProspectToClient` makes for "win" - erasing a
+ * DNC prospect would erase the record that the company opted out, letting a
+ * future re-discovery re-contact them. `findUnique` performs the initial
+ * existence/`doNotContact` check, then `deleteMany` (rather than `delete`)
+ * performs the actual delete, conditioned again on `doNotContact: false` -
+ * that repeated condition on the delete itself is the atomic guard against
+ * a `doNotContact` flip that races between the check and the delete: if the
+ * flag flips to true in between, `deleteMany` matches zero rows instead of
+ * deleting, and this function reports `not_found` rather than `deleted`,
+ * same principle as `convertProspectToClient`'s claim-via-`updateMany`.
+ * `Client.prospectId` has no explicit `onDelete` in the schema - the
+ * relation is simply detached (set null) rather than blocking the delete,
+ * which is expected/accepted here.
+ */
+export async function deleteProspect(id: string): Promise<DeleteProspectOutcome> {
+  const prospect = await prisma.prospect.findUnique({ where: { id }, select: { doNotContact: true } });
+  if (!prospect) return { outcome: 'not_found' };
+  if (prospect.doNotContact) return { outcome: 'blocked_do_not_contact' };
+
+  const { count } = await prisma.prospect.deleteMany({ where: { id, doNotContact: false } });
+  return count > 0 ? { outcome: 'deleted', id } : { outcome: 'not_found' };
+}

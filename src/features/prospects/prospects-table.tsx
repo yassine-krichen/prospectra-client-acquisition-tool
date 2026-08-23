@@ -14,6 +14,8 @@ import {
   Clock01Icon,
   Compass01Icon,
   DotIcon,
+  EyeIcon,
+  EyeOffIcon,
 } from '@hugeicons/core-free-icons';
 
 import { Badge } from '@/components/ui/badge';
@@ -46,6 +48,7 @@ import {
   type SignalType,
 } from '@/features/prospects/prospect.types';
 import {
+  bulkDeleteProspects,
   bulkDraftProspects,
   bulkEnrichProspects,
   bulkMatchProspects,
@@ -291,7 +294,7 @@ function getRecommendation(prospect: ProspectListItem): Recommendation {
   return STATUS_RECOMMENDATION[prospect.status];
 }
 
-type BulkActionKind = 'seen' | 'unseen' | 'enrich' | 'draft' | 'match' | 'win';
+type BulkActionKind = 'seen' | 'unseen' | 'enrich' | 'draft' | 'match' | 'win' | 'delete';
 
 const BULK_ACTION_LABEL: Record<BulkActionKind, string> = {
   seen: 'Mark seen',
@@ -300,6 +303,7 @@ const BULK_ACTION_LABEL: Record<BulkActionKind, string> = {
   draft: 'Draft',
   match: 'Match',
   win: 'Win',
+  delete: 'Delete',
 };
 
 export function ProspectsTable(): React.JSX.Element {
@@ -327,9 +331,10 @@ export function ProspectsTable(): React.JSX.Element {
   // consistency with the one other bulk-action table in this app.
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkActionPending, setBulkActionPending] = useState<BulkActionKind | null>(null);
-  // Enrich/Draft cost real external API calls, so those two require an
-  // extra confirmation step before running - see confirmBulkAction below.
-  const [confirmBulkAction, setConfirmBulkAction] = useState<'enrich' | 'draft' | null>(null);
+  // Enrich/Draft cost real external API calls, and Delete is irreversible,
+  // so all three require an extra confirmation step before running - see
+  // confirmBulkAction below.
+  const [confirmBulkAction, setConfirmBulkAction] = useState<'enrich' | 'draft' | 'delete' | null>(null);
 
   const currentCursor = cursorStack[cursorStack.length - 1];
 
@@ -397,6 +402,7 @@ export function ProspectsTable(): React.JSX.Element {
     setConfirmBulkAction(null);
     if (kind === 'enrich') void runBulkAction('enrich', bulkEnrichProspects);
     if (kind === 'draft') void runBulkAction('draft', bulkDraftProspects);
+    if (kind === 'delete') void runBulkAction('delete', bulkDeleteProspects);
   }
 
   function handleToggleSeen(prospectId: string, seen: boolean): void {
@@ -477,11 +483,14 @@ export function ProspectsTable(): React.JSX.Element {
         enableHiding: false,
         size: 48,
         cell: ({ row }) => (
-          <Checkbox
-            checked={row.original.seen}
-            onCheckedChange={(checked) => handleToggleSeen(row.original.id, checked === true)}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => handleToggleSeen(row.original.id, !row.original.seen)}
             aria-label={row.original.seen ? 'Mark as unseen' : 'Mark as seen'}
-          />
+          >
+            <HugeiconsIcon icon={row.original.seen ? EyeOffIcon : EyeIcon} strokeWidth={2} />
+          </Button>
         ),
       },
       {
@@ -523,12 +532,12 @@ export function ProspectsTable(): React.JSX.Element {
         header: ({ column }) => <DataTableColumnHeader column={column} label="Signal : Reason" />,
         meta: { label: 'Signal : Reason' },
         cell: ({ row }) => (
-          <span className="flex min-w-0 items-baseline gap-1.5">
+          <span className="flex min-w-0 items-start gap-1.5">
             <Badge variant={SIGNAL_STRENGTH_BADGE_VARIANT[row.original.signal.strength]} className="shrink-0">
               <HugeiconsIcon icon={SIGNAL_STRENGTH_ICON[row.original.signal.strength]} data-icon="inline-start" strokeWidth={2} />
               {SIGNAL_STRENGTH_LABEL[row.original.signal.strength]}
             </Badge>
-            <span className="truncate">{row.original.signal.description}</span>
+            <span className="whitespace-normal break-words">{row.original.signal.description}</span>
           </span>
         ),
       },
@@ -755,6 +764,14 @@ export function ProspectsTable(): React.JSX.Element {
           </Button>
           <Button
             size="sm"
+            variant="destructive"
+            disabled={bulkActionPending !== null}
+            onClick={() => setConfirmBulkAction('delete')}
+          >
+            {bulkActionPending === 'delete' ? 'Deleting…' : 'Delete selected'}
+          </Button>
+          <Button
+            size="sm"
             variant="ghost"
             disabled={bulkActionPending !== null}
             onClick={() => setSelected(new Set())}
@@ -767,18 +784,27 @@ export function ProspectsTable(): React.JSX.Element {
       <Dialog open={confirmBulkAction !== null} onOpenChange={(open) => !open && setConfirmBulkAction(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{confirmBulkAction === 'draft' ? 'Draft' : 'Enrich'} {selected.size} prospects?</DialogTitle>
+            <DialogTitle>
+              {confirmBulkAction === 'draft' ? 'Draft' : confirmBulkAction === 'delete' ? 'Delete' : 'Enrich'} {selected.size} prospects?
+            </DialogTitle>
             <DialogDescription>
               {confirmBulkAction === 'draft'
                 ? `This will make up to ${selected.size} AI draft generation call${selected.size === 1 ? '' : 's'}.`
-                : `This will make up to ${selected.size} Hunter/People Data Labs lookup${selected.size === 1 ? '' : 's'}.`}
+                : confirmBulkAction === 'delete'
+                  ? `This will permanently delete ${selected.size} prospect${selected.size === 1 ? '' : 's'}. This cannot be undone.`
+                  : `This will make up to ${selected.size} Hunter/People Data Labs lookup${selected.size === 1 ? '' : 's'}.`}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setConfirmBulkAction(null)}>
               Cancel
             </Button>
-            <Button onClick={handleConfirmBulkAction}>Confirm</Button>
+            <Button
+              variant={confirmBulkAction === 'delete' ? 'destructive' : 'default'}
+              onClick={handleConfirmBulkAction}
+            >
+              Confirm
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
