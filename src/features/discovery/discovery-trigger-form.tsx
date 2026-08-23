@@ -117,6 +117,26 @@ const CATEGORY_HELP: Record<Branch, string> = {
   both: 'Used differently by every source - see the Category tooltip on Branch A/B individually for exact meaning per source.',
 };
 
+// Branch A suggestions mirror the exact keywords `CATEGORY_TAG_MAP` in
+// overpass.source.ts already maps to real OSM tags (one representative
+// keyword per tag group, e.g. "mechanic" for the car_repair group) - keeps
+// the suggestions honest about what this app's own sources actually
+// understand, rather than an unrelated wishlist. Not imported directly
+// (that file isn't guaranteed env-free transitively, and this is a
+// 'use client' file - see the CLAUDE.md note on that hazard), just kept in
+// sync by hand.
+// Branch B has no existing curated taxonomy to reuse (Product Hunt/Crunchbase
+// treat Category as a loose keyword, not a structured category) - this is a
+// small hand-picked list of common startup/SaaS category keywords.
+const CATEGORY_SUGGESTIONS_A = ['plumber', 'mechanic', 'electrician', 'restaurant', 'cafe', 'dentist', 'hair salon', 'bakery', 'gym'];
+const CATEGORY_SUGGESTIONS_B = ['saas', 'fintech', 'devtools', 'ai', 'marketplace', 'productivity', 'ecommerce', 'analytics'];
+
+const CATEGORY_SUGGESTIONS: Record<Branch, string[]> = {
+  a: CATEGORY_SUGGESTIONS_A,
+  b: CATEGORY_SUGGESTIONS_B,
+  both: Array.from(new Set([...CATEGORY_SUGGESTIONS_A, ...CATEGORY_SUGGESTIONS_B])),
+};
+
 const GEOGRAPHY_HELP =
   'A "City, State" string (e.g. "Austin, TX"), used only by Branch A sources (Google Places, Yellow Pages). Every Branch B source ignores this field entirely, even when it\'s filled in.';
 
@@ -388,7 +408,16 @@ export function DiscoveryTriggerForm(): React.JSX.Element {
                 onChange={(event) => setCategory(event.target.value)}
                 disabled={isRunning}
                 required
+                list="category-suggestions"
               />
+              {/* Native OS-level autocomplete suggestions - purely additive,
+                  doesn't block or validate typed input. See CATEGORY_SUGGESTIONS
+                  above for why a shadcn Combobox wasn't used here instead. */}
+              <datalist id="category-suggestions">
+                {CATEGORY_SUGGESTIONS[branch].map((suggestion) => (
+                  <option key={suggestion} value={suggestion} />
+                ))}
+              </datalist>
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-muted-foreground flex items-center gap-1 text-xs">
