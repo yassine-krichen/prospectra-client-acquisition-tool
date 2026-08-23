@@ -131,11 +131,7 @@ async function mapElementToProspect(
     industry: 'local_service',
     location: { city: query.geography, country: null, lat, lng },
     companySize: 'unknown',
-    // ProspectSource has no `overpass` value (same situation as
-    // yellowpages.source.ts - extending that enum is a schema migration out
-    // of scope for this phase). `manual` is the closest existing value;
-    // revisit if OSM becomes a first-class source later.
-    source: 'manual',
+    source: 'overpass',
     sourceUrl: `https://www.openstreetmap.org/${element.type}/${element.id}`,
     discoveredAt: new Date(),
     phone,

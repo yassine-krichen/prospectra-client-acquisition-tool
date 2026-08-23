@@ -103,29 +103,51 @@ export async function detectWebsiteSignals(websiteUrl: string): Promise<Signal |
   return strongestSignal(candidates);
 }
 
+// Shared marker every "nothing actionable found" fallback description starts
+// with - lets `isBaselineSignal` recognize ANY baseline fallback (not just
+// `buildNoSignalDetectedFallback`'s) without hardcoding one source's exact
+// literal string. `registry-signal.ts`'s `buildRegistrySignal` fallback also
+// goes through `buildBaselineFallbackSignal` for this reason.
+const BASELINE_FALLBACK_DESCRIPTION_PREFIX = 'No specific signal detected';
+
 /**
- * Fallback signal used when a website is known to exist but
- * `detectWebsiteSignals` found nothing notable. Keeps `signal` populated
- * (required by the Prospect schema) without overstating the evidence.
+ * Builds a generic weak `technical_debt` fallback signal for "nothing
+ * notable found, but included via category+geography match" - the shared
+ * shape every discovery source's own fallback (see `buildNoSignalDetectedFallback`
+ * and `buildRegistrySignal`) is built from, so `isBaselineSignal` has one
+ * place to recognize them all. `contextClause` completes the sentence
+ * "No specific signal detected <contextClause>; ..." (e.g. "on the site",
+ * "in the UK Companies House listing").
  */
-export function buildNoSignalDetectedFallback(evidence: string | null): Signal {
+export function buildBaselineFallbackSignal(evidence: string | null, contextClause: string): Signal {
   return {
     type: 'technical_debt',
-    description: 'No specific staleness signal detected on the site; included via category+geography match',
+    description: `${BASELINE_FALLBACK_DESCRIPTION_PREFIX} ${contextClause}; included via category+geography match`,
     evidence,
     strength: 'weak',
   };
 }
 
 /**
- * True when `signal` is the baseline/no-signal-detected fallback (see
- * `buildNoSignalDetectedFallback`) rather than a genuinely detected signal -
- * `evidence` is deliberately ignored in this comparison, since it varies per
- * call site but the baseline `type`/`description` don't. Used by
+ * Fallback signal used when a website is known to exist but
+ * `detectWebsiteSignals` found nothing notable. Keeps `signal` populated
+ * (required by the Prospect schema) without overstating the evidence.
+ */
+export function buildNoSignalDetectedFallback(evidence: string | null): Signal {
+  return buildBaselineFallbackSignal(evidence, 'on the site');
+}
+
+/**
+ * True when `signal` is a baseline/no-signal-detected fallback (see
+ * `buildBaselineFallbackSignal`) rather than a genuinely detected signal -
+ * recognized by the shared `BASELINE_FALLBACK_DESCRIPTION_PREFIX` marker
+ * every fallback's description starts with, not a single hardcoded literal
+ * string, so every source's fallback (website-detector, Companies House,
+ * Texas Comptroller, ...) is recognized the same way. `evidence` is
+ * deliberately ignored, since it varies per call site. Used by
  * `discovery.service.ts`'s thin-prospect filter to identify prospects with
  * nothing actionable beyond "we found a name".
  */
 export function isBaselineSignal(signal: Signal): boolean {
-  const baseline = buildNoSignalDetectedFallback(null);
-  return signal.type === baseline.type && signal.description === baseline.description;
+  return signal.type === 'technical_debt' && signal.description.startsWith(BASELINE_FALLBACK_DESCRIPTION_PREFIX);
 }

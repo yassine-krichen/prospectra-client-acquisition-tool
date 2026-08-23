@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { DiscoveredProspect, DiscoveryQuery } from '@/features/discovery/discovery.types';
+import { buildRegistrySignal } from '@/features/discovery/sources/registry-signal';
 import type { StaleStackResult } from '@/features/discovery/sources/builtwith.source';
 import type { Signal } from '@/features/prospects/prospect.types';
 
@@ -635,10 +636,12 @@ describe('runDiscovery branch selection', () => {
 
     expect(summary.sources.map((s) => s.source).sort()).toEqual([
       'builtwith',
+      'companies_house',
       'github',
       'google_places',
       'overpass',
       'tech_stack_detector',
+      'texas_comptroller',
       'yellowpages',
     ]);
     expect(runProductHuntSourceMock).not.toHaveBeenCalled();
@@ -775,7 +778,7 @@ describe('runDiscovery thin-prospect filter', () => {
   function buildBaselineSignal(evidence: string | null = null): Signal {
     return {
       type: 'technical_debt',
-      description: 'No specific staleness signal detected on the site; included via category+geography match',
+      description: 'No specific signal detected on the site; included via category+geography match',
       evidence,
       strength: 'weak',
     };
@@ -862,5 +865,30 @@ describe('runDiscovery thin-prospect filter', () => {
     expect(summary.inserted).toBe(0);
     expect(summary.updated).toBe(0);
     expect(summary.skippedDoNotContact).toBe(0);
+  });
+
+  it('discards a registry-source (Companies House/Texas Comptroller) prospect with no contact info and only buildRegistrySignal\'s own fallback', async () => {
+    // Registry sources build their fallback signal via `buildRegistrySignal`,
+    // a different call site than `buildBaselineSignal` above (which mirrors
+    // `buildNoSignalDetectedFallback`) - this confirms the thin-prospect
+    // filter recognizes both, not just one hardcoded fallback shape.
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [
+        buildProspect({
+          domain: null,
+          websiteUrl: null,
+          phone: null,
+          address: null,
+          source: 'companies_house',
+          signal: buildRegistrySignal(null, 'UK Companies House'),
+        }),
+      ],
+    });
+
+    const summary = await runDiscovery(query);
+
+    expect(summary.discardedThinProspects).toBe(1);
+    expect(createMock).not.toHaveBeenCalled();
   });
 });

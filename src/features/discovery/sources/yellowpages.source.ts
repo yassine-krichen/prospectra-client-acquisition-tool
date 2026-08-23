@@ -113,12 +113,7 @@ export async function runYellowPagesSource(query: DiscoveryQuery): Promise<Sourc
       industry: 'local_service',
       location: { city: query.geography, country: null, lat: null, lng: null },
       companySize: 'unknown',
-      // ProspectSource has no `yellowpages` value - it isn't one of the
-      // spec's three official Branch A sources, and extending the enum is
-      // a schema migration out of scope for this phase. `manual` is the
-      // closest existing value; revisit if yellowpages becomes a
-      // first-class source later.
-      source: 'manual',
+      source: 'yellowpages',
       sourceUrl: searchUrl,
       discoveredAt: new Date(),
       phone: listing.phone,

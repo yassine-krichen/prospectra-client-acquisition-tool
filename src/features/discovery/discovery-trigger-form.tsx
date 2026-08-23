@@ -14,6 +14,7 @@ import {
   Idea01Icon,
   SourceCodeIcon,
   Alert02Icon,
+  Building03Icon,
 } from '@hugeicons/core-free-icons';
 
 import { Button } from '@/components/ui/button';
@@ -49,6 +50,8 @@ const CONFIGURED_SERVICES_KEY: Record<string, keyof SystemHealth['configuredServ
   indiehackers: null,
   builtwith: 'builtwith',
   overpass: null,
+  companies_house: 'companiesHouse',
+  texas_comptroller: 'texasComptroller',
 };
 
 // Purely for at-a-glance scanning of the source checklist - not decorative,
@@ -62,6 +65,8 @@ const SOURCE_ICONS: Record<string, IconSvgElement> = {
   indiehackers: Idea01Icon,
   builtwith: SourceCodeIcon,
   overpass: MapsLocation01Icon,
+  companies_house: Building03Icon,
+  texas_comptroller: Building03Icon,
 };
 
 function isSourceConfigured(source: DiscoverySourceMeta, configuredServices: SystemHealth['configuredServices'] | null): boolean {
@@ -129,6 +134,10 @@ const SOURCE_HELP: Record<string, string> = {
   indiehackers: 'Playwright scrape of Indie Hackers\' Products and Jobs pages. Ignores Category/Geography entirely - always the same pages. No API key needed.',
   overpass:
     'OpenStreetMap via the Overpass API - geocodes Geography via Nominatim, then queries OSM points of interest matching Category. Free, no API key needed. Data completeness varies by region; many results will have a name only.',
+  companies_house:
+    'UK Companies House public company search - Category is the search term, filtered to active companies whose address loosely matches Geography. Free, needs COMPANIES_HOUSE_API_KEY.',
+  texas_comptroller:
+    'Texas Comptroller franchise tax registry - searches by Category, filters to active SOS registrations whose mailing address loosely matches Geography. Free, needs TEXAS_COMPTROLLER_API_KEY.',
 };
 
 function FieldHelp({ text }: { text: string }): React.JSX.Element {

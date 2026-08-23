@@ -10,6 +10,8 @@ import { lookupStaleStack } from '@/features/discovery/sources/builtwith.source'
 import { detectTechStack } from '@/features/discovery/sources/tech-stack-detector.source';
 import { runYellowPagesSource } from '@/features/discovery/sources/yellowpages.source';
 import { runOverpassSource } from '@/features/discovery/sources/overpass.source';
+import { runCompaniesHouseSource } from '@/features/discovery/sources/companies-house.source';
+import { runTexasComptrollerSource } from '@/features/discovery/sources/texas-comptroller.source';
 import { runProductHuntSource } from '@/features/discovery/sources/product-hunt.source';
 import { runCrunchbaseSource } from '@/features/discovery/sources/crunchbase.source';
 import { lookupGitHubEvidence } from '@/features/discovery/sources/github.source';
@@ -76,6 +78,8 @@ const SOURCE_RUNNERS: Record<string, (query: DiscoveryQuery) => Promise<SourceRe
   google_places: runGooglePlacesSource,
   yellowpages: runYellowPagesSource,
   overpass: runOverpassSource,
+  companies_house: runCompaniesHouseSource,
+  texas_comptroller: runTexasComptrollerSource,
   product_hunt: runProductHuntSource,
   crunchbase: runCrunchbaseSource,
   indiehackers: runIndieHackersSource,

@@ -17,6 +17,8 @@ import { getSystemHealth, type SystemHealth } from '@/features/system/system-hea
 const SERVICE_LABELS: Record<keyof SystemHealth['configuredServices'], string> = {
   googlePlaces: 'Google Places',
   builtwith: 'BuiltWith',
+  companiesHouse: 'UK Companies House',
+  texasComptroller: 'Texas Comptroller',
   productHunt: 'Product Hunt',
   crunchbase: 'Crunchbase',
   github: 'GitHub',

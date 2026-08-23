@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const envMock = vi.hoisted(() => ({
   GOOGLE_PLACES_API_KEY: undefined as string | undefined,
   BUILTWITH_API_KEY: undefined as string | undefined,
+  COMPANIES_HOUSE_API_KEY: undefined as string | undefined,
+  TEXAS_COMPTROLLER_API_KEY: undefined as string | undefined,
   PRODUCT_HUNT_API_TOKEN: undefined as string | undefined,
   CRUNCHBASE_API_KEY: undefined as string | undefined,
   GITHUB_TOKEN: undefined as string | undefined,
@@ -200,10 +202,10 @@ describe('getSystemHealth', () => {
 
   it('reports configuredPercent as a rounded percentage of configured services out of the total', async () => {
     setDefaults();
-    // 1 of 12 tracked services (HUNTER_API_KEY, set by setDefaults) configured.
+    // 1 of 14 tracked services (HUNTER_API_KEY, set by setDefaults) configured.
     const health = await getSystemHealth();
 
-    expect(health.configuredPercent).toBe(Math.round((1 / 12) * 100));
+    expect(health.configuredPercent).toBe(Math.round((1 / 14) * 100));
   });
 
   it('passes through domain verification, sent-today count, daily cap, and bridge cooldown as-is', async () => {

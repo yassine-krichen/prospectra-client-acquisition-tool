@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { buildNoSignalDetectedFallback, detectWebsiteSignals } from './signal-detection';
+import { buildNoSignalDetectedFallback, detectWebsiteSignals, isBaselineSignal } from './signal-detection';
 
 // `dns.lookup` is mocked at the module level (see `is-safe-fetch-target.test.ts`
 // for why `vi.spyOn` doesn't work here) so the SSRF guard's real DNS
@@ -278,11 +278,40 @@ describe('buildNoSignalDetectedFallback', () => {
     expect(fallback.type).toBe('technical_debt');
     expect(fallback.strength).toBe('weak');
     expect(fallback.evidence).toBe('https://example.com');
+    expect(fallback.description).toBe('No specific signal detected on the site; included via category+geography match');
   });
 
   it('accepts a null evidence value', () => {
     const fallback = buildNoSignalDetectedFallback(null);
 
     expect(fallback.evidence).toBeNull();
+  });
+});
+
+describe('isBaselineSignal', () => {
+  it('recognizes buildNoSignalDetectedFallback\'s own fallback', () => {
+    expect(isBaselineSignal(buildNoSignalDetectedFallback(null))).toBe(true);
+  });
+
+  it('does not flag a genuinely detected weak technical_debt signal (e.g. missing schema.org markup) as baseline', () => {
+    expect(
+      isBaselineSignal({
+        type: 'technical_debt',
+        description: 'No schema.org structured data found',
+        evidence: null,
+        strength: 'weak',
+      })
+    ).toBe(false);
+  });
+
+  it('does not flag a non-technical_debt signal as baseline', () => {
+    expect(
+      isBaselineSignal({
+        type: 'no_https',
+        description: 'Site is served over plain HTTP, not HTTPS',
+        evidence: null,
+        strength: 'strong',
+      })
+    ).toBe(false);
   });
 });

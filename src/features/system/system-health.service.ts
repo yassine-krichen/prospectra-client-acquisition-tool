@@ -21,6 +21,8 @@ export interface SendingHealth {
 export interface ConfiguredServices {
   googlePlaces: boolean;
   builtwith: boolean;
+  companiesHouse: boolean;
+  texasComptroller: boolean;
   productHunt: boolean;
   crunchbase: boolean;
   github: boolean;
@@ -117,6 +119,8 @@ export async function getSystemHealth(): Promise<SystemHealth> {
   const configuredServices: ConfiguredServices = {
     googlePlaces: env.GOOGLE_PLACES_API_KEY !== undefined,
     builtwith: env.BUILTWITH_API_KEY !== undefined,
+    companiesHouse: env.COMPANIES_HOUSE_API_KEY !== undefined,
+    texasComptroller: env.TEXAS_COMPTROLLER_API_KEY !== undefined,
     productHunt: env.PRODUCT_HUNT_API_TOKEN !== undefined,
     crunchbase: env.CRUNCHBASE_API_KEY !== undefined,
     github: env.GITHUB_TOKEN !== undefined,

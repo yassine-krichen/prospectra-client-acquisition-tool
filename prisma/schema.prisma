@@ -36,6 +36,10 @@ enum ProspectSource {
   github
   indiehackers
   manual
+  overpass
+  yellowpages
+  companies_house
+  texas_comptroller
 }
 
 enum SignalType {
@@ -47,6 +51,7 @@ enum SignalType {
   hiring_post
   no_website
   technical_debt
+  recently_registered
 }
 
 enum SignalStrength {

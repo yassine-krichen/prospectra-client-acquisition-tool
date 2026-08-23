@@ -30,6 +30,10 @@ const envSchema = z.object({
   // unavailable at call time instead of crashing the whole discovery run.
   GOOGLE_PLACES_API_KEY: optionalString(z.string().min(1)),
   BUILTWITH_API_KEY: optionalString(z.string().min(1)),
+  // Government business registry connectors - same graceful-skip pattern as
+  // every other source key above.
+  COMPANIES_HOUSE_API_KEY: optionalString(z.string().min(1)),
+  TEXAS_COMPTROLLER_API_KEY: optionalString(z.string().min(1)),
   // Branch B (startup/SaaS discovery) source keys - same graceful-skip
   // pattern as the Branch A keys above.
   PRODUCT_HUNT_API_TOKEN: optionalString(z.string().min(1)),
