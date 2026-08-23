@@ -10,6 +10,11 @@ import { promisify } from 'node:util';
 const scryptAsync = promisify(scrypt);
 const KEY_LENGTH = 64;
 
+// Shared minimum password length - enforced both when seed-users first
+// provisions an account and, redundantly but cheaply, wherever else a raw
+// password is accepted.
+export const MIN_PASSWORD_LENGTH = 8;
+
 /** Stored as `<salt-hex>:<derived-key-hex>` - a random salt per password. */
 export async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(16).toString('hex');

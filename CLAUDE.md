@@ -90,36 +90,48 @@ business logic lives in `*.service.ts`.
 Full enum/model list is in `prisma/schema.prisma` - read it directly rather than trusting a summary
 here if you need exact fields, this doc will drift.
 
-**Auth (rewritten 2026-08-21 - two fixed accounts, no shared password)**: `proxy.ts` at repo root is
-the one session gate - deny-by-default for everything except `login`, `api/login` (and its
-sub-route `api/login/status`), `api/webhooks/resend`, and `api/cron/*` (those last two verify their
-own signature/secret instead of a session, since their callers - Resend, a cron scheduler - never
-have a browser session cookie).
+**Auth (rewritten 2026-08-21, hardened 2026-08-23 - two fixed accounts, no shared password)**:
+`proxy.ts` at repo root is the one session gate - deny-by-default for everything except `login`,
+`api/login`, `api/webhooks/resend`, and `api/cron/*` (those last two verify their own
+signature/secret instead of a session, since their callers - Resend, a cron scheduler - never have
+a browser session cookie).
 
 There is no `DASHBOARD_PASSWORD` anymore and no public registration. Exactly two accounts will ever
 exist - `Noel` and `EvilWithin` (`src/features/auth/known-usernames.ts`, `KNOWN_USERNAMES` - the one
 place their nicknames are defined; login rejects any other nickname without even querying the DB).
-Both are provisioned by calling `POST /api/cron/seed-users` once (`x-cron-secret` auth, same pattern
-as the other cron routes) - idempotent, never overwrites an existing row, creates each with
-`passwordHash: null` if missing.
+Both are provisioned by calling `POST /api/cron/seed-users` (`x-cron-secret` auth, same pattern as
+the other cron routes) - idempotent, never overwrites an existing row, but now **requires** a
+password in the request body (`{ passwords: { Noel: '...', EvilWithin: '...' } }`, min 8 chars,
+hashed via `password-hash.ts` before storage) to create any not-yet-existing account. A nickname
+missing a valid password in the call is skipped with a per-nickname error result rather than being
+created with a null password - this route is the *only* way an account is ever provisioned, and it
+never again produces a claimable unclaimed account.
 
-`app/api/login/route.ts` handles both first-login setup and normal login through the same endpoint,
-branching on whether the looked-up `User.passwordHash` is null:
-- **null** (first login): the submitted password becomes that account's permanent password (min 8
-  chars, enforced here) - hashed via `src/common/auth/password-hash.ts` (Node's built-in `scrypt`,
-  no new dependency, same "hand-roll the crypto" convention as `session.ts`'s HMAC signing). Also
-  stamps `firstLoginAt/Ip/UserAgent/Device/Browser` (fixed forever) and `lastLogin*` (same values,
-  overwritten on every later login) - IP via `src/common/auth/request-metadata.ts`'s
-  `getClientIp()` (reads `x-forwarded-for`, Vercel's proxy header - `NextRequest.ip` doesn't exist
-  in Next 15+), browser/device via that same module's hand-rolled `parseUserAgent()` (no UA-parsing
-  dependency added either).
-- **already set**: normal `verifyPassword` check; only `lastLogin*` gets updated on success.
-- Either way, wrong nickname / wrong password / unprovisioned nickname all return the same generic
-  401 `"Invalid nickname or password."` - never confirms which nicknames exist.
+`app/api/login/route.ts` is password-check-only - `verifyPassword` against the looked-up
+`User.passwordHash`, hashed via `src/common/auth/password-hash.ts` (Node's built-in `scrypt`, no new
+dependency, same "hand-roll the crypto" convention as `session.ts`'s HMAC signing). A null
+`passwordHash` (shouldn't occur post-hardening, but handled defensively) fails closed with the exact
+same generic 401 as every other rejection. On success, stamps `lastLogin*` (`Ip/UserAgent/Device/
+Browser`, via `src/common/auth/request-metadata.ts`'s `getClientIp()`/`parseUserAgent()` - no new
+dependency for either). Wrong nickname / wrong password / unprovisioned nickname / locked-out
+nickname all return generically (401, or 429 for lockout) - never confirms which nicknames exist.
 
-`GET /api/login/status?nickname=` (session-exempt, same `api/login/` proxy carve-out) tells the
-login page which prompt to show ("create a password" vs. "enter your password") right after the
-combobox selection, without a full login attempt.
+**Login lockout (added 2026-08-23)**: `src/common/auth/login-lockout.ts` (`LoginLockout` Prisma
+model, mirrors `BridgeCooldown`'s shape) - 5 failed attempts locks that nickname out for 15 minutes,
+checked *before* the password comparison so a locked-out attempt never even reaches `verifyPassword`.
+Fails closed on any DB error (treats as locked, same posture as `bridge-budget.ts`'s
+`isBridgeInCooldown`). Keyed by nickname only, not IP - both nicknames are already public (shipped
+to the client bundle for the login picker), and this is a 2-person internal tool, so the accepted
+tradeoff is that an attacker who knows a nickname could deliberately lock out its real owner; judged
+acceptable at this app's actual threat model, not an oversight.
+
+**Removed 2026-08-23**: the previous "first login sets password" flow (a null `passwordHash` meant
+whoever submitted a password first permanently claimed that account, no verification) and its
+`GET /api/login/status?nickname=` oracle endpoint were both a real vulnerability, not documented
+design to preserve - a security audit found the race and the enumeration risk, and both were deleted
+outright rather than hardened in place. If you're reading old context (a summary, a stale branch)
+that describes either of these as current behavior, it's describing the bug that got fixed, not the
+current system.
 
 **Session tokens are deliberately non-expiring** - the user's explicit call, not an oversight.
 `src/common/auth/session.ts`'s `verifySessionToken` has no age check at all; a token is valid until

@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SESSION_COOKIE_NAME, verifySessionToken } from '@/common/auth/session';
 import { hashPassword } from '@/common/auth/password-hash';
@@ -9,15 +9,36 @@ const { findUniqueMock, updateMock } = vi.hoisted(() => ({
   updateMock: vi.fn(),
 }));
 
+const { isLockedOutMock, recordFailedAttemptMock, clearLockoutMock } = vi.hoisted(() => ({
+  isLockedOutMock: vi.fn(),
+  recordFailedAttemptMock: vi.fn(),
+  clearLockoutMock: vi.fn(),
+}));
+
 vi.mock('@/common/db/client', () => ({
   prisma: { user: { findUnique: findUniqueMock, update: updateMock } },
 }));
 
+vi.mock('@/common/auth/login-lockout', () => ({
+  isLockedOut: isLockedOutMock,
+  recordFailedAttempt: recordFailedAttemptMock,
+  clearLockout: clearLockoutMock,
+}));
+
 const { POST } = await import('./route');
+
+beforeEach(() => {
+  isLockedOutMock.mockResolvedValue(false);
+  recordFailedAttemptMock.mockResolvedValue(undefined);
+  clearLockoutMock.mockResolvedValue(undefined);
+});
 
 afterEach(() => {
   findUniqueMock.mockReset();
   updateMock.mockReset();
+  isLockedOutMock.mockReset();
+  recordFailedAttemptMock.mockReset();
+  clearLockoutMock.mockReset();
 });
 
 function loginRequest(body: unknown, headers: Record<string, string> = {}): NextRequest {
@@ -64,59 +85,48 @@ describe('POST /api/login', () => {
     expect(body.error).toBe('Invalid nickname or password.');
   });
 
-  describe('first login (passwordHash is null)', () => {
-    it('rejects a password shorter than 8 characters and does not create a password', async () => {
-      findUniqueMock.mockResolvedValue({ id: 'user-1', nickname: 'Noel', passwordHash: null });
+  it('rejects a user row with a null passwordHash with the same generic 401, never calling verifyPassword or update', async () => {
+    findUniqueMock.mockResolvedValue({ id: 'user-1', nickname: 'Noel', passwordHash: null });
 
-      const response = await POST(loginRequest({ nickname: 'Noel', password: 'short' }));
+    const response = await POST(loginRequest({ nickname: 'Noel', password: 'whatever123' }));
+    const body = await response.json();
 
-      expect(response.status).toBe(400);
-      expect(updateMock).not.toHaveBeenCalled();
+    expect(response.status).toBe(401);
+    expect(body.error).toBe('Invalid nickname or password.');
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  describe('lockout', () => {
+    it('returns 429 for a locked-out nickname without checking the database at all', async () => {
+      isLockedOutMock.mockResolvedValue(true);
+
+      const response = await POST(loginRequest({ nickname: 'Noel', password: 'whatever123' }));
+      const body = await response.json();
+
+      expect(response.status).toBe(429);
+      expect(body.error).toBe('Too many attempts, try again later.');
+      expect(findUniqueMock).not.toHaveBeenCalled();
     });
 
-    it('accepts an 8+ character password, hashes and saves it, and sets first/last-login audit fields', async () => {
-      findUniqueMock.mockResolvedValue({ id: 'user-1', nickname: 'Noel', passwordHash: null });
+    it('records a failed attempt when the password check fails', async () => {
+      const passwordHash = await hashPassword('the-real-password');
+      findUniqueMock.mockResolvedValue({ id: 'user-1', nickname: 'Noel', passwordHash });
+
+      const response = await POST(loginRequest({ nickname: 'Noel', password: 'wrong-password' }));
+
+      expect(response.status).toBe(401);
+      expect(recordFailedAttemptMock).toHaveBeenCalledWith('Noel');
+    });
+
+    it('clears the lockout state on a successful login', async () => {
+      const passwordHash = await hashPassword('the-real-password');
+      findUniqueMock.mockResolvedValue({ id: 'user-1', nickname: 'Noel', passwordHash });
       updateMock.mockResolvedValue({});
 
-      const response = await POST(
-        loginRequest(
-          { nickname: 'Noel', password: 'a-new-password' },
-          { 'x-forwarded-for': '203.0.113.5', 'user-agent': 'test-agent/1.0' }
-        )
-      );
-      const body = await response.json();
+      const response = await POST(loginRequest({ nickname: 'Noel', password: 'the-real-password' }));
 
       expect(response.status).toBe(200);
-      expect(body).toEqual({ ok: true, nickname: 'Noel', firstLogin: true });
-
-      const updateCall = updateMock.mock.calls[0][0];
-      expect(updateCall.where).toEqual({ id: 'user-1' });
-      expect(updateCall.data.passwordHash).not.toBe('a-new-password');
-      expect(updateCall.data.firstLoginIp).toBe('203.0.113.5');
-      expect(updateCall.data.lastLoginIp).toBe('203.0.113.5');
-      expect(updateCall.data.firstLoginAt).toEqual(updateCall.data.lastLoginAt);
-    });
-
-    it('sets a session cookie that verifies to the correct userId/nickname', async () => {
-      findUniqueMock.mockResolvedValue({ id: 'user-1', nickname: 'Noel', passwordHash: null });
-      updateMock.mockResolvedValue({});
-
-      const response = await POST(loginRequest({ nickname: 'Noel', password: 'a-new-password' }));
-
-      const cookie = response.cookies.get(SESSION_COOKIE_NAME);
-      expect(cookie).toBeDefined();
-      expect(cookie?.httpOnly).toBe(true);
-      await expect(verifySessionToken(cookie?.value)).resolves.toEqual({ userId: 'user-1', nickname: 'Noel' });
-    });
-
-    it('never echoes the submitted password back in the response body', async () => {
-      findUniqueMock.mockResolvedValue({ id: 'user-1', nickname: 'Noel', passwordHash: null });
-      updateMock.mockResolvedValue({});
-
-      const response = await POST(loginRequest({ nickname: 'Noel', password: 'a-new-password' }));
-      const body = await response.json();
-
-      expect(JSON.stringify(body)).not.toContain('a-new-password');
+      expect(clearLockoutMock).toHaveBeenCalledWith('Noel');
     });
   });
 
@@ -141,9 +151,10 @@ describe('POST /api/login', () => {
       const body = await response.json();
 
       expect(response.status).toBe(200);
-      expect(body).toEqual({ ok: true, nickname: 'EvilWithin', firstLogin: false });
+      expect(body).toEqual({ ok: true, nickname: 'EvilWithin' });
 
       const updateCall = updateMock.mock.calls[0][0];
+      expect(updateCall.where).toEqual({ id: 'user-1' });
       expect(updateCall.data).not.toHaveProperty('passwordHash');
       expect(updateCall.data).not.toHaveProperty('firstLoginAt');
 

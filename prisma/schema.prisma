@@ -302,6 +302,19 @@ model BridgeCooldown {
   blockedUntil DateTime?
 }
 
+// Per-nickname login lockout state, mirroring BridgeCooldown's "small fixed
+// key-space, single row per key" pattern. Written by
+// src/common/auth/login-lockout.ts, checked by app/api/login/route.ts before
+// a password is even verified. Keyed by nickname only (not IP) - both
+// nicknames are already public (shipped to the client bundle - see
+// known-usernames.ts) and this is a 2-person internal tool, so IP-based
+// keying wasn't worth the added complexity.
+model LoginLockout {
+  nickname       String    @id
+  failedAttempts Int       @default(0)
+  lockedUntil    DateTime?
+}
+
 // The post-sale relationship, created once a Prospect converts (or created
 // directly, with no Prospect at all). Fields below are a denormalized COPY
 // of the relevant Prospect fields at conversion time, not a live join —
@@ -382,9 +395,9 @@ model Job {
 // var). Nicknames are pre-provisioned (see app/api/cron/seed-users/route.ts)
 // - there is no public registration endpoint, `nickname` is only ever one of
 // the two values in src/features/auth/known-usernames.ts. `passwordHash` is
-// null until that account's first login, at which point the submitted
-// password becomes permanent (min 8 chars, enforced in the login route, not
-// here - Prisma has no length-validation concept for a nullable String).
+// set at provisioning time (a password is required up front - see
+// seed-users/route.ts) and never null in practice; the login route still
+// fails closed if it ever finds a null value here.
 model User {
   id           String  @id @default(cuid())
   nickname     String  @unique
