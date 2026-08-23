@@ -58,7 +58,12 @@ Real, working keys already in `.env` (don't need touching): `DATABASE_URL`,
 the Google Cloud project - discovery reports `REQUEST_DENIED` for this source specifically, low
 priority fix, everything else degrades around it fine), `BUILTWITH_API_KEY`,
 `PRODUCT_HUNT_API_TOKEN`, `GITHUB_TOKEN`, `HUNTER_API_KEY`, `PEOPLE_DATA_LABS_API_KEY`,
-`GEMINI_API_KEY`, `GROQ_API_KEY`, `DEEPSEEK_API_KEY`, `RESEND_API_KEY`.
+`GEMINI_API_KEY`, `GROQ_API_KEY`, `RESEND_API_KEY`.
+
+`DEEPSEEK_API_KEY` is no longer in active use (2026-08-23) - DeepSeek was dropped from the
+drafting rotation in `model-rotation.ts` (the one provider in the pool with no enforced cost cap,
+judged not worth it). The `ModelUsed` Prisma enum still has `deepseek` and historical `Draft` rows
+still reference it - that's untouched, this only stops NEW drafts from selecting it.
 
 Deliberately still empty (all optional, all degrade gracefully by design - see `.env.example`'s
 comments for exactly what each does):

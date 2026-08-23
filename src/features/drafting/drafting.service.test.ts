@@ -96,7 +96,7 @@ function validBody(label: string): string {
   return `Body ${label} ${Array(60).fill('filler').join(' ')}`;
 }
 
-function draftGeneration(label: string, modelUsed: 'gemini' | 'groq' | 'deepseek' | 'claude-bridge' = 'gemini') {
+function draftGeneration(label: string, modelUsed: 'gemini' | 'groq' | 'claude-bridge' = 'gemini') {
   return { ok: true as const, subject: `Subject ${label}`, body: validBody(label), modelUsed };
 }
 

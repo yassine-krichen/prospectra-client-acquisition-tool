@@ -171,7 +171,7 @@ export async function humanize(text: string): Promise<HumanizeResult> {
 /**
  * Generates one subject+body draft via the local claude-web-bridge sibling
  * app - Phase C's tier-2 overflow lane for original drafting, used only
- * when the primary Gemini/Groq/DeepSeek pool (model-rotation.ts) is
+ * when the primary Gemini/Groq pool (model-rotation.ts) is
  * exhausted for a high-priority prospect (see `generateDraftWithFallback`).
  * Unlike `humanize()`, `prompt` here is sent as-is: the caller
  * (`buildDraftPrompt`) already produces a complete SUBJECT:/BODY:-format

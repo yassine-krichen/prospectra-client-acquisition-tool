@@ -4,14 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // rotation-index state to reset - that's the whole point of this redesign),
 // so each test just sets the env mock it needs before importing/using the
 // module. `vi.resetModules()` still runs between tests for isolation.
+//
+// DeepSeek is not part of this registry (dropped 2026-08-23 - it's the one
+// provider in the pool with no enforced cost cap) - only Gemini/Groq remain.
 const envMock: {
   GEMINI_API_KEY: string | undefined;
   GROQ_API_KEY: string | undefined;
-  DEEPSEEK_API_KEY: string | undefined;
 } = {
   GEMINI_API_KEY: undefined,
   GROQ_API_KEY: undefined,
-  DEEPSEEK_API_KEY: undefined,
 };
 vi.mock('@/common/config/env', () => ({ env: envMock }));
 
@@ -21,17 +22,12 @@ vi.mock('@/features/drafting/gemini.client', () => ({ generateGeminiDraft: gener
 const generateGroqDraftMock = vi.fn();
 vi.mock('@/features/drafting/groq.client', () => ({ generateGroqDraft: generateGroqDraftMock }));
 
-const generateDeepseekDraftMock = vi.fn();
-vi.mock('@/features/drafting/deepseek.client', () => ({ generateDeepseekDraft: generateDeepseekDraftMock }));
-
 async function loadRotationWithKeys(
   gemini: string | undefined,
-  groq: string | undefined,
-  deepseek: string | undefined
+  groq: string | undefined
 ): Promise<typeof import('./model-rotation')> {
   envMock.GEMINI_API_KEY = gemini;
   envMock.GROQ_API_KEY = groq;
-  envMock.DEEPSEEK_API_KEY = deepseek;
   vi.resetModules();
   return import('./model-rotation');
 }
@@ -46,9 +42,9 @@ afterEach(() => {
 
 describe('generateDraftWithRotation', () => {
   it('picks the provider Math.random selects among all configured providers and returns its result', async () => {
-    const { generateDraftWithRotation } = await loadRotationWithKeys('gemini-key', 'groq-key', 'deepseek-key');
-    // 3 configured candidates in registry order [gemini, groq, deepseek];
-    // floor(0 * 3) = 0 always selects the first remaining candidate, and
+    const { generateDraftWithRotation } = await loadRotationWithKeys('gemini-key', 'groq-key');
+    // 2 configured candidates in registry order [gemini, groq];
+    // floor(0 * 2) = 0 always selects the first remaining candidate, and
     // floor(0 * keys.length) always selects the first key.
     vi.spyOn(Math, 'random').mockReturnValue(0);
     generateGeminiDraftMock.mockResolvedValue({ ok: true, subject: 'Subj', body: 'Body' });
@@ -57,11 +53,10 @@ describe('generateDraftWithRotation', () => {
 
     expect(result).toEqual({ ok: true, subject: 'Subj', body: 'Body', modelUsed: 'gemini' });
     expect(generateGroqDraftMock).not.toHaveBeenCalled();
-    expect(generateDeepseekDraftMock).not.toHaveBeenCalled();
   });
 
   it('excludes providers with no API key configured from the candidate pool entirely', async () => {
-    const { generateDraftWithRotation } = await loadRotationWithKeys(undefined, 'groq-key', undefined);
+    const { generateDraftWithRotation } = await loadRotationWithKeys(undefined, 'groq-key');
     vi.spyOn(Math, 'random').mockReturnValue(0);
     generateGroqDraftMock.mockResolvedValue({ ok: true, subject: 'Subj', body: 'Body' });
 
@@ -69,11 +64,10 @@ describe('generateDraftWithRotation', () => {
 
     expect(result).toEqual({ ok: true, subject: 'Subj', body: 'Body', modelUsed: 'groq' });
     expect(generateGeminiDraftMock).not.toHaveBeenCalled();
-    expect(generateDeepseekDraftMock).not.toHaveBeenCalled();
   });
 
   it('fails over to another configured provider when the randomly-selected one errors', async () => {
-    const { generateDraftWithRotation } = await loadRotationWithKeys('gemini-key', 'groq-key', 'deepseek-key');
+    const { generateDraftWithRotation } = await loadRotationWithKeys('gemini-key', 'groq-key');
     // Always picks index 0 of whatever candidates remain: gemini first
     // (fails), then groq (the new index 0 once gemini is dropped).
     vi.spyOn(Math, 'random').mockReturnValue(0);
@@ -85,11 +79,10 @@ describe('generateDraftWithRotation', () => {
     expect(result).toEqual({ ok: true, subject: 'Subj', body: 'Body', modelUsed: 'groq' });
     expect(generateGeminiDraftMock).toHaveBeenCalled();
     expect(generateGroqDraftMock).toHaveBeenCalled();
-    expect(generateDeepseekDraftMock).not.toHaveBeenCalled();
   });
 
   it('returns a typed failure, without throwing, when no provider has an API key configured', async () => {
-    const { generateDraftWithRotation } = await loadRotationWithKeys(undefined, undefined, undefined);
+    const { generateDraftWithRotation } = await loadRotationWithKeys(undefined, undefined);
 
     const result = await generateDraftWithRotation('prompt');
 
@@ -97,18 +90,15 @@ describe('generateDraftWithRotation', () => {
     if (result.ok) throw new Error('expected a failure result');
     expect(result.reason).toContain('gemini: not configured');
     expect(result.reason).toContain('groq: not configured');
-    expect(result.reason).toContain('deepseek: not configured');
     expect(generateGeminiDraftMock).not.toHaveBeenCalled();
     expect(generateGroqDraftMock).not.toHaveBeenCalled();
-    expect(generateDeepseekDraftMock).not.toHaveBeenCalled();
   });
 
   it('returns a typed failure, without throwing, once every configured provider has been tried and failed', async () => {
-    const { generateDraftWithRotation } = await loadRotationWithKeys('gemini-key', 'groq-key', 'deepseek-key');
+    const { generateDraftWithRotation } = await loadRotationWithKeys('gemini-key', 'groq-key');
     vi.spyOn(Math, 'random').mockReturnValue(0);
     generateGeminiDraftMock.mockResolvedValue({ ok: false, reason: 'gemini responded with 500' });
     generateGroqDraftMock.mockResolvedValue({ ok: false, reason: 'groq responded with 500' });
-    generateDeepseekDraftMock.mockResolvedValue({ ok: false, reason: 'deepseek responded with 500' });
 
     const result = await generateDraftWithRotation('prompt');
 
@@ -116,14 +106,12 @@ describe('generateDraftWithRotation', () => {
     if (result.ok) throw new Error('expected a failure result');
     expect(result.reason).toContain('gemini: gemini responded with 500');
     expect(result.reason).toContain('groq: groq responded with 500');
-    expect(result.reason).toContain('deepseek: deepseek responded with 500');
     expect(generateGeminiDraftMock).toHaveBeenCalled();
     expect(generateGroqDraftMock).toHaveBeenCalled();
-    expect(generateDeepseekDraftMock).toHaveBeenCalled();
   });
 
   it('picks across comma-separated keys for a single provider rather than always reusing the first key', async () => {
-    const { generateDraftWithRotation } = await loadRotationWithKeys('key-one,key-two', undefined, undefined);
+    const { generateDraftWithRotation } = await loadRotationWithKeys('key-one,key-two', undefined);
     generateGeminiDraftMock.mockResolvedValue({ ok: true, subject: 'Subj', body: 'Body' });
     const randomSpy = vi.spyOn(Math, 'random');
 
@@ -142,10 +130,9 @@ describe('generateDraftWithRotation', () => {
   });
 
   it('spreads calls across every configured provider and key over enough volume (unmocked Math.random)', async () => {
-    const { generateDraftWithRotation } = await loadRotationWithKeys('g1,g2', 'groq-key', 'deepseek-key');
+    const { generateDraftWithRotation } = await loadRotationWithKeys('g1,g2', 'groq-key');
     generateGeminiDraftMock.mockResolvedValue({ ok: true, subject: 'Subj', body: 'Body' });
     generateGroqDraftMock.mockResolvedValue({ ok: true, subject: 'Subj', body: 'Body' });
-    generateDeepseekDraftMock.mockResolvedValue({ ok: true, subject: 'Subj', body: 'Body' });
 
     for (let i = 0; i < 200; i += 1) {
       await generateDraftWithRotation('prompt');
@@ -153,7 +140,6 @@ describe('generateDraftWithRotation', () => {
 
     expect(generateGeminiDraftMock).toHaveBeenCalled();
     expect(generateGroqDraftMock).toHaveBeenCalled();
-    expect(generateDeepseekDraftMock).toHaveBeenCalled();
 
     const geminiKeysUsed = new Set(generateGeminiDraftMock.mock.calls.map((call) => call[1]));
     expect(geminiKeysUsed).toEqual(new Set(['g1', 'g2']));
