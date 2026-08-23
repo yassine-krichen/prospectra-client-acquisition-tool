@@ -13,10 +13,14 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 
+interface UserMenuProps {
+  nickname: string | null;
+}
+
 // Trivially safe by design - same rule as dashboard-nav.tsx: no server-only
 // imports, ever. Logout goes through a fetch to a route handler rather than
 // touching the session cookie/verification logic directly from the client.
-export function UserMenu(): React.JSX.Element {
+export function UserMenu({ nickname }: UserMenuProps): React.JSX.Element {
   const router = useRouter();
   const { setTheme } = useTheme();
 
@@ -31,7 +35,7 @@ export function UserMenu(): React.JSX.Element {
 
   return (
     <div className="border-sidebar-border mt-1 flex items-center gap-1 border-t pt-3">
-      <span className="text-sidebar-foreground/70 flex-1 truncate px-2 text-sm">Welcome, Admin</span>
+      <span className="text-sidebar-foreground/70 flex-1 truncate px-2 text-sm">Welcome, {nickname ?? 'guest'}</span>
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>

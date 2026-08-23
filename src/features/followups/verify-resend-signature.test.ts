@@ -11,7 +11,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const BASE_ENV = {
   DATABASE_URL: 'postgresql://user:pass@example.neon.tech/biz_scraper?sslmode=require',
-  DASHBOARD_PASSWORD: 'test-password',
   SESSION_SECRET: 'test-session-secret-32-characters',
   CRON_SECRET: 'test-cron-secret-32-characters-long',
 };

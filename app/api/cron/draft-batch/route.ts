@@ -1,23 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { env } from '@/common/config/env';
-import { sha256Hex, timingSafeEqual } from '@/common/auth/session';
+import { isAuthorizedByCronHeader } from '@/common/auth/cron-auth';
 import { draftBatch, humanizeBatch } from '@/features/drafting/drafting.service';
-
-const CRON_SECRET_HEADER = 'x-cron-secret';
-
-// Fail closed, same pattern as the discovery cron route: hash both sides to
-// a fixed-length digest before the constant-time compare, since
-// timingSafeEqual's early length check would otherwise leak the secret's
-// length for variable-length inputs.
-async function isAuthorized(request: NextRequest): Promise<boolean> {
-  const provided = request.headers.get(CRON_SECRET_HEADER);
-  if (!provided) return false;
-
-  const [providedHash, expectedHash] = await Promise.all([sha256Hex(provided), sha256Hex(env.CRON_SECRET)]);
-
-  return timingSafeEqual(providedHash, expectedHash);
-}
 
 /**
  * Batch endpoint for Stage 2 drafting, meant to be triggered on a schedule:
@@ -33,7 +17,7 @@ async function isAuthorized(request: NextRequest): Promise<boolean> {
  * window resets.
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  if (!(await isAuthorized(request))) {
+  if (!(await isAuthorizedByCronHeader(request))) {
     return NextResponse.json({ error: 'Unauthorized.' }, { status: 401 });
   }
 

@@ -1,92 +1,66 @@
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { describe, expect, it, vi } from 'vitest';
 
-import {
-  createSessionToken,
-  SESSION_MAX_AGE_SECONDS,
-  verifySessionToken,
-} from "./session"
+import { createSessionToken, verifySessionToken } from './session';
 
-describe("createSessionToken / verifySessionToken", () => {
-  afterEach(() => {
-    vi.useRealTimers()
-  })
+const PAYLOAD = { userId: 'user-cuid-1', nickname: 'Noel' };
 
-  it("round-trips a freshly created token through verification", async () => {
-    const token = await createSessionToken()
+describe('createSessionToken / verifySessionToken', () => {
+  it('round-trips a freshly created token through verification', async () => {
+    const token = await createSessionToken(PAYLOAD);
 
-    await expect(verifySessionToken(token)).resolves.toBe(true)
-  })
+    await expect(verifySessionToken(token)).resolves.toEqual(PAYLOAD);
+  });
 
-  it("rejects an undefined token", async () => {
-    await expect(verifySessionToken(undefined)).resolves.toBe(false)
-  })
+  it('rejects an undefined token', async () => {
+    await expect(verifySessionToken(undefined)).resolves.toBeNull();
+  });
 
-  it("rejects an empty string token", async () => {
-    await expect(verifySessionToken("")).resolves.toBe(false)
-  })
+  it('rejects an empty string token', async () => {
+    await expect(verifySessionToken('')).resolves.toBeNull();
+  });
 
-  it("rejects a token missing the signature segment", async () => {
-    await expect(verifySessionToken("1690000000000")).resolves.toBe(false)
-  })
+  it('rejects a token missing segments', async () => {
+    await expect(verifySessionToken('user-cuid-1.Noel')).resolves.toBeNull();
+    await expect(verifySessionToken('user-cuid-1')).resolves.toBeNull();
+  });
 
-  it("rejects a token missing the issued-at segment", async () => {
-    await expect(verifySessionToken(".some-signature")).resolves.toBe(false)
-  })
+  it('rejects a token with a tampered signature, without throwing', async () => {
+    const token = await createSessionToken(PAYLOAD);
+    const parts = token.split('.');
+    const signature = parts.at(-1)!;
+    const tamperedSignature = signature.slice(0, -1) + (signature.at(-1) === 'a' ? 'b' : 'a');
+    const tamperedToken = [...parts.slice(0, -1), tamperedSignature].join('.');
 
-  it("rejects a token with a tampered signature, without throwing", async () => {
-    const token = await createSessionToken()
-    const [issuedAt, signature] = token.split(".")
-    const tamperedSignature =
-      signature.slice(0, -1) + (signature.at(-1) === "a" ? "b" : "a")
-    const tamperedToken = `${issuedAt}.${tamperedSignature}`
+    await expect(verifySessionToken(tamperedToken)).resolves.toBeNull();
+  });
 
-    await expect(verifySessionToken(tamperedToken)).resolves.toBe(false)
-  })
+  it('rejects a token with a tampered userId (signature no longer matches)', async () => {
+    const token = await createSessionToken(PAYLOAD);
+    const [, nickname, issuedAt, signature] = token.split('.');
+    const tamperedToken = `some-other-user-id.${nickname}.${issuedAt}.${signature}`;
 
-  it("rejects a token with a tampered issued-at timestamp", async () => {
-    const token = await createSessionToken()
-    const [issuedAt, signature] = token.split(".")
-    const tamperedIssuedAt = String(Number(issuedAt) + 1)
-    const tamperedToken = `${tamperedIssuedAt}.${signature}`
+    await expect(verifySessionToken(tamperedToken)).resolves.toBeNull();
+  });
 
-    await expect(verifySessionToken(tamperedToken)).resolves.toBe(false)
-  })
+  it('rejects a token with a tampered nickname (signature no longer matches)', async () => {
+    const token = await createSessionToken(PAYLOAD);
+    const [userId, , issuedAt, signature] = token.split('.');
+    const tamperedToken = `${userId}.EvilWithin.${issuedAt}.${signature}`;
 
-  it("rejects arbitrary garbage input without throwing", async () => {
-    await expect(verifySessionToken("not.a.valid.token.at.all")).resolves.toBe(
-      false
-    )
-    await expect(verifySessionToken("....")).resolves.toBe(false)
-  })
+    await expect(verifySessionToken(tamperedToken)).resolves.toBeNull();
+  });
 
-  it("rejects a token whose age exceeds the max session lifetime", async () => {
-    const token = await createSessionToken()
+  it('rejects arbitrary garbage input without throwing', async () => {
+    await expect(verifySessionToken('not.a.valid.token.at.all')).resolves.toBeNull();
+    await expect(verifySessionToken('....')).resolves.toBeNull();
+  });
 
-    const eightDaysMs = (SESSION_MAX_AGE_SECONDS + 24 * 60 * 60) * 1000
-    vi.useFakeTimers()
-    vi.setSystemTime(Date.now() + eightDaysMs)
+  it('never expires - a token from a year in the past still verifies today', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.now() - 365 * 24 * 60 * 60 * 1000);
+    const token = await createSessionToken(PAYLOAD);
+    vi.useRealTimers();
 
-    await expect(verifySessionToken(token)).resolves.toBe(false)
-  })
-
-  it("accepts a token right up to the max session lifetime boundary", async () => {
-    const token = await createSessionToken()
-
-    vi.useFakeTimers()
-    // Just under the boundary - should still be valid.
-    vi.setSystemTime(Date.now() + SESSION_MAX_AGE_SECONDS * 1000 - 1000)
-
-    await expect(verifySessionToken(token)).resolves.toBe(true)
-  })
-
-  it("rejects a token whose issued-at timestamp is in the future", async () => {
-    vi.useFakeTimers()
-    const future = Date.now() + 60 * 60 * 1000
-    vi.setSystemTime(future)
-    const futureToken = await createSessionToken()
-
-    vi.useRealTimers()
-
-    await expect(verifySessionToken(futureToken)).resolves.toBe(false)
-  })
-})
+    await expect(verifySessionToken(token)).resolves.toEqual(PAYLOAD);
+  });
+});

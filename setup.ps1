@@ -49,21 +49,20 @@ if (-not (Test-Path .env)) {
 
     $sessionSecret = New-RandomSecret -Bytes 32
     $cronSecret = New-RandomSecret -Bytes 32
-    $dashboardPassword = New-RandomSecret -Bytes 9
 
     $envContent = Get-Content .env -Raw
     $envContent = $envContent -replace 'SESSION_SECRET=""', "SESSION_SECRET=`"$sessionSecret`""
     $envContent = $envContent -replace 'CRON_SECRET=""', "CRON_SECRET=`"$cronSecret`""
-    $envContent = $envContent -replace 'DASHBOARD_PASSWORD=""', "DASHBOARD_PASSWORD=`"$dashboardPassword`""
     Set-Content -Path .env -Value $envContent -NoNewline
 
-    Write-Host "  Generated SESSION_SECRET, CRON_SECRET, and DASHBOARD_PASSWORD"
-    Write-Host ""
-    Write-Host "  Dashboard password: $dashboardPassword" -ForegroundColor Green
-    Write-Host "  (also saved in .env - this is printed once)" -ForegroundColor Green
+    Write-Host "  Generated SESSION_SECRET and CRON_SECRET"
     Write-Host ""
     Write-Host "  DATABASE_URL still needs your Neon connection string" -ForegroundColor Yellow
     Write-Host "  (create a free project at https://neon.tech) before continuing." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  After that, provision the two accounts (Noel / EvilWithin) by calling" -ForegroundColor Yellow
+    Write-Host "  POST /api/cron/seed-users once, with header x-cron-secret: <CRON_SECRET>." -ForegroundColor Yellow
+    Write-Host "  Each account sets its own password on its first login at /login." -ForegroundColor Yellow
 } else {
     Write-Host "  .env already exists - leaving it untouched"
 }
@@ -91,5 +90,5 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host ""
 Write-Host "Setup complete." -ForegroundColor Green
 Write-Host "  Run 'npm run dev' and open http://localhost:3000"
-Write-Host "  Only DATABASE_URL / DASHBOARD_PASSWORD / SESSION_SECRET / CRON_SECRET are required."
+Write-Host "  Only DATABASE_URL / SESSION_SECRET / CRON_SECRET are required."
 Write-Host "  Everything else in .env (Gemini, Groq, Resend, Hunter, ...) is optional - add keys as you provision each service. See README.md > Configuration."

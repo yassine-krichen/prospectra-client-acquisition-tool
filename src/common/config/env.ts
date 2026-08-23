@@ -21,7 +21,9 @@ const optionalString = (schema: z.ZodString) => z.preprocess(emptyToUndefined, s
 // feature that needs them is first exercised.
 const envSchema = z.object({
   DATABASE_URL: z.string().url(),
-  DASHBOARD_PASSWORD: z.string().min(1, 'DASHBOARD_PASSWORD must not be empty'),
+  // Session-token signing key only, as of the two-account (Noel/EvilWithin)
+  // DB-backed auth system - there is no shared dashboard password anymore
+  // (see the User model in schema.prisma and app/api/login/route.ts).
   SESSION_SECRET: z.string().min(32, 'SESSION_SECRET must be at least 32 characters'),
   // Discovery source API keys aren't available yet. Left optional so the app
   // boots without them - the sources that need them report themselves as

@@ -1,11 +1,22 @@
 import { env } from '@/common/config/env';
 
-// Minimal shared-password gate for the dashboard (Phase 0). Not a full
-// user-accounts system: there is one password, and a signed session cookie
-// proves the browser knows it without ever storing the password itself.
-
+// Two-account auth (Noel / EvilWithin - see known-usernames.ts). A signed,
+// self-verifying session cookie proves the browser was issued a token for a
+// specific userId+nickname after a real password check in
+// app/api/login/route.ts - this module never touches the database itself.
+//
+// Deliberately non-expiring by design (the user's explicit call): there is
+// no age check anywhere in `verifySessionToken` below, so a token stays
+// valid until the browser stops sending it (logout) or `SESSION_SECRET`
+// changes. The one unavoidable real-world limit is the cookie itself, not
+// this token: Chrome (and other modern browsers) hard-cap a cookie's
+// Max-Age/Expires at 400 days regardless of what's set, so
+// `SESSION_COOKIE_MAX_AGE_SECONDS` below uses that ceiling - the session
+// stays valid past that, but the browser will have already dropped the
+// cookie by then, so in practice logging in again resets that 400-day
+// clock.
 export const SESSION_COOKIE_NAME = 'dashboard_session';
-export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7; // 7 days
+export const SESSION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 400;
 
 function toBase64Url(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
@@ -51,32 +62,45 @@ export async function sha256Hex(input: string): Promise<string> {
     .join('');
 }
 
-/**
- * Creates a signed session token proving the caller authenticated with the
- * dashboard password. The token carries only an issue timestamp and an HMAC
- * signature - never the password itself.
- */
-export async function createSessionToken(): Promise<string> {
-  const issuedAt = Date.now().toString();
-  const signature = await sign(issuedAt);
-  return `${issuedAt}.${signature}`;
+export interface SessionPayload {
+  userId: string;
+  nickname: string;
+}
+
+// Neither `userId` (a cuid) nor `nickname` (one of KNOWN_USERNAMES) can ever
+// contain a `.`, so joining/splitting on it is unambiguous - same
+// dot-joined-then-signed shape the previous single-password token used.
+function encodePayload(payload: SessionPayload, issuedAt: string): string {
+  return `${payload.userId}.${payload.nickname}.${issuedAt}`;
 }
 
 /**
- * Verifies a session token's signature and expiry. Fails closed: any
- * malformed, forged, or expired token is treated as unauthenticated.
+ * Creates a signed session token binding the browser to a specific
+ * userId+nickname, proving the caller passed the real password check in
+ * `app/api/login/route.ts`. Carries an issue timestamp for display purposes
+ * only (e.g. "signed in since") - see the module doc comment for why
+ * nothing here ever rejects a token for being old.
  */
-export async function verifySessionToken(token: string | undefined): Promise<boolean> {
-  if (!token) return false;
+export async function createSessionToken(payload: SessionPayload): Promise<string> {
+  const issuedAt = Date.now().toString();
+  const encoded = encodePayload(payload, issuedAt);
+  const signature = await sign(encoded);
+  return `${encoded}.${signature}`;
+}
 
-  const [issuedAt, signature] = token.split('.');
-  if (!issuedAt || !signature) return false;
+/**
+ * Verifies a session token's signature. Fails closed: any malformed or
+ * forged token is treated as unauthenticated. Deliberately has no expiry
+ * check - see the module doc comment.
+ */
+export async function verifySessionToken(token: string | undefined): Promise<SessionPayload | null> {
+  if (!token) return null;
 
-  const expectedSignature = await sign(issuedAt);
-  if (!timingSafeEqual(signature, expectedSignature)) return false;
+  const [userId, nickname, issuedAt, signature] = token.split('.');
+  if (!userId || !nickname || !issuedAt || !signature) return null;
 
-  const age = Date.now() - Number(issuedAt);
-  if (!Number.isFinite(age) || age < 0 || age > SESSION_MAX_AGE_SECONDS * 1000) return false;
+  const expectedSignature = await sign(encodePayload({ userId, nickname }, issuedAt));
+  if (!timingSafeEqual(signature, expectedSignature)) return null;
 
-  return true;
+  return { userId, nickname };
 }

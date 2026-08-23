@@ -36,7 +36,7 @@ describe("proxy", () => {
   })
 
   it("redirects to /login when the session cookie signature is tampered", async () => {
-    const token = await createSessionToken()
+    const token = await createSessionToken({ userId: "user-cuid-1", nickname: "Noel" })
     const tamperedToken = `${token}x`
 
     const response = await proxy(
@@ -48,7 +48,7 @@ describe("proxy", () => {
   })
 
   it("passes the request through when the session cookie is valid", async () => {
-    const token = await createSessionToken()
+    const token = await createSessionToken({ userId: "user-cuid-1", nickname: "Noel" })
 
     const response = await proxy(
       requestWithCookie(`${SESSION_COOKIE_NAME}=${token}`)
