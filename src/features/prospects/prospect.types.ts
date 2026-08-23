@@ -20,6 +20,10 @@ export const prospectSourceSchema = z.enum([
   'github',
   'indiehackers',
   'manual',
+  'overpass',
+  'yellowpages',
+  'companies_house',
+  'texas_comptroller',
 ]);
 export type ProspectSource = z.infer<typeof prospectSourceSchema>;
 
@@ -32,6 +36,7 @@ export const signalTypeSchema = z.enum([
   'hiring_post',
   'no_website',
   'technical_debt',
+  'recently_registered',
 ]);
 export type SignalType = z.infer<typeof signalTypeSchema>;
 

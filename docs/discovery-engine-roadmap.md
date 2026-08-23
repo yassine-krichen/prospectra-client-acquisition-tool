@@ -149,6 +149,45 @@ raw string. Known accepted limitation left as-is: this still can't distinguish t
 "Georgia" from the country "Georgia" (an inherent ambiguity of free-text geography, not worth more
 machinery to resolve given this app's actual prospect geography today).
 
+## Status: entity-resolution slice shipped - name+address composite match replaces address-alone (2026-08-23)
+
+A planning pass investigating UK Companies House (now a live source) found a real live bug in
+`dedupeProspects`/`findExistingProspect`'s address-alone match tier: two prospects sharing only a
+normalized street address - with no shared domain or phone - were merged into a single `Prospect`
+row purely because the address matched, regardless of company name. Confirmed via the existing test
+suite itself: it had a test deliberately asserting two DIFFERENT `companyName` values sharing an
+address DID merge, i.e. that was shipped, intended behavior before this fix. UK company-formation
+agents commonly register many unrelated companies at one office address with no phone/domain on
+those records, so address alone was the only differentiator - silently combining unrelated real
+businesses into one prospect. The same false-positive risk applies to any US strip-mall-style shared
+address.
+
+Fixed by tightening the address tier to require BOTH a matching normalized address AND a matching
+normalized company name (new `normalizeCompanyName` in `normalize-contact-info.ts` - lowercase, trim,
+collapse whitespace, strip punctuation, strip a single trailing legal-suffix token like `llc`/`inc`/
+`ltd` only when it's the last word):
+
+- `dedupeProspects` (in-memory, single run): the `byAddress` map keyed on address alone is replaced
+  with a `byNameAndAddress` map keyed on `` `${normalizedCompanyName}|${normalizedAddress}` ``, only
+  set/checked when both are present. Domain and phone tiers are unchanged.
+- `findExistingProspect` (cross-run, DB-backed): the address tier's `findFirst` became a `findMany`
+  on the same `where` clause, filtered in application code for the first row whose `companyName`
+  also matches after normalization. No new Prisma index - table size (dozens/low-hundreds of
+  prospects) doesn't justify one yet.
+
+The old buggy test was flipped to assert NO merge (regression guard for the fix), and a new test
+covers the actually-intended case: same address, names that DO match after normalization (e.g.
+`"Joe's Roofing"` vs `"Joe's Roofing LLC"`) still dedupe correctly.
+
+**Explicitly stayed out of scope for this slice** (do not re-litigate these without a fresh planning
+pass): real fuzzy/Levenshtein name matching (`normalizeCompanyName` is exact-match-after-
+normalization only - documented false negative: `"Joe's Roofing"` vs `"Joe Roofing"`, missing
+possessive, will NOT match), coordinate-proximity matching (only 2 of 8 sources populate lat/lng, and
+it doesn't cover either of this slice's own motivating scenarios), and numeric confidence scoring
+(premature at current prospect volume). All three remain part of the full weighted-confidence
+entity-resolution engine described as explicitly deferred below - this slice is a stepping stone
+toward that, not a replacement for it.
+
 ## Explicitly deferred to later (do not start these in this branch)
 
 - **Government business registry connectors** - real work, real value, own session later. Decided:

@@ -94,7 +94,7 @@ describe('runOverpassSource', () => {
         websiteUrl: 'https://clarkekentplumbing.com',
         phone: '(512) 766-0970',
         address: '1408 W Ben White Blvd, Austin 78704',
-        source: 'manual',
+        source: 'overpass',
         sourceUrl: 'https://www.openstreetmap.org/node/111',
         location: expect.objectContaining({ lat: 30.27, lng: -97.74 }),
       }),

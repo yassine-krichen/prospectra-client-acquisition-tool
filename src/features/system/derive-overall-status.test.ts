@@ -23,6 +23,8 @@ function baseHealth(overrides: Partial<SystemHealth> = {}): SystemHealth {
     configuredServices: {
       googlePlaces: false,
       builtwith: false,
+      companiesHouse: false,
+      texasComptroller: false,
       productHunt: false,
       crunchbase: false,
       github: false,
@@ -34,7 +36,7 @@ function baseHealth(overrides: Partial<SystemHealth> = {}): SystemHealth {
       claudeBridge: false,
       resend: false,
     },
-    configuredPercent: Math.round((1 / 12) * 100),
+    configuredPercent: Math.round((1 / 14) * 100),
     prospectFunnel: {},
     ...overrides,
   };

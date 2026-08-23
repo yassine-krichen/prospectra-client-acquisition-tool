@@ -1,7 +1,6 @@
 import { env } from '@/common/config/env';
 import { isBridgeInCooldown } from '@/features/drafting/bridge-budget';
 import { generateDraft as generateBridgeDraft } from '@/features/drafting/claude-bridge.client';
-import { generateDeepseekDraft } from '@/features/drafting/deepseek.client';
 import { generateGeminiDraft } from '@/features/drafting/gemini.client';
 import { generateGroqDraft } from '@/features/drafting/groq.client';
 import type { DraftGenerationResult, ModelRotationResult } from '@/features/drafting/drafting.types';
@@ -15,10 +14,18 @@ const BRIDGE_SOURCE = 'claude-bridge';
 // (drafting.types.ts) is wider still - it also includes `'claude-bridge'`,
 // the tier-2 fallback lane this registry itself never selects (see
 // `generateDraftWithFallback` below).
-export type ProviderId = 'gemini' | 'groq' | 'deepseek';
+//
+// DeepSeek was dropped from this registry (2026-08-23): it's the one
+// provider in the pool with no enforced cost cap (pay-per-token, unlike
+// Gemini/Groq's free tiers or the bridge's cooldown-gated budget), and
+// wasn't earning its slot. `deepseek.client.ts` and the `deepseek` member of
+// the `ModelUsed` Prisma enum are untouched - historical `Draft` rows
+// generated via DeepSeek still exist and still need to map/display
+// correctly. This registry just never selects it for a NEW draft again.
+export type ProviderId = 'gemini' | 'groq';
 
-// Both `GEMINI_API_KEY`/`GROQ_API_KEY`/`DEEPSEEK_API_KEY` accept a comma-
-// separated list of keys for rotation across several free-tier keys.
+// Both `GEMINI_API_KEY`/`GROQ_API_KEY` accept a comma-separated list of keys
+// for rotation across several free-tier keys.
 function parseKeys(raw: string | undefined): string[] {
   if (!raw) return [];
   return raw
@@ -46,10 +53,6 @@ const PROVIDERS: Record<ProviderId, ProviderDefinition> = {
   groq: {
     envKeys: () => parseKeys(env.GROQ_API_KEY),
     call: (apiKey, prompt) => generateGroqDraft(prompt, apiKey),
-  },
-  deepseek: {
-    envKeys: () => parseKeys(env.DEEPSEEK_API_KEY),
-    call: (apiKey, prompt) => generateDeepseekDraft(prompt, apiKey),
   },
 };
 
@@ -108,7 +111,7 @@ export async function generateDraftWithRotation(prompt: string): Promise<ModelRo
 }
 
 /**
- * `generateDraftWithRotation` (the bulk Gemini/Groq/DeepSeek pool), with a
+ * `generateDraftWithRotation` (the bulk Gemini/Groq pool), with a
  * single tier-2 overflow attempt via claude-web-bridge when that whole pool
  * is exhausted - gated on BOTH conditions together, per the drafting
  * redesign plan:

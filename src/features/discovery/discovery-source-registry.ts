@@ -50,6 +50,20 @@ export const DISCOVERY_SOURCES: DiscoverySourceMeta[] = [
     branch: 'a',
   },
   {
+    key: 'companies_house',
+    displayName: 'UK Companies House',
+    paid: false,
+    envVarName: 'COMPANIES_HOUSE_API_KEY',
+    branch: 'a',
+  },
+  {
+    key: 'texas_comptroller',
+    displayName: 'Texas Comptroller (Franchise Tax)',
+    paid: false,
+    envVarName: 'TEXAS_COMPTROLLER_API_KEY',
+    branch: 'a',
+  },
+  {
     key: 'product_hunt',
     displayName: 'Product Hunt',
     paid: false,

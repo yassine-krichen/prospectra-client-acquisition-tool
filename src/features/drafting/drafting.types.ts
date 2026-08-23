@@ -42,7 +42,11 @@ export interface DraftGenerationFailure {
 // single generation attempt against an already-selected API key.
 export type DraftGenerationResult = DraftGenerationSuccess | DraftGenerationFailure;
 
-export type DraftingProvider = 'gemini' | 'groq' | 'deepseek' | 'claude-bridge';
+// DeepSeek is deliberately excluded here even though the domain `ModelUsed`
+// type (prospect.types.ts) still includes it for historical `Draft` rows -
+// model-rotation.ts no longer selects it for a new draft, so nothing that
+// produces a `DraftingProvider` value can produce `'deepseek'` anymore.
+export type DraftingProvider = 'gemini' | 'groq' | 'claude-bridge';
 
 export interface ModelRotationSuccess {
   ok: true;

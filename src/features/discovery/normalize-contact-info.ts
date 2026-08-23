@@ -1,6 +1,7 @@
-// Phone/address normalization shared by discovery's dedupe/persist logic
-// (discovery.service.ts) - these are secondary match keys for prospects with
-// no domain, mirroring normalize-domain.ts's role for domain matching.
+// Phone/address/company-name normalization shared by discovery's
+// dedupe/persist logic (discovery.service.ts) - these are secondary match
+// keys for prospects with no domain, mirroring normalize-domain.ts's role for
+// domain matching.
 
 /**
  * Strips a phone number down to digits only, dropping a leading US country
@@ -59,4 +60,49 @@ export function normalizeAddress(address: string | null): string | null {
     .join(' ');
 
   return expanded;
+}
+
+// Legal-entity suffixes stripped from the end of a normalized company name -
+// only when they're the LAST word, so a business literally named e.g. "Corp
+// Consulting" isn't corrupted into "consulting".
+const LEGAL_SUFFIXES = new Set([
+  'llc',
+  'inc',
+  'incorporated',
+  'ltd',
+  'limited',
+  'corp',
+  'corporation',
+  'co',
+  'company',
+  'plc',
+  'llp',
+]);
+
+/**
+ * Normalizes a company name for equality comparison: lowercases, trims,
+ * collapses whitespace, strips punctuation, then strips exactly one trailing
+ * legal-suffix token (llc, inc, ltd, etc - see `LEGAL_SUFFIXES`) when it's the
+ * last word.
+ *
+ * Like `normalizeAddress`, this is exact-match-after-normalization, not
+ * fuzzy/Levenshtein matching - a real fuzzy-matching system is bigger,
+ * separate, explicitly deferred work (see docs/discovery-engine-roadmap.md).
+ * Known false negative: "Joe's Roofing" vs "Joe Roofing" (missing
+ * possessive) will NOT normalize to the same string. False negatives (missed
+ * duplicates) are expected and acceptable; it should not produce false
+ * positives.
+ */
+export function normalizeCompanyName(name: string): string {
+  const collapsed = name.trim().toLowerCase().replace(/\s+/g, ' ');
+  const stripped = collapsed.replace(/[.,]/g, '');
+  if (!stripped) return stripped;
+
+  const words = stripped.split(' ');
+  const lastWord = words[words.length - 1];
+  if (words.length > 1 && LEGAL_SUFFIXES.has(lastWord)) {
+    words.pop();
+  }
+
+  return words.join(' ');
 }

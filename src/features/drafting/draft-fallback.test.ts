@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // generateDraftWithFallback (model-rotation.ts) composes:
-// - generateDraftWithRotation (the Gemini/Groq/DeepSeek pool) - exercised via
+// - generateDraftWithRotation (the Gemini/Groq pool - DeepSeek was dropped
+//   2026-08-23, the one provider with no enforced cost cap) - exercised via
 //   the real registry, with each provider client mocked (same convention as
 //   model-rotation.test.ts).
 // - claude-bridge.client.ts's generateDraft (the tier-2 fallback) and
@@ -12,11 +13,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const envMock: {
   GEMINI_API_KEY: string | undefined;
   GROQ_API_KEY: string | undefined;
-  DEEPSEEK_API_KEY: string | undefined;
 } = {
   GEMINI_API_KEY: undefined,
   GROQ_API_KEY: undefined,
-  DEEPSEEK_API_KEY: undefined,
 };
 vi.mock('@/common/config/env', () => ({ env: envMock }));
 
@@ -25,9 +24,6 @@ vi.mock('@/features/drafting/gemini.client', () => ({ generateGeminiDraft: gener
 
 const generateGroqDraftMock = vi.fn();
 vi.mock('@/features/drafting/groq.client', () => ({ generateGroqDraft: generateGroqDraftMock }));
-
-const generateDeepseekDraftMock = vi.fn();
-vi.mock('@/features/drafting/deepseek.client', () => ({ generateDeepseekDraft: generateDeepseekDraftMock }));
 
 const generateBridgeDraftMock = vi.fn();
 vi.mock('@/features/drafting/claude-bridge.client', () => ({ generateDraft: generateBridgeDraftMock }));
@@ -38,10 +34,8 @@ vi.mock('@/features/drafting/bridge-budget', () => ({ isBridgeInCooldown: isBrid
 async function loadWithAllProvidersExhausted(): Promise<typeof import('./model-rotation')> {
   envMock.GEMINI_API_KEY = 'gemini-key';
   envMock.GROQ_API_KEY = 'groq-key';
-  envMock.DEEPSEEK_API_KEY = 'deepseek-key';
   generateGeminiDraftMock.mockResolvedValue({ ok: false, reason: 'gemini responded with 500' });
   generateGroqDraftMock.mockResolvedValue({ ok: false, reason: 'groq responded with 500' });
-  generateDeepseekDraftMock.mockResolvedValue({ ok: false, reason: 'deepseek responded with 500' });
   vi.resetModules();
   return import('./model-rotation');
 }
@@ -58,7 +52,6 @@ describe('generateDraftWithFallback', () => {
   it('returns the primary pool result immediately without touching the bridge when it succeeds', async () => {
     envMock.GEMINI_API_KEY = 'gemini-key';
     envMock.GROQ_API_KEY = undefined;
-    envMock.DEEPSEEK_API_KEY = undefined;
     generateGeminiDraftMock.mockResolvedValue({ ok: true, subject: 'Subj', body: 'Body' });
     vi.resetModules();
     const { generateDraftWithFallback } = await import('./model-rotation');

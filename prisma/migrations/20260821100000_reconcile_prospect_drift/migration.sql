@@ -1,0 +1,13 @@
+-- Placeholder migration.
+--
+-- This migration was applied directly to the live database on 2026-08-21
+-- (recorded in `_prisma_migrations` on the live Neon DB) but its original
+-- SQL was never committed to git on any branch. Recreated 2026-08-23 as an
+-- empty stand-in purely so the local migration history lines up with what
+-- the database already has recorded as applied - it will not be re-run.
+--
+-- Verified via `prisma db pull --print` (read-only introspection) that the
+-- live schema's current shape matches exactly what the other, git-tracked
+-- migrations already describe - whatever this migration changed is already
+-- fully reflected in `prisma/schema.prisma` today, nothing is unaccounted
+-- for.

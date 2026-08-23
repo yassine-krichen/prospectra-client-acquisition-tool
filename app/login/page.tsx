@@ -25,50 +25,23 @@ export default function LoginPage(): React.JSX.Element {
 
   const [comboboxOpen, setComboboxOpen] = useState(false);
   const [selectedUsername, setSelectedUsername] = useState<KnownUsername | null>(null);
-  const [needsSetup, setNeedsSetup] = useState<boolean | null>(null);
-  const [isCheckingStatus, setIsCheckingStatus] = useState(false);
 
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  async function handleSelectUsername(username: KnownUsername): Promise<void> {
+  function handleSelectUsername(username: KnownUsername): void {
     setSelectedUsername(username);
     setComboboxOpen(false);
     setPassword('');
-    setConfirmPassword('');
     setError(null);
-    setNeedsSetup(null);
-    setIsCheckingStatus(true);
-
-    try {
-      const response = await fetch(`/api/login/status?nickname=${encodeURIComponent(username)}`);
-      const data: unknown = await response.json().catch(() => null);
-      const parsedNeedsSetup =
-        data && typeof data === 'object' && 'needsSetup' in data ? Boolean(data.needsSetup) : true;
-      setNeedsSetup(response.ok ? parsedNeedsSetup : true);
-    } catch {
-      // Network hiccup - default to the "set a password" prompt rather than
-      // silently blocking the form. If a password already exists, the login
-      // route itself will reject an 8+ char guess with "Incorrect password."
-      // instead of accidentally minting a new one.
-      setNeedsSetup(true);
-    } finally {
-      setIsCheckingStatus(false);
-    }
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     if (!selectedUsername) return;
     setError(null);
-
-    if (needsSetup && password !== confirmPassword) {
-      setError('Passwords do not match.');
-      return;
-    }
 
     setIsSubmitting(true);
     try {
@@ -95,11 +68,7 @@ export default function LoginPage(): React.JSX.Element {
     }
   }
 
-  const canSubmit =
-    selectedUsername !== null &&
-    needsSetup !== null &&
-    !isCheckingStatus &&
-    (needsSetup ? password.length >= 8 && confirmPassword.length >= 8 : password.length > 0);
+  const canSubmit = selectedUsername !== null && password.length > 0;
 
   return (
     <main className="bg-muted/30 flex min-h-screen items-center justify-center p-4">
@@ -159,76 +128,48 @@ export default function LoginPage(): React.JSX.Element {
 
             {selectedUsername ? (
               <div className="animate-in fade-in slide-in-from-top-2 flex flex-col gap-4 duration-200">
-                {isCheckingStatus ? (
-                  <div className="text-muted-foreground flex items-center gap-2 text-sm">
-                    <HugeiconsIcon icon={Loading03Icon} strokeWidth={2} className="size-4 animate-spin" />
-                    Checking account…
+                <p className="text-muted-foreground text-sm">
+                  Welcome back, {selectedUsername}. Enter your password.
+                </p>
+
+                <div className="flex flex-col gap-1.5">
+                  <label htmlFor="password" className="text-foreground text-sm font-medium">
+                    Password
+                  </label>
+                  <div className="relative">
+                    <Input
+                      id="password"
+                      type={showPassword ? 'text' : 'password'}
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
+                      placeholder="Enter your password"
+                      autoFocus
+                      autoComplete="current-password"
+                      aria-invalid={error ? true : undefined}
+                      className="pr-9"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((prev) => !prev)}
+                      className="text-muted-foreground hover:text-foreground absolute inset-y-0 right-0 flex w-9 items-center justify-center"
+                      tabIndex={-1}
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    >
+                      <HugeiconsIcon
+                        icon={showPassword ? ViewOffIcon : ViewIcon}
+                        strokeWidth={2}
+                        className="size-4"
+                      />
+                    </button>
                   </div>
-                ) : (
-                  <>
-                    <p className="text-muted-foreground text-sm">
-                      {needsSetup
-                        ? `This is your first time signing in as ${selectedUsername}. Create a password (min 8 characters).`
-                        : `Welcome back, ${selectedUsername}. Enter your password.`}
-                    </p>
+                </div>
 
-                    <div className="flex flex-col gap-1.5">
-                      <label htmlFor="password" className="text-foreground text-sm font-medium">
-                        {needsSetup ? 'New password' : 'Password'}
-                      </label>
-                      <div className="relative">
-                        <Input
-                          id="password"
-                          type={showPassword ? 'text' : 'password'}
-                          value={password}
-                          onChange={(event) => setPassword(event.target.value)}
-                          placeholder={needsSetup ? 'At least 8 characters' : 'Enter your password'}
-                          autoFocus
-                          autoComplete={needsSetup ? 'new-password' : 'current-password'}
-                          aria-invalid={error ? true : undefined}
-                          className="pr-9"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setShowPassword((prev) => !prev)}
-                          className="text-muted-foreground hover:text-foreground absolute inset-y-0 right-0 flex w-9 items-center justify-center"
-                          tabIndex={-1}
-                          aria-label={showPassword ? 'Hide password' : 'Show password'}
-                        >
-                          <HugeiconsIcon
-                            icon={showPassword ? ViewOffIcon : ViewIcon}
-                            strokeWidth={2}
-                            className="size-4"
-                          />
-                        </button>
-                      </div>
-                    </div>
-
-                    {needsSetup ? (
-                      <div className="animate-in fade-in flex flex-col gap-1.5 duration-200">
-                        <label htmlFor="confirmPassword" className="text-foreground text-sm font-medium">
-                          Confirm password
-                        </label>
-                        <Input
-                          id="confirmPassword"
-                          type={showPassword ? 'text' : 'password'}
-                          value={confirmPassword}
-                          onChange={(event) => setConfirmPassword(event.target.value)}
-                          placeholder="Re-enter your new password"
-                          autoComplete="new-password"
-                          aria-invalid={error ? true : undefined}
-                        />
-                      </div>
-                    ) : null}
-
-                    {error ? (
-                      <p className="text-destructive flex items-center gap-1.5 text-sm">
-                        <HugeiconsIcon icon={Alert02Icon} strokeWidth={2} className="size-4 shrink-0" />
-                        {error}
-                      </p>
-                    ) : null}
-                  </>
-                )}
+                {error ? (
+                  <p className="text-destructive flex items-center gap-1.5 text-sm">
+                    <HugeiconsIcon icon={Alert02Icon} strokeWidth={2} className="size-4 shrink-0" />
+                    {error}
+                  </p>
+                ) : null}
               </div>
             ) : null}
 
@@ -238,8 +179,6 @@ export default function LoginPage(): React.JSX.Element {
                   <HugeiconsIcon icon={Loading03Icon} strokeWidth={2} className="size-4 animate-spin" />
                   Signing in
                 </>
-              ) : needsSetup ? (
-                'Create password & sign in'
               ) : (
                 'Sign in'
               )}

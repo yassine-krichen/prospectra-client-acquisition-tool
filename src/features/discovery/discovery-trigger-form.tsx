@@ -14,6 +14,7 @@ import {
   Idea01Icon,
   SourceCodeIcon,
   Alert02Icon,
+  Building03Icon,
 } from '@hugeicons/core-free-icons';
 
 import { Button } from '@/components/ui/button';
@@ -31,6 +32,7 @@ import {
   type DiscoveryRunHistoryEntry,
 } from '@/features/discovery/discovery.types';
 import { DISCOVERY_SOURCES, type DiscoverySourceMeta } from '@/features/discovery/discovery-source-registry';
+import { PRIORITY_MARKETS } from '@/features/discovery/priority-markets';
 // `import type` only - erased at compile time, so this never actually pulls
 // `system-health.service.ts` (and its `@/common/config/env` import) into the
 // client bundle. Same pattern already used by system-health-trigger.tsx.
@@ -49,6 +51,8 @@ const CONFIGURED_SERVICES_KEY: Record<string, keyof SystemHealth['configuredServ
   indiehackers: null,
   builtwith: 'builtwith',
   overpass: null,
+  companies_house: 'companiesHouse',
+  texas_comptroller: 'texasComptroller',
 };
 
 // Purely for at-a-glance scanning of the source checklist - not decorative,
@@ -62,6 +66,8 @@ const SOURCE_ICONS: Record<string, IconSvgElement> = {
   indiehackers: Idea01Icon,
   builtwith: SourceCodeIcon,
   overpass: MapsLocation01Icon,
+  companies_house: Building03Icon,
+  texas_comptroller: Building03Icon,
 };
 
 function isSourceConfigured(source: DiscoverySourceMeta, configuredServices: SystemHealth['configuredServices'] | null): boolean {
@@ -112,6 +118,26 @@ const CATEGORY_HELP: Record<Branch, string> = {
   both: 'Used differently by every source - see the Category tooltip on Branch A/B individually for exact meaning per source.',
 };
 
+// Branch A suggestions mirror the exact keywords `CATEGORY_TAG_MAP` in
+// overpass.source.ts already maps to real OSM tags (one representative
+// keyword per tag group, e.g. "mechanic" for the car_repair group) - keeps
+// the suggestions honest about what this app's own sources actually
+// understand, rather than an unrelated wishlist. Not imported directly
+// (that file isn't guaranteed env-free transitively, and this is a
+// 'use client' file - see the CLAUDE.md note on that hazard), just kept in
+// sync by hand.
+// Branch B has no existing curated taxonomy to reuse (Product Hunt/Crunchbase
+// treat Category as a loose keyword, not a structured category) - this is a
+// small hand-picked list of common startup/SaaS category keywords.
+const CATEGORY_SUGGESTIONS_A = ['plumber', 'mechanic', 'electrician', 'restaurant', 'cafe', 'dentist', 'hair salon', 'bakery', 'gym'];
+const CATEGORY_SUGGESTIONS_B = ['saas', 'fintech', 'devtools', 'ai', 'marketplace', 'productivity', 'ecommerce', 'analytics'];
+
+const CATEGORY_SUGGESTIONS: Record<Branch, string[]> = {
+  a: CATEGORY_SUGGESTIONS_A,
+  b: CATEGORY_SUGGESTIONS_B,
+  both: Array.from(new Set([...CATEGORY_SUGGESTIONS_A, ...CATEGORY_SUGGESTIONS_B])),
+};
+
 const GEOGRAPHY_HELP =
   'A "City, State" string (e.g. "Austin, TX"), used only by Branch A sources (Google Places, Yellow Pages). Every Branch B source ignores this field entirely, even when it\'s filled in.';
 
@@ -129,6 +155,10 @@ const SOURCE_HELP: Record<string, string> = {
   indiehackers: 'Playwright scrape of Indie Hackers\' Products and Jobs pages. Ignores Category/Geography entirely - always the same pages. No API key needed.',
   overpass:
     'OpenStreetMap via the Overpass API - geocodes Geography via Nominatim, then queries OSM points of interest matching Category. Free, no API key needed. Data completeness varies by region; many results will have a name only.',
+  companies_house:
+    'UK Companies House public company search - Category is the search term, filtered to active companies whose address loosely matches Geography. Free, needs COMPANIES_HOUSE_API_KEY.',
+  texas_comptroller:
+    'Texas Comptroller franchise tax registry - searches by Category, filters to active SOS registrations whose mailing address loosely matches Geography. Free, needs TEXAS_COMPTROLLER_API_KEY.',
 };
 
 function FieldHelp({ text }: { text: string }): React.JSX.Element {
@@ -360,165 +390,199 @@ export function DiscoveryTriggerForm(): React.JSX.Element {
         </p>
       </div>
 
-      <Card className="max-w-2xl">
-        <CardHeader>
-          <CardTitle>Run discovery</CardTitle>
-          <CardDescription>{BRANCH_HELP[branch]}</CardDescription>
-        </CardHeader>
-        <form onSubmit={handleSubmit}>
-          <CardContent className="flex flex-wrap items-end gap-3 pb-(--card-spacing)">
-            <div className="flex flex-col gap-1">
-              <label className="text-muted-foreground flex items-center gap-1 text-xs">
-                Category
-                <FieldHelp text={CATEGORY_HELP[branch]} />
-              </label>
-              <Input
-                className="w-48"
-                placeholder={branch === 'a' ? 'e.g. plumber' : 'e.g. saas'}
-                value={category}
-                onChange={(event) => setCategory(event.target.value)}
-                disabled={isRunning}
-                required
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-muted-foreground flex items-center gap-1 text-xs">
-                Geography {branch !== 'a' && <span className="opacity-60">(ignored for this branch)</span>}
-                <FieldHelp text={GEOGRAPHY_HELP} />
-              </label>
-              <Input
-                className="w-48"
-                placeholder={branch === 'a' ? 'e.g. Austin, TX' : 'ignored'}
-                value={geography}
-                onChange={(event) => setGeography(event.target.value)}
-                disabled={isRunning}
-                required
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-muted-foreground flex items-center gap-1 text-xs">
-                Branch
-                <FieldHelp text={BRANCH_SELECT_HELP} />
-              </label>
-              <Select value={branch} onValueChange={(value) => setBranch(value as Branch)} disabled={isRunning}>
-                <SelectTrigger className="w-48">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="a">{BRANCH_LABELS.a}</SelectItem>
-                  <SelectItem value="b">{BRANCH_LABELS.b}</SelectItem>
-                  <SelectItem value="both">{BRANCH_LABELS.both}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </CardContent>
-          <CardContent className="flex flex-col gap-2 pt-0">
-            <span className="text-muted-foreground text-xs">Sources</span>
-            <div className="divide-border rounded-md border divide-y">
-              {branchSources.map((source) => (
-                <SourceRow
-                  key={source.key}
-                  source={source}
-                  checked={enabledSources.has(source.key)}
-                  configured={isSourceConfigured(source, configuredServices)}
-                  disabled={isRunning}
-                  onCheckedChange={(checked) => toggleSource(source.key, checked)}
-                />
-              ))}
-              {branchIndependentSources.map((source) => (
-                <SourceRow
-                  key={source.key}
-                  source={source}
-                  checked={enabledSources.has(source.key)}
-                  configured={isSourceConfigured(source, configuredServices)}
-                  disabled={isRunning}
-                  onCheckedChange={(checked) => toggleSource(source.key, checked)}
-                />
-              ))}
-            </div>
-          </CardContent>
-          <CardFooter className="flex flex-col items-start gap-3">
-            {duplicateOfCurrentInput ? (
-              <p className="text-muted-foreground flex items-center gap-1 text-xs">
-                <HugeiconsIcon icon={InformationCircleIcon} strokeWidth={2} className="size-3.5 shrink-0" />
-                Searched {formatRelativeTime(new Date(duplicateOfCurrentInput.createdAt))} — {duplicateOfCurrentInput.totalFound}{' '}
-                found.
-              </p>
-            ) : null}
-            <Button type="submit" disabled={isRunning}>
-              {isRunning ? (
-                <>
-                  <HugeiconsIcon icon={Loading03Icon} strokeWidth={2} className="size-4 animate-spin" />
-                  Running discovery…
-                </>
-              ) : (
-                <>
-                  <HugeiconsIcon icon={Compass01Icon} strokeWidth={2} className="size-4" />
-                  Run discovery
-                </>
-              )}
-            </Button>
-          </CardFooter>
-        </form>
-      </Card>
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+        <div className="flex flex-col gap-4 lg:max-w-2xl">
+          <Card>
+            <CardHeader>
+              <CardTitle>Run discovery</CardTitle>
+              <CardDescription>{BRANCH_HELP[branch]}</CardDescription>
+            </CardHeader>
+            <form onSubmit={handleSubmit}>
+              <CardContent className="flex flex-wrap items-end gap-3 pb-(--card-spacing)">
+                <div className="flex flex-col gap-1">
+                  <label className="text-muted-foreground flex items-center gap-1 text-xs">
+                    Category
+                    <FieldHelp text={CATEGORY_HELP[branch]} />
+                  </label>
+                  <Input
+                    className="w-48"
+                    placeholder={branch === 'a' ? 'e.g. plumber' : 'e.g. saas'}
+                    value={category}
+                    onChange={(event) => setCategory(event.target.value)}
+                    disabled={isRunning}
+                    required
+                    list="category-suggestions"
+                  />
+                  {/* Native OS-level autocomplete suggestions - purely additive,
+                      doesn't block or validate typed input. See CATEGORY_SUGGESTIONS
+                      above for why a shadcn Combobox wasn't used here instead. */}
+                  <datalist id="category-suggestions">
+                    {CATEGORY_SUGGESTIONS[branch].map((suggestion) => (
+                      <option key={suggestion} value={suggestion} />
+                    ))}
+                  </datalist>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-muted-foreground flex items-center gap-1 text-xs">
+                    Geography {branch !== 'a' && <span className="opacity-60">(ignored for this branch)</span>}
+                    <FieldHelp text={GEOGRAPHY_HELP} />
+                  </label>
+                  <Input
+                    className="w-48"
+                    placeholder={branch === 'a' ? 'e.g. Austin, TX' : 'ignored'}
+                    value={geography}
+                    onChange={(event) => setGeography(event.target.value)}
+                    disabled={isRunning}
+                    required
+                    list="geography-suggestions"
+                  />
+                  {/* Same native-datalist pattern as Category above - not
+                      branch-keyed, since PRIORITY_MARKETS is the same list
+                      regardless of branch (Branch B ignores Geography entirely). */}
+                  <datalist id="geography-suggestions">
+                    {PRIORITY_MARKETS.map((market) => (
+                      <option key={market} value={market} />
+                    ))}
+                  </datalist>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-muted-foreground flex items-center gap-1 text-xs">
+                    Branch
+                    <FieldHelp text={BRANCH_SELECT_HELP} />
+                  </label>
+                  <Select value={branch} onValueChange={(value) => setBranch(value as Branch)} disabled={isRunning}>
+                    <SelectTrigger className="w-48">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="a">{BRANCH_LABELS.a}</SelectItem>
+                      <SelectItem value="b">{BRANCH_LABELS.b}</SelectItem>
+                      <SelectItem value="both">{BRANCH_LABELS.both}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </CardContent>
+              <CardContent className="flex flex-col gap-3 pt-0 pb-(--card-spacing)">
+                <div className="flex flex-col gap-2">
+                  <span className="text-muted-foreground text-xs">Discovery sources</span>
+                  <div className="divide-border rounded-md border divide-y">
+                    {branchSources.map((source) => (
+                      <SourceRow
+                        key={source.key}
+                        source={source}
+                        checked={enabledSources.has(source.key)}
+                        configured={isSourceConfigured(source, configuredServices)}
+                        disabled={isRunning}
+                        onCheckedChange={(checked) => toggleSource(source.key, checked)}
+                      />
+                    ))}
+                  </div>
+                </div>
+                {branchIndependentSources.length > 0 ? (
+                  <div className="flex flex-col gap-2">
+                    <span className="text-muted-foreground flex items-center gap-1 text-xs">
+                      Enrichment
+                      <FieldHelp text="Runs after discovery, adding evidence to prospects a discovery source already found - never discovers a business on its own." />
+                    </span>
+                    <div className="divide-border rounded-md border divide-y">
+                      {branchIndependentSources.map((source) => (
+                        <SourceRow
+                          key={source.key}
+                          source={source}
+                          checked={enabledSources.has(source.key)}
+                          configured={isSourceConfigured(source, configuredServices)}
+                          disabled={isRunning}
+                          onCheckedChange={(checked) => toggleSource(source.key, checked)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </CardContent>
+              <CardFooter className="flex flex-col items-start gap-3">
+                {duplicateOfCurrentInput ? (
+                  <p className="text-muted-foreground flex items-center gap-1 text-xs">
+                    <HugeiconsIcon icon={InformationCircleIcon} strokeWidth={2} className="size-3.5 shrink-0" />
+                    Searched {formatRelativeTime(new Date(duplicateOfCurrentInput.createdAt))} — {duplicateOfCurrentInput.totalFound}{' '}
+                    found.
+                  </p>
+                ) : null}
+                <Button type="submit" disabled={isRunning}>
+                  {isRunning ? (
+                    <>
+                      <HugeiconsIcon icon={Loading03Icon} strokeWidth={2} className="size-4 animate-spin" />
+                      Running discovery…
+                    </>
+                  ) : (
+                    <>
+                      <HugeiconsIcon icon={Compass01Icon} strokeWidth={2} className="size-4" />
+                      Run discovery
+                    </>
+                  )}
+                </Button>
+              </CardFooter>
+            </form>
+          </Card>
 
-      {summary ? (
-        <Card className="max-w-4xl">
+          {summary ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Last run</CardTitle>
+                <CardDescription>
+                  {summary.totalFound} found · {summary.inserted} inserted · {summary.updated} updated ·{' '}
+                  {summary.skippedDoNotContact} skipped (do-not-contact) · {summary.discardedThinProspects} discarded (no
+                  actionable info)
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-2">
+                {summary.sources.map((source) => (
+                  <div key={source.source} className="flex items-start justify-between gap-4 text-sm">
+                    <span className="flex shrink-0 items-center gap-1 font-medium">
+                      {source.source}
+                      {SOURCE_HELP[source.source] ? <FieldHelp text={SOURCE_HELP[source.source]} /> : null}
+                    </span>
+                    {source.ran ? (
+                      <Badge variant={source.count > 0 ? 'default' : 'secondary'} className="shrink-0">
+                        {source.count} found
+                      </Badge>
+                    ) : (
+                      <span className="text-muted-foreground text-right text-xs">{source.reason ?? 'skipped'}</span>
+                    )}
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          ) : null}
+        </div>
+
+        <Card className="lg:flex-1">
           <CardHeader>
-            <CardTitle>Last run</CardTitle>
-            <CardDescription>
-              {summary.totalFound} found · {summary.inserted} inserted · {summary.updated} updated ·{' '}
-              {summary.skippedDoNotContact} skipped (do-not-contact) · {summary.discardedThinProspects} discarded (no
-              actionable info)
-            </CardDescription>
+            <CardTitle>History</CardTitle>
+            <CardDescription>Past discovery runs, most recent first.</CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-col gap-2">
-            {summary.sources.map((source) => (
-              <div key={source.source} className="flex items-start justify-between gap-4 text-sm">
-                <span className="flex shrink-0 items-center gap-1 font-medium">
-                  {source.source}
-                  {SOURCE_HELP[source.source] ? <FieldHelp text={SOURCE_HELP[source.source]} /> : null}
-                </span>
-                {source.ran ? (
-                  <Badge variant={source.count > 0 ? 'default' : 'secondary'} className="shrink-0">
-                    {source.count} found
-                  </Badge>
-                ) : (
-                  <span className="text-muted-foreground text-right text-xs">{source.reason ?? 'skipped'}</span>
-                )}
-              </div>
-            ))}
+          <CardContent className="flex max-h-[28rem] flex-col gap-2 overflow-y-auto">
+            {history.length === 0 ? (
+              <p className="text-muted-foreground text-sm">No discovery runs yet.</p>
+            ) : (
+              history.map((run) => (
+                <div key={run.id} className="flex items-center justify-between gap-4 text-sm">
+                  <span className="flex min-w-0 shrink items-center gap-2">
+                    <span className="truncate font-medium">{run.category}</span>
+                    <span className="text-muted-foreground truncate">{run.geography}</span>
+                    <Badge variant="outline" className="shrink-0">
+                      {BRANCH_LABELS[run.branch]}
+                    </Badge>
+                  </span>
+                  <span className="text-muted-foreground flex shrink-0 items-center gap-3 text-xs">
+                    <span>{run.totalFound} found</span>
+                    <span>{formatRelativeTime(new Date(run.createdAt))}</span>
+                  </span>
+                </div>
+              ))
+            )}
           </CardContent>
         </Card>
-      ) : null}
-
-      <Card className="max-w-4xl">
-        <CardHeader>
-          <CardTitle>History</CardTitle>
-          <CardDescription>Past discovery runs, most recent first.</CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-2">
-          {history.length === 0 ? (
-            <p className="text-muted-foreground text-sm">No discovery runs yet.</p>
-          ) : (
-            history.map((run) => (
-              <div key={run.id} className="flex items-center justify-between gap-4 text-sm">
-                <span className="flex min-w-0 shrink items-center gap-2">
-                  <span className="truncate font-medium">{run.category}</span>
-                  <span className="text-muted-foreground truncate">{run.geography}</span>
-                  <Badge variant="outline" className="shrink-0">
-                    {BRANCH_LABELS[run.branch]}
-                  </Badge>
-                </span>
-                <span className="text-muted-foreground flex shrink-0 items-center gap-3 text-xs">
-                  <span>{run.totalFound} found</span>
-                  <span>{formatRelativeTime(new Date(run.createdAt))}</span>
-                </span>
-              </div>
-            ))
-          )}
-        </CardContent>
-      </Card>
+      </div>
     </div>
   );
 }

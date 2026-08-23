@@ -30,6 +30,10 @@ const envSchema = z.object({
   // unavailable at call time instead of crashing the whole discovery run.
   GOOGLE_PLACES_API_KEY: optionalString(z.string().min(1)),
   BUILTWITH_API_KEY: optionalString(z.string().min(1)),
+  // Government business registry connectors - same graceful-skip pattern as
+  // every other source key above.
+  COMPANIES_HOUSE_API_KEY: optionalString(z.string().min(1)),
+  TEXAS_COMPTROLLER_API_KEY: optionalString(z.string().min(1)),
   // Branch B (startup/SaaS discovery) source keys - same graceful-skip
   // pattern as the Branch A keys above.
   PRODUCT_HUNT_API_TOKEN: optionalString(z.string().min(1)),
@@ -48,9 +52,11 @@ const envSchema = z.object({
   // model-rotation.ts's provider registry).
   GEMINI_API_KEY: optionalString(z.string().min(1)),
   GROQ_API_KEY: optionalString(z.string().min(1)),
-  // DeepSeek, the third registered drafting provider - same optional/
-  // comma-separated-list/graceful-skip pattern as GEMINI_API_KEY/
-  // GROQ_API_KEY above.
+  // DeepSeek is no longer in the active drafting rotation (2026-08-23,
+  // dropped as the pool's one pay-per-token provider with no enforced cost
+  // cap - see model-rotation.ts). Kept here, still optional, purely so the
+  // app doesn't fail to boot for anyone with a stale DEEPSEEK_API_KEY still
+  // set in their environment; nothing reads this value anymore.
   DEEPSEEK_API_KEY: optionalString(z.string().min(1)),
   // Base URL of the local claude-web-bridge sibling app used for the
   // Stage 2 humanizer pass. Optional - claude-bridge.client.ts defaults to

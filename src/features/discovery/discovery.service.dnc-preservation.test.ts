@@ -22,6 +22,45 @@ vi.mock('@/features/discovery/sources/yellowpages.source', () => ({
   runYellowPagesSource: runYellowPagesSourceMock,
 }));
 
+// Branch A also runs overpass (no API key required) and the builtwith/
+// tech-stack-detector enrichers (BUILTWITH_API_KEY is configured in this
+// repo's real .env, which this file's real, unmocked `env` module reads) -
+// left unmocked, these make real network calls on every run, which is both
+// slow (routinely pushes this file's tests past Vitest's default 5000ms
+// timeout) and non-deterministic. Mocked here for the same reason the rest
+// of this file's sources are mocked (see the top-of-file comment): only
+// `runDiscovery`'s own persistence branching is under test.
+const runOverpassSourceMock = vi.fn();
+vi.mock('@/features/discovery/sources/overpass.source', () => ({
+  runOverpassSource: runOverpassSourceMock,
+}));
+
+const lookupStaleStackMock = vi.fn();
+vi.mock('@/features/discovery/sources/builtwith.source', () => ({
+  lookupStaleStack: lookupStaleStackMock,
+}));
+
+const detectTechStackMock = vi.fn();
+vi.mock('@/features/discovery/sources/tech-stack-detector.source', () => ({
+  detectTechStack: detectTechStackMock,
+}));
+
+// Same reasoning as overpass/builtwith/tech-stack-detector above: Branch A
+// also runs Companies House and Texas Comptroller, and both read their API
+// key from the real, unmocked `env` module. Only harmless today because
+// COMPANIES_HOUSE_API_KEY/TEXAS_COMPTROLLER_API_KEY are unset in this repo's
+// .env - mocked here so this file doesn't start firing real external
+// requests the moment either key is provisioned.
+const runCompaniesHouseSourceMock = vi.fn();
+vi.mock('@/features/discovery/sources/companies-house.source', () => ({
+  runCompaniesHouseSource: runCompaniesHouseSourceMock,
+}));
+
+const runTexasComptrollerSourceMock = vi.fn();
+vi.mock('@/features/discovery/sources/texas-comptroller.source', () => ({
+  runTexasComptrollerSource: runTexasComptrollerSourceMock,
+}));
+
 const runProductHuntSourceMock = vi.fn();
 vi.mock('@/features/discovery/sources/product-hunt.source', () => ({
   runProductHuntSource: runProductHuntSourceMock,
@@ -65,6 +104,11 @@ beforeEach(async () => {
   vi.clearAllMocks();
   runGooglePlacesSourceMock.mockResolvedValue({ ok: true, prospects: [] });
   runYellowPagesSourceMock.mockResolvedValue({ ok: true, prospects: [] });
+  runOverpassSourceMock.mockResolvedValue({ ok: true, prospects: [] });
+  lookupStaleStackMock.mockResolvedValue({ ok: false, reason: 'source unavailable: could not fetch' });
+  detectTechStackMock.mockResolvedValue({ ok: false, reason: 'source unavailable: could not fetch' });
+  runCompaniesHouseSourceMock.mockResolvedValue({ ok: true, prospects: [] });
+  runTexasComptrollerSourceMock.mockResolvedValue({ ok: true, prospects: [] });
   runProductHuntSourceMock.mockResolvedValue({ ok: true, prospects: [] });
   runCrunchbaseSourceMock.mockResolvedValue({ ok: true, prospects: [] });
   lookupGitHubEvidenceMock.mockResolvedValue({ ok: true, lookup: { matched: false, signal: null } });
@@ -121,6 +165,7 @@ describe('runDiscovery doNotContact preservation (real DB)', () => {
           sourceUrl: 'https://example.com/rescrape',
           discoveredAt: new Date(),
           signal: { type: 'outdated_site', description: 'freshly re-scraped signal', evidence: 'evidence', strength: 'strong' },
+          corroboratingSourceCount: 1,
         },
       ],
     });
@@ -161,6 +206,7 @@ describe('runDiscovery doNotContact preservation (real DB)', () => {
           sourceUrl: 'https://example.com/source',
           discoveredAt: new Date(),
           signal: { type: 'no_https', description: 'x', evidence: null, strength: 'weak' },
+          corroboratingSourceCount: 1,
         },
         {
           companyName: 'Brand New Co',
@@ -173,6 +219,7 @@ describe('runDiscovery doNotContact preservation (real DB)', () => {
           sourceUrl: 'https://example.com/source',
           discoveredAt: new Date(),
           signal: { type: 'no_https', description: 'x', evidence: null, strength: 'medium' },
+          corroboratingSourceCount: 1,
         },
       ],
     });
