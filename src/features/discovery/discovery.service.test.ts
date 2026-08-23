@@ -9,22 +9,31 @@ import type { Signal } from '@/features/prospects/prospect.types';
 // tested elsewhere, so both are mocked here and only `discovery.service.ts`'s
 // own orchestration logic (dedupe, enrichment gating, priority scoring,
 // persistence branching, source-unavailable reporting) is under test.
-const { prospectMock, findFirstMock, createMock, updateMock, discoveryRunCreateMock, discoveryRunFindManyMock } =
-  vi.hoisted(() => {
-    const findFirst = vi.fn();
-    const create = vi.fn();
-    const update = vi.fn();
-    const discoveryRunCreate = vi.fn();
-    const discoveryRunFindMany = vi.fn();
-    return {
-      prospectMock: { findFirst, create, update },
-      findFirstMock: findFirst,
-      createMock: create,
-      updateMock: update,
-      discoveryRunCreateMock: discoveryRunCreate,
-      discoveryRunFindManyMock: discoveryRunFindMany,
-    };
-  });
+const {
+  prospectMock,
+  findFirstMock,
+  findManyMock,
+  createMock,
+  updateMock,
+  discoveryRunCreateMock,
+  discoveryRunFindManyMock,
+} = vi.hoisted(() => {
+  const findFirst = vi.fn();
+  const findMany = vi.fn();
+  const create = vi.fn();
+  const update = vi.fn();
+  const discoveryRunCreate = vi.fn();
+  const discoveryRunFindMany = vi.fn();
+  return {
+    prospectMock: { findFirst, findMany, create, update },
+    findFirstMock: findFirst,
+    findManyMock: findMany,
+    createMock: create,
+    updateMock: update,
+    discoveryRunCreateMock: discoveryRunCreate,
+    discoveryRunFindManyMock: discoveryRunFindMany,
+  };
+});
 
 vi.mock('@/common/db/client', () => ({
   prisma: { prospect: prospectMock, discoveryRun: { create: discoveryRunCreateMock, findMany: discoveryRunFindManyMock } },
@@ -123,6 +132,7 @@ beforeEach(() => {
   detectTechStackMock.mockResolvedValue({ ok: false, reason: 'source unavailable: could not fetch' });
   lookupGitHubEvidenceMock.mockResolvedValue({ ok: true, lookup: { matched: false, signal: null } });
   findFirstMock.mockResolvedValue(null);
+  findManyMock.mockResolvedValue([]);
   createMock.mockResolvedValue(undefined);
   updateMock.mockResolvedValue(undefined);
   discoveryRunCreateMock.mockResolvedValue(undefined);
@@ -182,18 +192,18 @@ describe('runDiscovery', () => {
     expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'existing-id' } }));
   });
 
-  it('updates instead of inserting when a no-domain, no-phone prospect matches an existing record by normalized address', async () => {
+  it('updates instead of inserting when a no-domain, no-phone prospect matches an existing record by normalized address AND normalized company name', async () => {
     runGooglePlacesSourceMock.mockResolvedValue({
       ok: true,
-      prospects: [buildProspect({ domain: null, phone: null, address: '123 Main St' })],
+      prospects: [buildProspect({ domain: null, phone: null, address: '123 Main St', companyName: 'Acme Co' })],
     });
-    findFirstMock.mockResolvedValueOnce({ id: 'existing-id', corroboratingSourceCount: 1 });
+    findManyMock.mockResolvedValueOnce([{ id: 'existing-id', corroboratingSourceCount: 1, companyName: 'Acme' }]);
 
     const summary = await runDiscovery(query);
 
     expect(summary.updated).toBe(1);
     expect(summary.inserted).toBe(0);
-    expect(findFirstMock).toHaveBeenCalledWith({ where: { address: '123 main street' } });
+    expect(findManyMock).toHaveBeenCalledWith({ where: { address: '123 main street' } });
   });
 
   it('never re-inserts a no-domain prospect on every re-discovery run once it matches by phone', async () => {
@@ -302,7 +312,12 @@ describe('runDiscovery', () => {
     );
   });
 
-  it('dedupes two no-domain, no-phone prospects reporting the same normalized address', async () => {
+  it('does NOT dedupe two prospects with different company names sharing the same normalized address', async () => {
+    // Regression guard: pure address-alone matching used to merge these into
+    // one prospect, which is a false positive - e.g. UK company-formation
+    // agents commonly register many unrelated companies at one office
+    // address, with no phone/domain on those records. See dedupeProspects's
+    // doc comment.
     runGooglePlacesSourceMock.mockResolvedValue({
       ok: true,
       prospects: [
@@ -318,11 +333,96 @@ describe('runDiscovery', () => {
 
     const summary = await runDiscovery(query);
 
+    expect(summary.totalFound).toBe(2);
+    expect(createMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('dedupes two no-domain, no-phone prospects sharing the same normalized address when their company names also match after normalization', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [
+        buildProspect({ domain: null, address: '123 Main St', companyName: "Joe's Roofing" }),
+      ],
+    });
+    runYellowPagesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [
+        buildProspect({ domain: null, address: '123 Main Street', companyName: "Joe's Roofing LLC" }),
+      ],
+    });
+
+    const summary = await runDiscovery(query);
+
     expect(summary.totalFound).toBe(1);
     expect(createMock).toHaveBeenCalledTimes(1);
     expect(createMock).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ corroboratingSourceCount: 2 }) })
     );
+  });
+
+  it('does NOT dedupe two prospects sharing the same normalized address when both company names are blank/whitespace-only', async () => {
+    // Regression guard: a blank/whitespace-only companyName normalizes to
+    // '', so guarding on raw truthiness (prospect.companyName && ...) let
+    // two such prospects sharing an address collide on the empty-string key
+    // and incorrectly merge - the exact false-positive-merge bug this
+    // address+name tier exists to prevent. The guard must check the
+    // *normalized* name is non-empty, not just that the raw string is
+    // truthy.
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ domain: null, address: '123 Main St', companyName: '' })],
+    });
+    runYellowPagesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ domain: null, address: '123 Main Street', companyName: '   ' })],
+    });
+
+    const summary = await runDiscovery(query);
+
+    expect(summary.totalFound).toBe(2);
+    expect(createMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('treats candidates sharing the address but not the normalized company name as no match, and inserts instead of updating', async () => {
+    // Exercises findExistingProspect's findMany-then-filter path directly:
+    // the DB query returns a candidate row sharing the normalized address,
+    // but its company name does not match after normalization, so it must
+    // NOT be treated as an update.
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ domain: null, phone: null, address: '123 Main St', companyName: 'Acme Co' })],
+    });
+    findManyMock.mockResolvedValueOnce([
+      { id: 'unrelated-id', corroboratingSourceCount: 1, companyName: 'Totally Different Business' },
+    ]);
+
+    const summary = await runDiscovery(query);
+
+    expect(summary.inserted).toBe(1);
+    expect(summary.updated).toBe(0);
+    expect(updateMock).not.toHaveBeenCalled();
+    expect(createMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not treat a DB row sharing the address as a match when the incoming prospect has a blank/whitespace-only company name', async () => {
+    // Regression guard for findExistingProspect: without a normalized-name
+    // non-emptiness guard, two prospects with blank names sharing an
+    // address would both normalize to '', matching each other and silently
+    // overwriting an unrelated existing row via update().
+    runGooglePlacesSourceMock.mockResolvedValue({
+      ok: true,
+      prospects: [buildProspect({ domain: null, phone: null, address: '123 Main St', companyName: '   ' })],
+    });
+    findManyMock.mockResolvedValueOnce([
+      { id: 'unrelated-id', corroboratingSourceCount: 1, companyName: '' },
+    ]);
+
+    const summary = await runDiscovery(query);
+
+    expect(summary.inserted).toBe(1);
+    expect(summary.updated).toBe(0);
+    expect(updateMock).not.toHaveBeenCalled();
+    expect(createMock).toHaveBeenCalledTimes(1);
   });
 
   it('does not dedupe two no-domain prospects with different phone and address', async () => {

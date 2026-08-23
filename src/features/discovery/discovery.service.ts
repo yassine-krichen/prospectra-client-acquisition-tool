@@ -3,7 +3,7 @@ import { env } from '@/common/config/env';
 import { prisma } from '@/common/db/client';
 import { discoveryQuerySchema, type DiscoveredProspect, type DiscoveryQuery, type SourceResult } from '@/features/discovery/discovery.types';
 import { DISCOVERY_SOURCES } from '@/features/discovery/discovery-source-registry';
-import { normalizeAddress, normalizePhone } from '@/features/discovery/normalize-contact-info';
+import { normalizeAddress, normalizeCompanyName, normalizePhone } from '@/features/discovery/normalize-contact-info';
 import { normalizeDomain } from '@/features/discovery/normalize-domain';
 import { runGooglePlacesSource } from '@/features/discovery/sources/google-places.source';
 import { lookupStaleStack } from '@/features/discovery/sources/builtwith.source';
@@ -175,32 +175,46 @@ function isThinProspect(prospect: DiscoveredProspect): boolean {
 /**
  * Merges prospects that are the same real-world business, matched in
  * priority order: normalized domain first, then normalized phone, then
- * normalized address - first key that matches an already-seen prospect
- * wins, and that earlier prospect is kept ("first-seen wins", unchanged
- * from the domain-only version). A later prospect matching an already-kept
- * one is no longer silently discarded: it increments the kept prospect's
- * `corroboratingSourceCount` by 1, preserving the fact that a second source
- * independently found the same business (see `priority-scoring.ts`'s
- * corroboration bonus). This is still a deliberately minimal extension (see
- * docs/discovery-engine-roadmap.md item 5) - it does not merge/reconcile
- * signals between matched duplicates, and it is not a scored
- * entity-resolution engine.
+ * normalized company name + normalized address together - first key that
+ * matches an already-seen prospect wins, and that earlier prospect is kept
+ * ("first-seen wins", unchanged from the domain-only version). A later
+ * prospect matching an already-kept one is no longer silently discarded: it
+ * increments the kept prospect's `corroboratingSourceCount` by 1, preserving
+ * the fact that a second source independently found the same business (see
+ * `priority-scoring.ts`'s corroboration bonus). This is still a deliberately
+ * minimal extension (see docs/discovery-engine-roadmap.md item 5) - it does
+ * not merge/reconcile signals between matched duplicates, and it is not a
+ * scored entity-resolution engine.
+ *
+ * The address tier deliberately requires BOTH a matching normalized company
+ * name AND a matching normalized address, not address alone: pure
+ * address-alone matching used to merge any two prospects sharing a street
+ * address, which is a real false-positive risk now that UK Companies House
+ * is a live source - UK company-formation agents commonly register many
+ * unrelated companies at one office address, with no phone/domain on those
+ * records, so address would be the only differentiator and would silently
+ * combine unrelated real businesses into one prospect. Requiring the company
+ * name to also match (after normalization - see `normalizeCompanyName`)
+ * closes that hole; the same reasoning applies to strip-mall-style shared
+ * addresses in the US.
  */
 function dedupeProspects(prospects: DiscoveredProspect[]): DiscoveredProspect[] {
   const byDomain = new Map<string, DiscoveredProspect>();
   const byPhone = new Map<string, DiscoveredProspect>();
-  const byAddress = new Map<string, DiscoveredProspect>();
+  const byNameAndAddress = new Map<string, DiscoveredProspect>();
   const result: DiscoveredProspect[] = [];
 
   for (const prospect of prospects) {
     const domainKey = prospect.domain ? normalizeDomain(prospect.domain) : null;
     const phoneKey = normalizePhone(prospect.phone);
     const addressKey = normalizeAddress(prospect.address);
+    const normalizedName = normalizeCompanyName(prospect.companyName);
+    const nameAndAddressKey = normalizedName && addressKey !== null ? `${normalizedName}|${addressKey}` : null;
 
     const matched =
       (domainKey !== null ? byDomain.get(domainKey) : undefined) ??
       (phoneKey !== null ? byPhone.get(phoneKey) : undefined) ??
-      (addressKey !== null ? byAddress.get(addressKey) : undefined);
+      (nameAndAddressKey !== null ? byNameAndAddress.get(nameAndAddressKey) : undefined);
 
     if (matched) {
       matched.corroboratingSourceCount += 1;
@@ -210,7 +224,7 @@ function dedupeProspects(prospects: DiscoveredProspect[]): DiscoveredProspect[] 
     result.push(prospect);
     if (domainKey !== null) byDomain.set(domainKey, prospect);
     if (phoneKey !== null) byPhone.set(phoneKey, prospect);
-    if (addressKey !== null) byAddress.set(addressKey, prospect);
+    if (nameAndAddressKey !== null) byNameAndAddress.set(nameAndAddressKey, prospect);
   }
 
   return result;
@@ -219,10 +233,19 @@ function dedupeProspects(prospects: DiscoveredProspect[]): DiscoveredProspect[] 
 /**
  * Finds a previously-persisted prospect matching `prospect`, in the same
  * priority order as `dedupeProspects`: normalized domain first, then
- * normalized phone, then normalized address - first match wins. `phone`/
- * `address` are stored normalized (see `persistProspect`) specifically so
- * this can do a plain exact-match query per key rather than normalizing
- * every row in the table on every discovery run.
+ * normalized phone, then normalized company name + normalized address
+ * together - first match wins. `phone`/`address` are stored normalized (see
+ * `persistProspect`) specifically so this can do a plain exact-match query
+ * per key rather than normalizing every row in the table on every discovery
+ * run.
+ *
+ * The address tier fetches every row sharing the normalized address (not
+ * just the first one) and then filters in application code for a row whose
+ * `companyName` also matches after normalization - see `dedupeProspects`'s
+ * doc comment for why address alone is not a safe match (shared
+ * registered-office / strip-mall false positives). At this app's current
+ * table size (dozens/low-hundreds of prospects) this is a cheap in-memory
+ * filter, not worth a dedicated composite index.
  */
 async function findExistingProspect(
   prospect: DiscoveredProspect,
@@ -239,9 +262,11 @@ async function findExistingProspect(
     if (byPhone) return byPhone;
   }
 
-  if (normalizedAddress) {
-    const byAddress = await prisma.prospect.findFirst({ where: { address: normalizedAddress } });
-    if (byAddress) return byAddress;
+  const normalizedName = normalizeCompanyName(prospect.companyName);
+  if (normalizedAddress && normalizedName) {
+    const candidates = await prisma.prospect.findMany({ where: { address: normalizedAddress } });
+    const byNameAndAddress = candidates.find((candidate) => normalizeCompanyName(candidate.companyName) === normalizedName);
+    if (byNameAndAddress) return byNameAndAddress;
   }
 
   return null;
