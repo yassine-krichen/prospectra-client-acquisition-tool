@@ -72,6 +72,25 @@ describe('runTexasComptrollerSource', () => {
     });
   });
 
+  it('reports a distinct reason when the search term matches too many entities (413)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse(
+          { success: false, error: 'Search will return 275 entries. Please refine search by Entity Name.' },
+          { ok: false, status: 413 }
+        )
+      )
+    );
+
+    const result = await runTexasComptrollerSource(query);
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'source unavailable: Texas Comptroller search term matched too many entities - use a narrower category term',
+    });
+  });
+
   it('maps a two-call happy path: search returns ids, detail is fetched for each, mapped to prospects', async () => {
     const fetchMock = vi
       .fn()

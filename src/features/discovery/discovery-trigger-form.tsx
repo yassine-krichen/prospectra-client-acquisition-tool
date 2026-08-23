@@ -421,30 +421,42 @@ export function DiscoveryTriggerForm(): React.JSX.Element {
               </Select>
             </div>
           </CardContent>
-          <CardContent className="flex flex-col gap-2 pt-0">
-            <span className="text-muted-foreground text-xs">Sources</span>
-            <div className="divide-border rounded-md border divide-y">
-              {branchSources.map((source) => (
-                <SourceRow
-                  key={source.key}
-                  source={source}
-                  checked={enabledSources.has(source.key)}
-                  configured={isSourceConfigured(source, configuredServices)}
-                  disabled={isRunning}
-                  onCheckedChange={(checked) => toggleSource(source.key, checked)}
-                />
-              ))}
-              {branchIndependentSources.map((source) => (
-                <SourceRow
-                  key={source.key}
-                  source={source}
-                  checked={enabledSources.has(source.key)}
-                  configured={isSourceConfigured(source, configuredServices)}
-                  disabled={isRunning}
-                  onCheckedChange={(checked) => toggleSource(source.key, checked)}
-                />
-              ))}
+          <CardContent className="flex flex-col gap-3 pt-0 pb-(--card-spacing)">
+            <div className="flex flex-col gap-2">
+              <span className="text-muted-foreground text-xs">Discovery sources</span>
+              <div className="divide-border rounded-md border divide-y">
+                {branchSources.map((source) => (
+                  <SourceRow
+                    key={source.key}
+                    source={source}
+                    checked={enabledSources.has(source.key)}
+                    configured={isSourceConfigured(source, configuredServices)}
+                    disabled={isRunning}
+                    onCheckedChange={(checked) => toggleSource(source.key, checked)}
+                  />
+                ))}
+              </div>
             </div>
+            {branchIndependentSources.length > 0 ? (
+              <div className="flex flex-col gap-2">
+                <span className="text-muted-foreground flex items-center gap-1 text-xs">
+                  Enrichment
+                  <FieldHelp text="Runs after discovery, adding evidence to prospects a discovery source already found - never discovers a business on its own." />
+                </span>
+                <div className="divide-border rounded-md border divide-y">
+                  {branchIndependentSources.map((source) => (
+                    <SourceRow
+                      key={source.key}
+                      source={source}
+                      checked={enabledSources.has(source.key)}
+                      configured={isSourceConfigured(source, configuredServices)}
+                      disabled={isRunning}
+                      onCheckedChange={(checked) => toggleSource(source.key, checked)}
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </CardContent>
           <CardFooter className="flex flex-col items-start gap-3">
             {duplicateOfCurrentInput ? (

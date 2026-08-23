@@ -156,6 +156,18 @@ export async function runTexasComptrollerSource(query: DiscoveryQuery): Promise<
   }
 
   if (!searchResponse.ok) {
+    // The API rejects (413) name searches broad enough to match hundreds of
+    // entities rather than truncating - confirmed live against a single
+    // generic trade word like "roofing" (275 matches, rejected). Surface
+    // that distinctly from a genuine outage so the dashboard's "unavailable"
+    // reason points at the actual fix (narrow the search term) instead of
+    // reading like a dead source.
+    if (searchResponse.status === 413) {
+      return {
+        ok: false,
+        reason: 'source unavailable: Texas Comptroller search term matched too many entities - use a narrower category term',
+      };
+    }
     return { ok: false, reason: `source unavailable: Texas Comptroller responded with ${searchResponse.status}` };
   }
 
