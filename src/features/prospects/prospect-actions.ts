@@ -1,6 +1,13 @@
 import { z } from 'zod';
 
-import { draftSchema, prospectSchema, serviceSuggestionSchema, type Prospect } from '@/features/prospects/prospect.types';
+import {
+  draftSchema,
+  prospectCommentSchema,
+  prospectSchema,
+  serviceSuggestionSchema,
+  type Prospect,
+  type ProspectComment,
+} from '@/features/prospects/prospect.types';
 
 // Client-safe fetch helpers + response schemas for the four per-prospect
 // pipeline actions the dashboard exposes. Response shapes mirror each
@@ -154,6 +161,55 @@ export async function setProspectSeen(prospectId: string, seen: boolean): Promis
 
   const body: unknown = await response.json();
   return seenResponseSchema.parse(body);
+}
+
+// --- opened ---
+
+const openedResponseSchema = z.object({
+  id: z.string(),
+  lastOpenedAt: z.coerce.date(),
+  lastOpenedByNickname: z.string(),
+});
+export type OpenedResult = z.infer<typeof openedResponseSchema>;
+
+/**
+ * Records that the current user opened this prospect's detail dialog (see
+ * the doc comment on `Prospect.lastOpenedAt` in prisma/schema.prisma) - who
+ * opened it comes from the caller's own session server-side, not a
+ * parameter here. Fire-and-forget from the caller's perspective, same as
+ * `setProspectSeen`: update local state directly rather than blocking on
+ * this like enrich/draft/match/win.
+ */
+export async function markProspectOpened(prospectId: string): Promise<OpenedResult> {
+  const response = await fetch(`/api/prospects/${prospectId}/open`, { method: 'POST' });
+  if (!response.ok) {
+    throw new Error(`Open request failed (status ${response.status}).`);
+  }
+
+  const body: unknown = await response.json();
+  return openedResponseSchema.parse(body);
+}
+
+// --- comments ---
+
+/**
+ * Adds a free-text comment to a prospect (see the doc comment on
+ * `ProspectComment` in prisma/schema.prisma) - who wrote it comes back from
+ * the server (the session cookie's nickname), not something this client
+ * component already knows, same posture as `markProspectOpened`.
+ */
+export async function addProspectComment(prospectId: string, body: string): Promise<ProspectComment> {
+  const response = await fetch(`/api/prospects/${prospectId}/comments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ body }),
+  });
+  if (!response.ok) {
+    throw new Error(`Add comment request failed (status ${response.status}).`);
+  }
+
+  const responseBody: unknown = await response.json();
+  return prospectCommentSchema.parse(responseBody);
 }
 
 // --- delete ---

@@ -142,6 +142,17 @@ export const draftSchema = z.object({
 });
 export type Draft = z.infer<typeof draftSchema>;
 
+// Mirrors `ProspectComment` in prisma/schema.prisma - see that model's doc
+// comment. `authorNickname` is whoever wrote the comment, resolved
+// server-side from the session cookie at creation time, never client-supplied.
+export const prospectCommentSchema = z.object({
+  id: z.string(),
+  body: z.string(),
+  authorNickname: z.string(),
+  createdAt: z.coerce.date(),
+});
+export type ProspectComment = z.infer<typeof prospectCommentSchema>;
+
 export const prospectSchema = z.object({
   id: z.string(),
   createdAt: z.coerce.date(),
@@ -149,6 +160,12 @@ export const prospectSchema = z.object({
   companyName: z.string(),
   domain: z.string().nullable(),
   websiteUrl: z.string().nullable(),
+  // Discovery-time contact fields (e.g. scraped straight off a yellowpages
+  // listing) - see the doc comment on `Prospect.phone` in prisma/schema.prisma.
+  // The one alternate contact channel for a prospect with no domain/website:
+  // see `getRecommendation` in prospects-table.tsx.
+  phone: z.string().nullable(),
+  address: z.string().nullable(),
   industry: industrySchema,
   location: locationSchema,
   companySize: companySizeSchema,
@@ -179,12 +196,20 @@ export const prospectSchema = z.object({
   // Dashboard-only read marker - see the doc comment on `Prospect.seen` in
   // prisma/schema.prisma. Not part of the outreach pipeline's own state.
   seen: z.boolean(),
+  // "Has a human opened this prospect's detail dialog" marker - see the doc
+  // comment on `Prospect.lastOpenedAt` in prisma/schema.prisma. Both null
+  // together (never opened) or both set together (most recent open).
+  lastOpenedAt: z.coerce.date().nullable(),
+  lastOpenedByNickname: z.string().nullable(),
   // Dead-letter tracking for the most recent failed `draftProspect` attempt
   // - see the doc comment on `Prospect.lastDraftFailure` in
   // prisma/schema.prisma. Null once the prospect has never failed drafting,
   // or once a later attempt succeeds.
   lastDraftFailure: draftFailureSchema.nullable(),
   drafts: z.array(draftSchema),
+  // Newest first - see the doc comment on `Prospect.comments`/`ProspectComment`
+  // in prisma/schema.prisma.
+  comments: z.array(prospectCommentSchema),
   activeDraftId: z.string().nullable(),
   sentAt: z.coerce.date().nullable(),
   lastFollowupAt: z.coerce.date().nullable(),
@@ -210,8 +235,13 @@ export const prospectListItemSchema = prospectSchema.omit({
   contactTitle: true,
   contactEmail: true,
   linkedinUrl: true,
+  // `phone` is NOT omitted - `getRecommendation` in prospects-table.tsx
+  // needs it to recommend "Call" over "Find website first" for a
+  // domain-less prospect. `address` isn't needed by the list view.
+  address: true,
   statusHistory: true,
   drafts: true,
+  comments: true,
   activeDraftId: true,
   lastFollowupAt: true,
   followupCount: true,

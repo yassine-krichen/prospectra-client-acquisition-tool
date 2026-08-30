@@ -1,7 +1,7 @@
 import { Prisma, ProspectStatus as PrismaProspectStatus } from '@/lib/generated/prisma/client';
 import { prisma } from '@/common/db/client';
 import { getEffectiveDailyCap } from '@/features/sending/domain-verification-gate';
-import { getTodaysSendCount } from '@/features/sending/daily-send-counter';
+import { reserveDailySendSlot, rollBackDailySendSlot } from '@/features/sending/daily-send-counter';
 import { sendEmail } from '@/features/sending/resend.client';
 import type { ApprovalOutcome, ApprovalRequestItem } from '@/features/sending/sending.types';
 
@@ -42,11 +42,16 @@ type DraftWithProspect = Prisma.DraftGetPayload<{ select: typeof DRAFT_SELECT }>
  *      draft named more than once in the same batch), or its prospect has
  *      `doNotContact: true` - never sent, no matter what a bulk-approve
  *      request asked for.
- *   2. Re-checks the effective daily cap (`getEffectiveDailyCap()`) against
- *      today's actual send count immediately before every send - not once
- *      at batch start - so a bulk-approve can't blow through the cap
- *      mid-batch. Once the cap is hit, every remaining item in the batch is
- *      reported `skipped_cap` without attempting to send.
+ *   2. Atomically reserves a slot against the effective daily cap
+ *      (`getEffectiveDailyCap()`, via `reserveDailySendSlot` in
+ *      daily-send-counter.ts) immediately before every send - not once at
+ *      batch start, and not a plain `getTodaysSendCount() >= cap` read -
+ *      so neither a bulk-approve batch nor a *concurrent* one (another tab,
+ *      or the daily cron) can blow through the cap between them. Once the
+ *      cap is hit, every remaining item in the batch is reported
+ *      `skipped_cap` without attempting to send. Every exit path after a
+ *      successful reservation that doesn't end in a real send
+ *      (`rollBackDailySendSlot`) gives the slot back.
  *   3. Refuses if the prospect has no `contactEmail` on file (checked once
  *      from the batch snapshot, then re-checked fresh in step 4).
  *   4. Immediately before sending, atomically claims the draft with a
@@ -124,17 +129,20 @@ export async function approveDrafts(items: ApprovalRequestItem[]): Promise<Appro
       continue;
     }
 
-    // Re-checked here (not cached from before the loop started) so a prior
-    // send earlier in this same batch is reflected before deciding whether
-    // this item may send.
-    const sentToday = await getTodaysSendCount();
-    if (sentToday >= getEffectiveDailyCap()) {
+    // Atomically reserves a slot against the shared daily cap - see the doc
+    // comment on `reserveDailySendSlot` for why this (not a plain
+    // `getTodaysSendCount() >= cap` read) is what actually closes the race
+    // between this batch and a concurrent one (another tab, or the daily
+    // cron). Every exit path below this point that doesn't end in a real
+    // send must call `rollBackDailySendSlot()`.
+    if (!(await reserveDailySendSlot(getEffectiveDailyCap()))) {
       capReached = true;
       outcomeByDraftId.set(item.draftId, { draftId: item.draftId, outcome: 'skipped_cap' });
       continue;
     }
 
     if (!draft.prospect.contactEmail) {
+      await rollBackDailySendSlot();
       outcomeByDraftId.set(item.draftId, {
         draftId: item.draftId,
         outcome: 'failed',
@@ -168,6 +176,7 @@ export async function approveDrafts(items: ApprovalRequestItem[]): Promise<Appro
       // the prospect's doNotContact flipped true in the interim (e.g. a
       // concurrent unsubscribe). Re-read to report the precise reason
       // rather than guessing.
+      await rollBackDailySendSlot();
       const fresh = await prisma.draft.findUnique({
         where: { id: draft.id },
         select: { prospect: { select: { doNotContact: true } } },
@@ -193,6 +202,9 @@ export async function approveDrafts(items: ApprovalRequestItem[]): Promise<Appro
       // never lost just because the send attempt failed. Also persisted to
       // `lastSendFailure` - otherwise this outcome only ever exists in the
       // transient API response, with no way to find "what failed" later.
+      // The reserved daily-send-cap slot is rolled back too - it never
+      // corresponded to a real send.
+      await rollBackDailySendSlot();
       await prisma.draft.update({
         where: { id: draft.id },
         data: {

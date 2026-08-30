@@ -2,8 +2,45 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 // `vi.hoisted` guarantees `envMock` is initialized before `vi.mock`'s factory
 // (itself hoisted above this file's imports) ever runs.
-const envMock = vi.hoisted(() => ({ PEOPLE_DATA_LABS_API_KEY: 'test-pdl-key' as string | undefined }));
+const envMock = vi.hoisted(() => ({
+  PEOPLE_DATA_LABS_API_KEY: 'test-pdl-key' as string | undefined,
+  PEOPLE_DATA_LABS_MONTHLY_CAP: 100,
+}));
 vi.mock('@/common/config/env', () => ({ env: envMock }));
+
+// In-memory fake, NOT a real database - unlike hunter.source.test.ts, this
+// suite doesn't need Postgres's atomic `UPDATE ... WHERE count < cap` to
+// prove race-safety (that's exercised there already for the identical
+// pattern); it just needs `runPeopleDataLabsEnrichment` to not hit a real
+// database at all. Handles both call shapes `reservePeopleDataLabsQuota`/
+// `rollBackPeopleDataLabsQuota` in peopledatalabs.source.ts actually use:
+// `where.count.lt` (reserve, conditional) and `where.count.gt` + `data.count.decrement`
+// (rollback, unconditional once above 0).
+const usageState = vi.hoisted(() => ({ count: 0 }));
+interface UpdateManyArgs {
+  where: { count: { lt?: number; gt?: number } };
+  data: { count: { increment?: number; decrement?: number } };
+}
+vi.mock('@/common/db/client', () => ({
+  prisma: {
+    apiUsageCounter: {
+      createMany: vi.fn().mockResolvedValue({ count: 0 }),
+      updateMany: vi.fn(async ({ where, data }: UpdateManyArgs) => {
+        if (where.count.lt !== undefined) {
+          if (usageState.count >= where.count.lt) return { count: 0 };
+          usageState.count += data.count.increment ?? 0;
+          return { count: 1 };
+        }
+        if (where.count.gt !== undefined) {
+          if (usageState.count <= where.count.gt) return { count: 0 };
+          usageState.count -= data.count.decrement ?? 0;
+          return { count: 1 };
+        }
+        return { count: 0 };
+      }),
+    },
+  },
+}));
 
 import { runPeopleDataLabsEnrichment } from './peopledatalabs.source';
 
@@ -23,6 +60,8 @@ describe('runPeopleDataLabsEnrichment', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     envMock.PEOPLE_DATA_LABS_API_KEY = 'test-pdl-key';
+    envMock.PEOPLE_DATA_LABS_MONTHLY_CAP = 100;
+    usageState.count = 0;
   });
 
   it('reports source unavailable and never calls fetch when PEOPLE_DATA_LABS_API_KEY is not configured', async () => {
@@ -148,5 +187,29 @@ describe('runPeopleDataLabsEnrichment', () => {
       ok: false,
       reason: 'source unavailable: PDL response did not match the expected shape',
     });
+  });
+
+  it('refuses to call PDL at all once the monthly cap is already used', async () => {
+    envMock.PEOPLE_DATA_LABS_MONTHLY_CAP = 1;
+    usageState.count = 1; // already at the cap
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const result = await runPeopleDataLabsEnrichment(input);
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'source unavailable: People Data Labs monthly cap (1/month) already used this month',
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('rolls the reserved quota unit back when the network request throws, so a dead network never permanently burns quota', async () => {
+    envMock.PEOPLE_DATA_LABS_MONTHLY_CAP = 5;
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNREFUSED')));
+
+    await runPeopleDataLabsEnrichment(input);
+
+    expect(usageState.count).toBe(0);
   });
 });

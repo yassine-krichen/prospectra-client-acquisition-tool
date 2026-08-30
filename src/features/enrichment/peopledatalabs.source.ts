@@ -1,9 +1,62 @@
 import { z } from 'zod';
 
 import { env } from '@/common/config/env';
+import { prisma } from '@/common/db/client';
 import type { EnrichmentInput, EnrichmentResult } from '@/features/enrichment/enrichment.types';
 
 const PERSON_ENRICH_URL = 'https://api.peopledatalabs.com/v5/person/enrich';
+
+const USAGE_SOURCE_KEY = 'people_data_labs';
+
+function currentYearMonth(): string {
+  return new Date().toISOString().slice(0, 7); // "YYYY-MM", UTC
+}
+
+/**
+ * Atomically reserves one unit of this month's PDL quota
+ * (`env.PEOPLE_DATA_LABS_MONTHLY_CAP` - see its doc comment in env.ts).
+ * Same shape as `reserveHunterQuota` in hunter.source.ts - the
+ * `count: { lt: cap }` condition is evaluated by Postgres as part of the
+ * UPDATE itself, so concurrent callers (e.g. a bulk-enrich batch) can't
+ * both slip through past the cap the way a separate read-then-write would.
+ */
+async function reservePeopleDataLabsQuota(): Promise<boolean> {
+  const yearMonth = currentYearMonth();
+
+  // `createMany` + `skipDuplicates`, NOT `upsert` - see the doc comment on
+  // the identical fix in daily-send-counter.ts's `reserveDailySendSlot`
+  // (`upsert` is not itself safe against a genuine concurrent burst of
+  // callers racing to create the same row; caught live by a real
+  // concurrent-load test against Postgres). A bulk-enrich batch's own
+  // sequential-but-rapid calls are exactly this kind of burst.
+  await prisma.apiUsageCounter.createMany({
+    data: [{ source: USAGE_SOURCE_KEY, yearMonth, count: 0 }],
+    skipDuplicates: true,
+  });
+
+  const reserved = await prisma.apiUsageCounter.updateMany({
+    where: { source: USAGE_SOURCE_KEY, yearMonth, count: { lt: env.PEOPLE_DATA_LABS_MONTHLY_CAP } },
+    data: { count: { increment: 1 } },
+  });
+
+  return reserved.count > 0;
+}
+
+/**
+ * Compensating rollback for a reserved quota unit - used only when the
+ * `fetch` call to PDL itself threw (a network-level failure), meaning the
+ * request never reached PDL's servers. NOT used for non-2xx responses,
+ * "no match" 404s, or shape mismatches - same reasoning as
+ * `rollBackHunterQuota` in hunter.source.ts.
+ */
+async function rollBackPeopleDataLabsQuota(): Promise<void> {
+  const yearMonth = currentYearMonth();
+
+  await prisma.apiUsageCounter.updateMany({
+    where: { source: USAGE_SOURCE_KEY, yearMonth, count: { gt: 0 } },
+    data: { count: { decrement: 1 } },
+  });
+}
 
 // PDL scores a match's confidence as a 1-10 "likelihood", not the 0-100
 // scale this app's `emailConfidence` uses elsewhere (Hunter's own score is
@@ -52,6 +105,13 @@ export async function runPeopleDataLabsEnrichment(input: EnrichmentInput): Promi
     return { ok: false, reason: 'source unavailable: PEOPLE_DATA_LABS_API_KEY not configured' };
   }
 
+  if (!(await reservePeopleDataLabsQuota())) {
+    return {
+      ok: false,
+      reason: `source unavailable: People Data Labs monthly cap (${env.PEOPLE_DATA_LABS_MONTHLY_CAP}/month) already used this month`,
+    };
+  }
+
   const url = new URL(PERSON_ENRICH_URL);
   url.searchParams.set('company', input.domain);
   if (input.contactName) url.searchParams.set('name', input.contactName);
@@ -60,6 +120,7 @@ export async function runPeopleDataLabsEnrichment(input: EnrichmentInput): Promi
   try {
     response = await fetch(url, { headers: { 'X-Api-Key': apiKey } });
   } catch (error) {
+    await rollBackPeopleDataLabsQuota();
     return { ok: false, reason: `source unavailable: PDL request failed (${(error as Error).message})` };
   }
 

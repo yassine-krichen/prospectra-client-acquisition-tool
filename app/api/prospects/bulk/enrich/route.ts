@@ -3,7 +3,13 @@ import { z } from 'zod';
 
 import { enrichProspect } from '@/features/enrichment/enrichment.service';
 
-const bodySchema = z.object({ ids: z.array(z.string()).min(1) });
+// Max 100 matches this app's own largest selectable page size
+// (`pageSizeOptions` in data-table-pagination.tsx / the API's own `limit`
+// cap in app/api/prospects/route.ts) - a human can never select more than
+// that many rows via the dashboard's checkboxes in one page, so this just
+// closes off a request crafted (by bug or otherwise) to bypass that natural
+// ceiling and burn unbounded paid-enrichment-API cost.
+const bodySchema = z.object({ ids: z.array(z.string()).min(1).max(100) });
 
 export interface BulkEnrichResult {
   id: string;

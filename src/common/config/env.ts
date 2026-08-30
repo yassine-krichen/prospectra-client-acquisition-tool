@@ -45,6 +45,18 @@ const envSchema = z.object({
   // Branch C (contact enrichment) source keys - same graceful-skip pattern.
   HUNTER_API_KEY: optionalString(z.string().min(1)),
   PEOPLE_DATA_LABS_API_KEY: optionalString(z.string().min(1)),
+  // Monthly call caps for BuiltWith (discovery-time stale-stack lookups) and
+  // People Data Labs (enrichment) - same atomic `ApiUsageCounter`-backed
+  // reservation pattern as Hunter's own `MONTHLY_FREE_TIER_CAP` (see
+  // hunter.source.ts), but unlike Hunter's, these two defaults are NOT
+  // verified against a real account (BuiltWith has no free tier at all -
+  // its actual included-lookups count depends entirely on whichever paid
+  // plan is active, which this app has no way to know; PDL's public free
+  // plan is documented at 100 enrichment credits/month as of 2026, used
+  // here as a same-order-of-magnitude conservative default). Override to
+  // match the real configured plan.
+  BUILTWITH_MONTHLY_CAP: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().default(100)),
+  PEOPLE_DATA_LABS_MONTHLY_CAP: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().default(100)),
   // Stage 2 drafting LLM keys - same graceful-skip pattern as the source
   // keys above: model-rotation.ts reports a provider unavailable and fails
   // over to another configured one when unset. Each accepts a comma-

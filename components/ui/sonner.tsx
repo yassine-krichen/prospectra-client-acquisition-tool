@@ -38,6 +38,11 @@ const Toaster = ({ ...props }: ToasterProps) => {
         } as React.CSSProperties
       }
       toastOptions={{
+        // Toasts must be dismissed by clicking the close button rather than
+        // disappearing on their own - several of this app's toasts carry
+        // detailed per-source failure reasons (see lib/toast.ts) that are
+        // easy to miss if they vanish before being read.
+        duration: Infinity,
         classNames: {
           toast: "cn-toast",
           description: "whitespace-pre-line",

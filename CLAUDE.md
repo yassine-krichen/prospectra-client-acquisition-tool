@@ -365,3 +365,179 @@ running the 7 files above - this is an ongoing step, not a one-time setup task.
   (implementer → test-writer → test-runner → code-reviewer → committer) before anything gets
   committed. This was followed for the full-UI buildout and caught 2 real bugs in review before
   they shipped - worth continuing to follow for anything non-trivial, not just as box-checking.
+
+
+# Frontend Verification
+
+## Playwright CLI
+
+Playwright CLI is installed and available for this project.
+
+For frontend/UI tasks, use Playwright CLI to verify the actual rendered application before declaring the task complete.
+
+### Rules
+
+* Use Playwright CLI for UI verification.
+* Use a headed browser when visual verification is useful.
+* Inspect the rendered DOM rather than relying only on source code.
+* Take screenshots when the task involves visual appearance.
+* When changing a specific UI element, verify that exact element after the change.
+* For highlighting, colors, positioning, visibility, spacing, sizing, animations, or other visual changes, visually verify the result.
+* Do not consider a frontend task complete merely because the source code was changed successfully.
+* If the rendered result is incorrect, fix it and verify again.
+* Keep Playwright snapshots scoped to the relevant page or element to minimize context usage.
+* Prefer Playwright CLI over Playwright MCP because token/context efficiency is important.
+
+Do not use Playwright for backend-only or unrelated tasks.
+
+
+# Output & Context Efficiency
+
+Optimize for useful work and important information, not verbose narration.
+
+## Core rule
+
+Work continuously when the next action is obvious. Do not narrate routine actions.
+
+Keep the conversation output short while preserving important information.
+
+### ALWAYS report
+
+* Errors and their causes
+* Failed tests/checks
+* Important warnings
+* Security issues
+* Blockers
+* Decisions that affect the implementation
+* Significant assumptions
+* Files/components changed
+* Final verification result
+* Anything that requires my decision or input
+
+### DO NOT unnecessarily report
+
+* Routine commands being executed
+* Every file being opened
+* Every search performed
+* Obvious intermediate reasoning
+* Repeated information
+* Large command output
+* Entire files when only a few lines matter
+* Large API responses
+* Large logs
+* Full database results
+* Full DOM/accessibility trees
+* Step-by-step narration of routine work
+* Long explanations after small changes
+
+## Tool output
+
+Prefer targeted tool usage.
+
+If output is large:
+
+1. Filter it.
+2. Extract only relevant information.
+3. Continue working.
+4. Do not paste the entire output into the conversation.
+
+Use targeted searches and scoped reads instead of loading entire files or datasets when unnecessary.
+
+## Playwright
+
+Use Playwright CLI for frontend/UI verification.
+
+Do not consider a frontend task complete merely because the source code was changed.
+
+For UI verification:
+
+* Inspect only the relevant page/component/element.
+* Prefer targeted snapshots instead of full-page accessibility trees.
+* Use screenshots when visual appearance matters.
+* Screenshot the relevant element or viewport when possible.
+* Check console errors when relevant.
+* Verify the actual rendered result.
+* If verification fails, fix the implementation and verify again.
+
+Keep Playwright output minimal.
+
+Do NOT dump large snapshots, DOM trees, logs, or unrelated browser state into the conversation.
+
+For a successful verification, report only the important result, for example:
+
+"✓ Highlight visible and verified. No console errors."
+
+If verification fails, report the specific failure and continue fixing it.
+Don't repeat Playwright verification unless the implementation or relevant browser state changed.
+
+## Frontend tasks
+
+For visual/UI changes:
+
+1. Implement the change.
+2. Verify it in the actual browser with Playwright.
+3. Fix any discrepancy.
+4. Verify again.
+5. Continue with the task without unnecessary narration.
+
+Do not claim completion based solely on source-code inspection.
+
+## Backend tasks
+
+Do not use Playwright for backend-only work unless browser verification is actually relevant.
+
+Use targeted logs, tests, API calls, or database queries rather than dumping large outputs.
+
+## Context preservation
+
+Treat the context window as a limited resource.
+
+Avoid filling context with information that can be regenerated or that is not relevant to the current task.
+
+Prefer:
+
+* targeted retrieval
+* concise tool output
+* incremental verification
+* compact summaries
+* important facts over narration
+
+Do not repeat previous results unless they changed.
+
+## Final response
+
+When the task is complete, keep the final response concise.
+
+Use this structure when applicable:
+
+✓ Changed: [brief description]
+✓ Verified: [brief verification result]
+⚠ Remaining: [only if something remains]
+
+If there is nothing important remaining, simply state that the task is complete and the verification result.
+
+Do not provide a long summary unless I explicitly ask for one.
+
+
+When investigating code, locate the relevant symbol/function/component first and read the smallest useful surrounding section. Only read the entire file when the task genuinely requires full-file context.
+
+## Context7
+
+Use Context7 when accurate/current library documentation is important.
+
+Prefer Context7 when:
+
+* Using a library/framework API where the version matters.
+* There is uncertainty about the current API.
+* The implementation depends on version-specific behavior.
+* Official documentation is needed to verify an API or configuration.
+
+Do NOT use Context7 for:
+
+* Basic programming questions you already know.
+* Simple code changes.
+* Reading our own project code.
+* Information already available in the current context.
+* Tasks where external documentation is unnecessary.
+
+When using Context7, retrieve only the documentation relevant to the current task. Do not retrieve entire documentation sections unnecessarily.

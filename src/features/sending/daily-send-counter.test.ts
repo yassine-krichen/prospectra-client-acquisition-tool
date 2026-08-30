@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 
 import { assertDestructiveTestsAllowed } from '@/common/testing/require-destructive-test-guard';
 import { prisma } from '@/common/testing/test-db-client';
-import { getTodaysSendCount } from '@/features/sending/daily-send-counter';
+import { getTodaysSendCount, reserveDailySendSlot, rollBackDailySendSlot } from '@/features/sending/daily-send-counter';
 
 // Redirects every layer of `getTodaysSendCount`'s own call chain (not just
 // this file's direct calls) to the isolated test database - see
@@ -28,12 +28,14 @@ beforeEach(async () => {
   await prisma.job.deleteMany();
   await prisma.client.deleteMany();
   await prisma.prospect.deleteMany();
+  await prisma.dailySendCounter.deleteMany();
 });
 
 afterAll(async () => {
   await prisma.job.deleteMany();
   await prisma.client.deleteMany();
   await prisma.prospect.deleteMany();
+  await prisma.dailySendCounter.deleteMany();
   await prisma.$disconnect();
 });
 
@@ -212,5 +214,58 @@ describe('getTodaysSendCount', () => {
     const count = await getTodaysSendCount(referenceDate);
 
     expect(count).toBe(2);
+  });
+});
+
+// `reserveDailySendSlot`/`rollBackDailySendSlot` are the actual cap-
+// enforcement gate `send-queue.service.ts`/`followup-scheduler.ts`/
+// `retention-scheduler.ts` all reserve against - deliberately a SEPARATE
+// counter from `getTodaysSendCount()` above (see the doc comment on
+// `reserveDailySendSlot` for why a plain count read can't close the race
+// this exists to close). Real Postgres, not a mock - the whole point is
+// proving row-level locking, not application code, is what makes this safe
+// under concurrency.
+describe('reserveDailySendSlot / rollBackDailySendSlot', () => {
+  it('reserves successfully while under the cap, and refuses once the cap is reached', async () => {
+    expect(await reserveDailySendSlot(2)).toBe(true);
+    expect(await reserveDailySendSlot(2)).toBe(true);
+    expect(await reserveDailySendSlot(2)).toBe(false);
+  });
+
+  it('gives a slot back on rollback, letting a subsequent reservation succeed again', async () => {
+    expect(await reserveDailySendSlot(1)).toBe(true);
+    expect(await reserveDailySendSlot(1)).toBe(false);
+
+    await rollBackDailySendSlot();
+
+    expect(await reserveDailySendSlot(1)).toBe(true);
+  });
+
+  it('never decrements below 0, so a rollback with nothing reserved is a safe no-op', async () => {
+    await rollBackDailySendSlot();
+    await rollBackDailySendSlot();
+
+    // Still able to reserve the full cap afterward - a stray/duplicate
+    // rollback (e.g. a bug calling it twice for one failed send) must never
+    // grant extra headroom beyond the real cap.
+    expect(await reserveDailySendSlot(1)).toBe(true);
+    expect(await reserveDailySendSlot(1)).toBe(false);
+  });
+
+  it('is keyed by calendar day, not global - a fresh day starts back at 0 regardless of yesterday\'s reservations', async () => {
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    await prisma.dailySendCounter.create({ data: { date: yesterday, count: 999 } });
+
+    expect(await reserveDailySendSlot(1)).toBe(true);
+  });
+
+  it('under real concurrent load against the actual Postgres row, exactly `cap` reservations succeed - proving row-level locking (not application code) closes the race a plain count-then-write could not', async () => {
+    const cap = 5;
+    const attempts = 25;
+
+    const results = await Promise.all(Array.from({ length: attempts }, () => reserveDailySendSlot(cap)));
+
+    const successCount = results.filter(Boolean).length;
+    expect(successCount).toBe(cap);
   });
 });

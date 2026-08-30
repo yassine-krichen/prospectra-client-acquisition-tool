@@ -155,7 +155,6 @@ export function ApprovalQueueTable(): React.JSX.Element {
   const [items, setItems] = useState<QueueItemView[]>([]);
   const [capStatus, setCapStatus] = useState<QueueListResult['capStatus'] | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [editedBodies, setEditedBodies] = useState<Record<string, string>>({});
   // Which draft variant is currently highlighted/chosen per prospect - what
@@ -186,7 +185,6 @@ export function ApprovalQueueTable(): React.JSX.Element {
         if (cancelled) return;
         setItems(result.items);
         setCapStatus(result.capStatus);
-        setLoadError(null);
         // Reset per-draft edit/selection state to match whatever the server
         // now considers each prospect's drafts.
         setEditedBodies({});
@@ -194,10 +192,7 @@ export function ApprovalQueueTable(): React.JSX.Element {
         setChosenDraftId(initialChosenDraftIds(result.items));
       })
       .catch(() => {
-        if (!cancelled) {
-          setLoadError('Failed to load the approval queue.');
-          toastError('Failed to load the approval queue.');
-        }
+        if (!cancelled) toastError('Failed to load the approval queue.');
       })
       .finally(() => {
         if (!cancelled) setIsLoading(false);
@@ -346,8 +341,6 @@ export function ApprovalQueueTable(): React.JSX.Element {
           </div>
         </div>
       ) : null}
-
-      {loadError ? <p className="text-destructive text-sm">{loadError}</p> : null}
 
       <Separator />
 

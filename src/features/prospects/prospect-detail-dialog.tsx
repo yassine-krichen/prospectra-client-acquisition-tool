@@ -9,9 +9,11 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { toastError, toastInfo, toastSourceResults, toastSuccess } from '@/lib/toast';
 import {
+  addProspectComment,
   deleteProspect,
   draftProspect,
   enrichProspect,
@@ -90,7 +92,6 @@ interface ProspectDetailContentProps {
 
 function ProspectDetailContent({ prospectId, onChanged, onOpenChange }: ProspectDetailContentProps): React.JSX.Element {
   const [prospect, setProspect] = useState<Prospect | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isPending, setIsPending] = useState(false);
   const [wonClientId, setWonClientId] = useState<string | null>(null);
@@ -98,6 +99,8 @@ function ProspectDetailContent({ prospectId, onChanged, onOpenChange }: Prospect
   const [refreshIndex, setRefreshIndex] = useState(0);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [commentDraft, setCommentDraft] = useState('');
+  const [isSubmittingComment, setIsSubmittingComment] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -110,10 +113,11 @@ function ProspectDetailContent({ prospectId, onChanged, onOpenChange }: Prospect
       .then((data) => {
         if (cancelled) return;
         setProspect(data);
-        setLoadError(null);
       })
       .catch(() => {
-        if (!cancelled) setLoadError('Could not load this prospect.');
+        if (!cancelled) {
+          toastError('Could not load this prospect', 'Check your connection and try again.');
+        }
       })
       .finally(() => {
         if (!cancelled) setIsLoading(false);
@@ -224,6 +228,29 @@ function ProspectDetailContent({ prospectId, onChanged, onOpenChange }: Prospect
       });
   }
 
+  // Deliberately NOT routed through `runAction` - adding a comment doesn't
+  // change anything the underlying `/prospects` table displays, so bumping
+  // `onChanged()` (which refreshes that table) would be pointless. Refetches
+  // this dialog's own prospect data directly via `refreshIndex` so the new
+  // comment shows up in the list below without a full page reload.
+  function handleAddComment(): void {
+    const body = commentDraft.trim();
+    if (!body) return;
+
+    setIsSubmittingComment(true);
+    addProspectComment(prospectId, body)
+      .then(() => {
+        setCommentDraft('');
+        setRefreshIndex((prev) => prev + 1);
+      })
+      .catch((err: unknown) => {
+        toastError('Could not add comment', err instanceof Error ? err.message : 'Unknown error.');
+      })
+      .finally(() => {
+        setIsSubmittingComment(false);
+      });
+  }
+
   const isEnriched = Boolean(prospect && (prospect.contactEmail || prospect.contactName));
 
   return (
@@ -231,8 +258,6 @@ function ProspectDetailContent({ prospectId, onChanged, onOpenChange }: Prospect
       <DialogHeader>
         <DialogTitle>{prospect?.companyName ?? 'Prospect'}</DialogTitle>
       </DialogHeader>
-
-      {loadError ? <p className="text-destructive text-sm">{loadError}</p> : null}
 
       {isLoading || !prospect ? (
         <div className="flex flex-col gap-3">
@@ -244,6 +269,15 @@ function ProspectDetailContent({ prospectId, onChanged, onOpenChange }: Prospect
         <div className="flex flex-col gap-5">
           <div className="flex flex-col gap-2">
             <DetailRow label="Domain" value={prospect.domain ?? 'None'} />
+            {/* Discovery-time contact fields (see the doc comment on
+                `Prospect.phone` in prisma/schema.prisma) - only Yellow Pages
+                and OpenStreetMap currently populate these, so both are
+                commonly "None"; shown unconditionally (like Domain above)
+                rather than hidden when empty, since phone is the one real
+                alternate contact channel for a prospect with no
+                domain/website - see getRecommendation in prospects-table.tsx. */}
+            <DetailRow label="Phone" value={prospect.phone ?? 'None'} />
+            <DetailRow label="Address" value={prospect.address ?? 'None'} />
             <DetailRow label="Industry" value={prospect.industry} />
             <DetailRow label="Source" value={prospect.source} />
             <DetailRow label="Priority" value={prospect.priorityScore} />
@@ -327,6 +361,43 @@ function ProspectDetailContent({ prospectId, onChanged, onOpenChange }: Prospect
                 View client
               </Link>
             ) : null}
+          </div>
+
+          <Separator />
+
+          <div className="flex flex-col gap-3">
+            <span className="text-sm font-medium">Comments</span>
+            <div className="flex flex-col gap-2">
+              <Textarea
+                placeholder="Leave a note for whoever looks at this prospect next..."
+                value={commentDraft}
+                onChange={(event) => setCommentDraft(event.target.value)}
+                disabled={isSubmittingComment}
+                rows={2}
+              />
+              <Button
+                size="sm"
+                className="self-end"
+                onClick={handleAddComment}
+                disabled={isSubmittingComment || commentDraft.trim() === ''}
+              >
+                {isSubmittingComment ? 'Adding...' : 'Add comment'}
+              </Button>
+            </div>
+            {prospect.comments.length > 0 ? (
+              <div className="flex flex-col gap-3">
+                {prospect.comments.map((comment) => (
+                  <div key={comment.id} className="flex flex-col gap-0.5 rounded-md border p-2.5 text-sm">
+                    <span className="text-muted-foreground text-xs">
+                      Comment by: {comment.authorNickname} · {comment.createdAt.toLocaleString()}
+                    </span>
+                    <span className="whitespace-pre-wrap">{comment.body}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-muted-foreground text-sm">No comments yet.</p>
+            )}
           </div>
 
           <Separator />

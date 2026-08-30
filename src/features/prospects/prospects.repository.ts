@@ -8,6 +8,7 @@ import type {
   Location,
   Prospect,
   ProjectFit,
+  ProspectComment,
   ProspectListItem,
   ProspectSource,
   ProspectStatus,
@@ -29,6 +30,7 @@ const LIST_ITEM_SELECT = {
   companyName: true,
   domain: true,
   websiteUrl: true,
+  phone: true,
   industry: true,
   location: true,
   companySize: true,
@@ -47,6 +49,8 @@ const LIST_ITEM_SELECT = {
   sentAt: true,
   seen: true,
   lastDraftFailure: true,
+  lastOpenedAt: true,
+  lastOpenedByNickname: true,
 } as const satisfies Prisma.ProspectSelect;
 
 type ProspectListRow = Prisma.ProspectGetPayload<{ select: typeof LIST_ITEM_SELECT }>;
@@ -86,6 +90,10 @@ export interface ListProspectsFilters {
   hasVerifiedEmail?: boolean;
   seen?: boolean;
   hasDraftFailure?: boolean;
+  /** Whether `domain` is set - see the "Domain" column in prospects-table.tsx. */
+  hasDomain?: boolean;
+  /** Whether `lastOpenedAt` is set - see the "Opened" column in prospects-table.tsx. */
+  opened?: boolean;
 }
 
 export interface ListProspectsOptions {
@@ -189,6 +197,15 @@ function buildWhere(
   if (filters.hasDraftFailure !== undefined) {
     where.lastDraftFailure = filters.hasDraftFailure ? { not: Prisma.DbNull } : { equals: Prisma.DbNull };
   }
+  // `domain`/`lastOpenedAt` are plain nullable scalar columns (not JSON like
+  // `lastDraftFailure` above), so a direct `{ not: null }`/`{ equals: null }`
+  // works without `Prisma.DbNull`.
+  if (filters.hasDomain !== undefined) {
+    where.domain = filters.hasDomain ? { not: null } : { equals: null };
+  }
+  if (filters.opened !== undefined) {
+    where.lastOpenedAt = filters.opened ? { not: null } : { equals: null };
+  }
 
   if (filters.priorityScoreMin !== undefined || filters.priorityScoreMax !== undefined) {
     where.priorityScore = {
@@ -280,6 +297,8 @@ const FULL_PROSPECT_SELECT = {
   companyName: true,
   domain: true,
   websiteUrl: true,
+  phone: true,
+  address: true,
   industry: true,
   location: true,
   companySize: true,
@@ -302,6 +321,8 @@ const FULL_PROSPECT_SELECT = {
   statusHistory: true,
   seen: true,
   lastDraftFailure: true,
+  lastOpenedAt: true,
+  lastOpenedByNickname: true,
   activeDraftId: true,
   sentAt: true,
   lastFollowupAt: true,
@@ -314,6 +335,10 @@ const FULL_PROSPECT_SELECT = {
   tags: true,
   drafts: {
     orderBy: { variant: 'asc' },
+  },
+  comments: {
+    orderBy: { createdAt: 'desc' },
+    select: { id: true, body: true, authorNickname: true, createdAt: true },
   },
 } as const satisfies Prisma.ProspectSelect;
 
@@ -332,10 +357,52 @@ function toFullProspect(row: FullProspectRow): Prospect {
   };
 }
 
+/**
+ * Distinct `signal.description` values across every prospect, alphabetical -
+ * backs the "Reason contains" filter's combobox on `/prospects` so it
+ * suggests real values instead of an editor having to guess free text.
+ * `signal` is a JSON column (see the model's own comment), so this needs a
+ * raw JSON-path query rather than Prisma's `distinct`, which can't reach
+ * inside JSON columns.
+ */
+export async function listDistinctReasons(): Promise<string[]> {
+  const rows = await prisma.$queryRaw<Array<{ reason: string }>>`
+    SELECT DISTINCT signal->>'description' AS reason
+    FROM "Prospect"
+    WHERE signal->>'description' IS NOT NULL
+    ORDER BY reason
+  `;
+  return rows.map((row) => row.reason);
+}
+
 /** Full detail fetch for the prospect detail dialog. `null` if no prospect exists with `id`. */
 export async function getProspectById(id: string): Promise<Prospect | null> {
   const row = await prisma.prospect.findUnique({ where: { id }, select: FULL_PROSPECT_SELECT });
   return row ? toFullProspect(row) : null;
+}
+
+/**
+ * Adds a free-text comment to a Prospect - see the doc comment on
+ * `ProspectComment` in prisma/schema.prisma. `authorNickname` is resolved
+ * by the caller (the route handler, from the session cookie) - this
+ * function trusts whatever it's given rather than re-deriving it, since
+ * only the route has access to the request's cookies. `null` if no
+ * prospect exists with `id` (checked explicitly rather than relying on the
+ * FK constraint to fail, so the caller gets a clean "not found" instead of
+ * a raw Prisma error).
+ */
+export async function addProspectComment(
+  id: string,
+  body: string,
+  authorNickname: string
+): Promise<ProspectComment | null> {
+  const prospect = await prisma.prospect.findUnique({ where: { id }, select: { id: true } });
+  if (!prospect) return null;
+
+  return prisma.prospectComment.create({
+    data: { prospectId: id, body, authorNickname },
+    select: { id: true, body: true, authorNickname: true, createdAt: true },
+  });
 }
 
 export type DeleteProspectOutcome =

@@ -36,6 +36,14 @@ const querySchema = z.object({
     .enum(['true', 'false'])
     .optional()
     .transform((value) => (value === undefined ? undefined : value === 'true')),
+  hasDomain: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((value) => (value === undefined ? undefined : value === 'true')),
+  opened: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((value) => (value === undefined ? undefined : value === 'true')),
   sortField: z.enum(['priorityScore', 'discoveredAt', 'sentAt']).optional(),
   sortDirection: z.enum(['asc', 'desc']).optional(),
   cursor: z.string().optional(),
@@ -63,6 +71,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     hasVerifiedEmail,
     seen,
     hasDraftFailure,
+    hasDomain,
+    opened,
     sortField,
     sortDirection,
     cursor,
@@ -83,6 +93,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       hasVerifiedEmail,
       seen,
       hasDraftFailure,
+      hasDomain,
+      opened,
     },
     sortField,
     sortDirection,
