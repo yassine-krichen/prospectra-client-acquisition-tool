@@ -149,6 +149,27 @@ describe('runDiscovery', () => {
     expect(createMock).toHaveBeenCalledTimes(1);
   });
 
+  it('calls onProgress with a step-by-step narration of the run when provided', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({ ok: true, prospects: [buildProspect({ companyName: 'Acme Co' })] });
+    const onProgress = vi.fn();
+
+    const summary = await runDiscovery(query, 'a', undefined, onProgress);
+
+    const messages = onProgress.mock.calls.map(([event]) => event.message);
+    expect(messages[0]).toContain('Starting discovery');
+    expect(messages).toContain('google_places: running…');
+    expect(messages).toContain('google_places: found 1 prospect(s)');
+    expect(messages).toContain('Inserted: Acme Co');
+    expect(messages.at(-1)).toContain('Done:');
+    expect(messages.at(-1)).toContain(`${summary.inserted} inserted`);
+  });
+
+  it('never calls onProgress-shaped behavior (throws nothing) when onProgress is omitted, preserving prior callers', async () => {
+    runGooglePlacesSourceMock.mockResolvedValue({ ok: true, prospects: [buildProspect()] });
+
+    await expect(runDiscovery(query)).resolves.toEqual(expect.objectContaining({ inserted: 1 }));
+  });
+
   it('updates instead of inserting when a prospect with the same domain already exists', async () => {
     runGooglePlacesSourceMock.mockResolvedValue({ ok: true, prospects: [buildProspect()] });
     findFirstMock.mockResolvedValue({ id: 'existing-id', corroboratingSourceCount: 1 });

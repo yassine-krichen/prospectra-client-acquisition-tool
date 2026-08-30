@@ -15,6 +15,7 @@ const GEOCODE_SUCCESS = [{ osm_type: 'relation', osm_id: 123456 }];
 function mockFetch(options: {
   geocodeBody?: unknown;
   geocodeOk?: boolean;
+  geocodeError?: Error;
   overpassBody?: unknown;
   overpassOk?: boolean;
   overpassStatus?: number;
@@ -24,6 +25,7 @@ function mockFetch(options: {
     const url = typeof input === 'string' ? input : (input as URL).toString();
 
     if (url.includes('nominatim.openstreetmap.org')) {
+      if (options.geocodeError) return Promise.reject(options.geocodeError);
       return Promise.resolve({
         ok: options.geocodeOk ?? true,
         json: () => Promise.resolve(options.geocodeBody ?? GEOCODE_SUCCESS),
@@ -115,6 +117,33 @@ describe('runOverpassSource', () => {
     expect(result.prospects[0].location).toEqual(expect.objectContaining({ lat: 30.3, lng: -97.7 }));
   });
 
+  // Regression coverage for the batched-concurrency rewrite (elements were
+  // mapped one at a time before, which took 20+ minutes for a
+  // several-thousand-element response - see ELEMENT_MAPPING_CONCURRENCY's
+  // doc comment): 25 elements spans 3 batches of size 10 (10 + 10 + 5), so
+  // this specifically exercises the batch-boundary slicing, not just "more
+  // than one element total". No website tag on any of them, so this stays
+  // in the synchronous `no_website` signal branch - no real network call.
+  it('maps every element correctly across multiple concurrency batches', async () => {
+    const elements = Array.from({ length: 25 }, (_, index) => ({
+      type: 'node' as const,
+      id: index,
+      lat: 30.1,
+      lon: -97.1,
+      tags: { name: `Cafe ${index}` },
+    }));
+    mockFetch({ overpassBody: { elements } });
+
+    const result = await runOverpassSource(query);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok result');
+    expect(result.prospects).toHaveLength(25);
+    expect(result.prospects.map((p) => p.companyName).sort()).toEqual(
+      elements.map((e) => e.tags.name).sort()
+    );
+  });
+
   it('returns an empty prospect list when Overpass returns zero elements', async () => {
     mockFetch({ overpassBody: { elements: [] } });
 
@@ -166,6 +195,41 @@ describe('runOverpassSource', () => {
       ok: false,
       reason: 'source unavailable: Overpass request failed (ECONNREFUSED)',
     });
+  });
+
+  // Regression coverage: a hung public Overpass/Nominatim instance used to
+  // stall the whole discovery run indefinitely (confirmed live 2026-08-22 -
+  // a real run got permanently stuck on "overpass: running…") since neither
+  // fetch call had a timeout at all. Both now pass `AbortSignal.timeout(...)`,
+  // which rejects with a DOMException named "TimeoutError" - exercised here
+  // with that exact shape rather than a generic Error, so this test would
+  // catch a future regression to a fetch call that dropped the signal.
+  it('fails closed and reports unavailable when the Overpass request times out', async () => {
+    mockFetch({
+      overpassError: new DOMException('The operation was aborted due to timeout', 'TimeoutError'),
+    });
+
+    const result = await runOverpassSource(query);
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'source unavailable: Overpass request failed (The operation was aborted due to timeout)',
+    });
+  });
+
+  it('fails closed and reports unavailable when the Nominatim geocoding request times out', async () => {
+    const fetchMock = mockFetch({
+      geocodeError: new DOMException('The operation was aborted due to timeout', 'TimeoutError'),
+    });
+
+    const result = await runOverpassSource(query);
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'source unavailable: could not resolve geography to a location',
+    });
+    // Never reaches the Overpass call at all - geocoding failure short-circuits.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('fails closed and reports unavailable when Overpass responds with a non-2xx status', async () => {

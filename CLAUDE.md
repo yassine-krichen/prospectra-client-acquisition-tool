@@ -79,6 +79,38 @@ comments for exactly what each does):
 - `RESEND_WEBHOOK_SECRET` - needed once a Resend inbound webhook is actually configured pointing at
   `/api/webhooks/resend`; until then that route fails closed (rejects all events, correct behavior).
 
+## Playwright on Vercel (fixed 2026-08-22)
+
+The first live deploy's discovery cron threw `Cannot find module
+'.../playwright-core/browsers.json'` the moment a Playwright-based source (Yellow Pages, Indie
+Hackers) ran - Vercel's serverless functions have no Chromium binary available at all, and the
+full `playwright` package's own ~300MB+ download can't ship inside a function bundle regardless.
+
+Fixed in `src/common/scraping/browser.ts` (`resolveLaunchOptions`, exported for testability): on
+Vercel/Lambda (`process.env.VERCEL` or `AWS_LAMBDA_FUNCTION_NAME` set), launches via
+`@sparticuz/chromium` - a Lambda-compiled, brotli-compressed Chromium build sized to actually fit
+a function bundle - instead of trying to use a nonexistent bundled browser. Locally, nothing
+changed behaviorally: `playwright-core` (the actual runtime dependency everywhere now, replacing
+`playwright`) finds the Chromium the full `playwright` package downloads to the shared Playwright
+browser cache - `playwright` moved to `devDependencies` for exactly that (`npm install` /
+`npx playwright install chromium`), it's never imported at runtime except by
+`yellowpages.source.test.ts`, which launches its own real local browser against a fixture page.
+
+Two more pieces this fix needed, both easy to miss:
+- `next.config.ts`'s `serverExternalPackages: ["@sparticuz/chromium", "playwright-core"]` - both
+  packages do their own runtime filesystem lookups for a binary that Next's bundler/tracer can't
+  see through via static analysis; left external, they're `require()`d as-is instead of bundled,
+  which is what actually gets `@sparticuz/chromium`'s binary into the deployed function.
+- `package.json`'s `"engines": {"node": ">=22.17.0"}` - `@sparticuz/chromium` requires it; make
+  sure Vercel's Project Settings → General → Node.js Version is actually set to 22.x or later too,
+  since `engines` is a hint some tooling respects, not a hard override of Vercel's own setting.
+
+Not verifiable locally end-to-end: `@sparticuz/chromium`'s binary is Linux-only, so the serverless
+branch can only be exercised on an actual Vercel deploy, not on a Windows dev machine - covered
+locally only via `browser.test.ts` mocking `@sparticuz/chromium` to prove the option-selection
+logic itself is correct. If discovery still fails on Vercel after this, that's the first thing to
+re-verify (deployed logs, not local `npm test`).
+
 ## Architecture
 
 Feature-based folders under `src/features/<feature>/`: `discovery`, `enrichment`, `drafting`,

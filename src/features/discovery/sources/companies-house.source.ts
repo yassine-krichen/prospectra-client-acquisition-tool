@@ -9,10 +9,17 @@ const COMPANIES_HOUSE_SEARCH_URL = 'https://api.company-information.service.gov.
 // Companies House's public data is deliberately sparse on some fields (a
 // company can be returned with just a name and number and nothing else) -
 // same posture as overpass.source.ts's `buildAddress` comment: expected data
-// sparsity, not a parsing bug, so every field beyond company_name/
-// company_number is optional/nullable.
+// sparsity, not a parsing bug, so every field beyond title/company_number is
+// optional/nullable.
+//
+// The *search* endpoint's items use `title` for the display name, not
+// `company_name` - confirmed live 2026-08-30 against a real API response.
+// `company_name` is the field Companies House's separate company-profile
+// endpoint (GET /company/{number}) uses, not this one; using that name here
+// was wrong and made every single search result fail validation, degrading
+// the whole source to "unavailable" on every real call.
 const companyItemSchema = z.object({
-  company_name: z.string(),
+  title: z.string(),
   company_number: z.string(),
   address_snippet: z.string().nullable().optional(),
   date_of_creation: z.string().nullable().optional(),
@@ -41,7 +48,7 @@ function isActiveOrUnknownStatus(item: z.infer<typeof companyItemSchema>): boole
 
 function mapToProspect(item: z.infer<typeof companyItemSchema>, query: DiscoveryQuery): DiscoveredProspect {
   return {
-    companyName: item.company_name,
+    companyName: item.title,
     domain: null,
     websiteUrl: null,
     industry: 'other',

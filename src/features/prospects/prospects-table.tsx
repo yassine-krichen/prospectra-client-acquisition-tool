@@ -82,6 +82,10 @@ interface FiltersState {
   source: ProspectSource | typeof ALL;
   signalType: SignalType | typeof ALL;
   signalStrength: SignalStrength | typeof ALL;
+  // Free-text substring match against the signal's description (the
+  // "Reason" half of the Signal : Reason column) - not an enum like
+  // signalType/signalStrength, so a plain string rather than ALL-sentinel'd.
+  reason: string;
   industry: Industry | typeof ALL;
   projectFit: ProjectFit | typeof ALL;
   status: ProspectStatus | typeof ALL;
@@ -100,6 +104,7 @@ const DEFAULT_FILTERS: FiltersState = {
   source: ALL,
   signalType: ALL,
   signalStrength: ALL,
+  reason: '',
   industry: ALL,
   projectFit: ALL,
   status: ALL,
@@ -132,6 +137,7 @@ function buildQueryParams(
   if (filters.source !== ALL) params.set('source', filters.source);
   if (filters.signalType !== ALL) params.set('signalType', filters.signalType);
   if (filters.signalStrength !== ALL) params.set('signalStrength', filters.signalStrength);
+  if (filters.reason.trim() !== '') params.set('reason', filters.reason.trim());
   if (filters.industry !== ALL) params.set('industry', filters.industry);
   if (filters.projectFit !== ALL) params.set('projectFit', filters.projectFit);
   if (filters.status !== ALL) params.set('status', filters.status);
@@ -633,6 +639,15 @@ export function ProspectsTable(): React.JSX.Element {
           options={signalStrengthSchema.options}
           onChange={(value) => updateFilter('signalStrength', value as FiltersState['signalStrength'])}
         />
+        <div className="flex flex-col gap-1">
+          <label className="text-muted-foreground text-xs">Reason contains</label>
+          <Input
+            className="w-48"
+            placeholder="e.g. outdated, no HTTPS"
+            value={filters.reason}
+            onChange={(event) => updateFilter('reason', event.target.value)}
+          />
+        </div>
         <FilterSelect
           label="Industry"
           value={filters.industry}

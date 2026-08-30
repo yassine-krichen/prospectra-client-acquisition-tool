@@ -112,6 +112,25 @@ export const discoveryRunSummarySchema = z.object({
 });
 export type DiscoveryRunSummary = z.infer<typeof discoveryRunSummarySchema>;
 
+// `POST /api/pipeline/discover` streams newline-delimited JSON instead of a
+// single response body, so the dashboard's console panel can show each step
+// as it happens rather than only the final summary - see that route and
+// discovery-trigger-form.tsx. `discoveryProgressEventSchema` mirrors
+// `DiscoveryProgressEvent` in discovery.service.ts, same "client-safe
+// duplicate" reasoning as `discoveryRunSummarySchema` above.
+export const discoveryProgressEventSchema = z.object({
+  level: z.enum(['info', 'success', 'warn']),
+  message: z.string(),
+});
+export type DiscoveryProgressEvent = z.infer<typeof discoveryProgressEventSchema>;
+
+export const discoveryStreamLineSchema = z.discriminatedUnion('type', [
+  discoveryProgressEventSchema.extend({ type: z.literal('progress') }),
+  z.object({ type: z.literal('summary'), summary: discoveryRunSummarySchema }),
+  z.object({ type: z.literal('error'), message: z.string() }),
+]);
+export type DiscoveryStreamLine = z.infer<typeof discoveryStreamLineSchema>;
+
 // Client-safe mirror of the `DiscoveryRun` Prisma model (discovery.service.ts's
 // `listRecentDiscoveryRuns`), duplicated here for the same reason as
 // `discoveryRunSummarySchema` above: client components validate the

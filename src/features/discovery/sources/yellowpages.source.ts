@@ -1,4 +1,4 @@
-import type { Page } from 'playwright';
+import type { Page } from 'playwright-core';
 
 import { closeScrapingSession, launchScrapingSession } from '@/common/scraping/browser';
 import { retryOnBlock, ScraperBlockedError } from '@/common/scraping/retry-on-block';

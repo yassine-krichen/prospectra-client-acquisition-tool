@@ -74,6 +74,10 @@ export interface ListProspectsFilters {
   source?: ProspectSource;
   signalType?: SignalType;
   signalStrength?: SignalStrength;
+  /** Case-insensitive substring match against `signal.description` (the
+   * "Reason" half of the prospects table's "Signal : Reason" column) - free
+   * text, not an enum, since `description` is human-authored prose. */
+  reason?: string;
   industry?: Industry;
   projectFit?: ProjectFit;
   status?: ProspectStatus;
@@ -202,6 +206,9 @@ function buildWhere(
   }
   if (filters.signalStrength) {
     and.push({ signal: { path: ['strength'], equals: filters.signalStrength } });
+  }
+  if (filters.reason) {
+    and.push({ signal: { path: ['description'], string_contains: filters.reason, mode: 'insensitive' } });
   }
 
   if (cursor) {
