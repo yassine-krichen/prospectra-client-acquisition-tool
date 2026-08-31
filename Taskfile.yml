@@ -1,0 +1,36 @@
+version: "3"
+
+vars:
+  PORT: 3004
+
+tasks:
+  help:
+    desc: List all available tasks
+    cmds:
+      - task --list
+
+  install:
+    desc: Install project dependencies
+    cmds:
+      - npm install
+
+  dev:
+    desc: Run the Next.js dev server on port {{.PORT}} (foreground, hot-reload)
+    cmds:
+      - npm run dev -- -p {{.PORT}}
+
+  run:
+    desc: Production-style run - build then start on port {{.PORT}}
+    cmds:
+      - npm run build
+      - npm run start -- -p {{.PORT}}
+
+  stop:
+    desc: Best-effort kill of whatever is listening on port {{.PORT}} (standalone use)
+    cmds:
+      - powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort {{.PORT}} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id \$_ -Force -ErrorAction SilentlyContinue }"
+
+  test:
+    desc: Run the test suite (Vitest - includes proxy.test.ts at the repo root)
+    cmds:
+      - npm test
