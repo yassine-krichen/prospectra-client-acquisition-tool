@@ -1,6 +1,6 @@
 import { spawn, execSync } from 'node:child_process';
 
-const TIMEOUT_MS = 5 * 60 * 1000;
+const TIMEOUT_MS = 15 * 60 * 1000;
 
 interface ClaudeJsonEnvelope {
   result: string;
