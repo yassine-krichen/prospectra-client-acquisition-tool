@@ -36,6 +36,7 @@ enum ProspectSource {
   github
   indiehackers
   manual
+  ai_agent
   overpass
   yellowpages
   companies_house

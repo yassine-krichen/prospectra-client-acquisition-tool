@@ -36,7 +36,7 @@ describe('mapToDiscoveredProspect', () => {
     expect(prospect.industry).toBe('local_service');
     expect(prospect.companySize).toBe('1-10');
     expect(prospect.location).toEqual({ city: 'Brooklyn', country: 'US', lat: null, lng: null });
-    expect(prospect.source).toBe('manual');
+    expect(prospect.source).toBe('ai_agent');
     expect(prospect.sourceUrl).toBe('https://acmedental.com');
     expect(prospect.phone).toBe('+1 555-000-1111');
     expect(prospect.address).toBe('123 Main St');
@@ -106,10 +106,10 @@ describe('mapToDiscoveredProspect', () => {
     expect(prospect.corroboratingSourceCount).toBe(1);
   });
 
-  it('hardcodes source to "manual" since there is no dedicated agentic ProspectSource value yet', () => {
+  it('sets source to "ai_agent" for every prospect mapped by this tool', () => {
     const prospect = mapToDiscoveredProspect(validLine());
 
-    expect(prospect.source).toBe('manual');
+    expect(prospect.source).toBe('ai_agent');
   });
 
   it('carries city and country through to location while leaving lat/lng null', () => {

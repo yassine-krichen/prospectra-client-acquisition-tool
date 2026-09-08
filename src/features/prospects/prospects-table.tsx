@@ -32,6 +32,7 @@ import { DataTableViewOptions } from '@/components/data-table/data-table-view-op
 import { DataTableSkeleton } from '@/components/data-table/data-table-skeleton';
 import { DataTableCursorPagination } from '@/components/data-table/data-table-pagination';
 import { ProspectDetailDialog } from '@/features/prospects/prospect-detail-dialog';
+import { SignalDetailDialog, type SelectedSignal } from '@/features/prospects/signal-detail-dialog';
 import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
 import {
   industrySchema,
@@ -177,6 +178,19 @@ function formatDate(value: Date | null): string {
   return value ? value.toLocaleDateString() : 'No Record';
 }
 
+// Formats a cents integer as whole dollars, e.g. 150000 -> "1,500". Mirrors
+// `formatCents` in client-detail.tsx (duplicated rather than imported - that
+// file transitively pulls in client-side action helpers this file doesn't
+// need, and this repo's convention is to duplicate small client-safe
+// formatters rather than share them across features).
+function formatDollars(cents: number): string {
+  return (cents / 100).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+}
+
+function formatCentsRange(range: { min: number; max: number }): string {
+  return `$${formatDollars(range.min)}–${formatDollars(range.max)}`;
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unknown error.';
 }
@@ -320,7 +334,10 @@ const BULK_ACTION_LABEL: Record<BulkActionKind, string> = {
 export function ProspectsTable(): React.JSX.Element {
   const [filters, setFilters] = useState<FiltersState>(DEFAULT_FILTERS);
   const [sorting, setSorting] = useState<SortingState>(DEFAULT_SORTING);
-  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+  // `projectFit` stays a real column (the `FilterSelect` above still filters
+  // on it), but is hidden by default now that Pitch/Budget cover the same
+  // ground more usefully - a user can still re-enable it via "View options".
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({ projectFit: false });
   const [limit, setLimit] = useState(DEFAULT_LIMIT);
   // History of cursors used to reach the current page. Empty = first page.
   const [cursorStack, setCursorStack] = useState<string[]>([]);
@@ -336,6 +353,9 @@ export function ProspectsTable(): React.JSX.Element {
   // action (Enrich/Draft/Match/Win) now lives inside that dialog - see
   // prospect-detail-dialog.tsx - rather than as buttons in this table.
   const [selectedProspectId, setSelectedProspectId] = useState<string | null>(null);
+  // Which prospect's signal detail dialog is open, if any - see
+  // signal-detail-dialog.tsx.
+  const [selectedSignal, setSelectedSignal] = useState<SelectedSignal | null>(null);
 
   // Bulk-select state - mirrors approval-queue-table.tsx's Set<string>
   // pattern rather than TanStack Table's built-in row-selection feature, for
@@ -556,6 +576,11 @@ export function ProspectsTable(): React.JSX.Element {
             >
               {row.original.companyName}
             </button>
+            {row.original.source === 'ai_agent' ? (
+              <Badge variant="secondary" className="shrink-0">
+                AI
+              </Badge>
+            ) : null}
             {row.original.lastDraftFailure ? (
               <Badge variant="destructive" className="shrink-0">
                 Draft failed
@@ -578,7 +603,19 @@ export function ProspectsTable(): React.JSX.Element {
               <HugeiconsIcon icon={SIGNAL_STRENGTH_ICON[row.original.signal.strength]} data-icon="inline-start" strokeWidth={2} />
               {SIGNAL_STRENGTH_LABEL[row.original.signal.strength]}
             </Badge>
-            <span className="whitespace-normal break-words">{row.original.signal.description}</span>
+            <button
+              type="button"
+              className="min-w-0 flex-1 truncate text-left underline underline-offset-2"
+              onClick={() =>
+                setSelectedSignal({
+                  signal: row.original.signal,
+                  companyName: row.original.companyName,
+                  sourceUrl: row.original.sourceUrl,
+                })
+              }
+            >
+              {row.original.signal.description}
+            </button>
           </span>
         ),
       },
@@ -588,6 +625,34 @@ export function ProspectsTable(): React.JSX.Element {
         meta: { label: 'Project fit' },
         size: 140,
         cell: ({ row }) => <span className="block truncate">{formatEnumLabel(row.original.projectFit)}</span>,
+      },
+      {
+        id: 'pitch',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Pitch" />,
+        meta: { label: 'Pitch' },
+        size: 160,
+        cell: ({ row }) => {
+          const primary = row.original.suggestedServices.find((s) => s.role === 'primary');
+          if (!primary) return <span className="text-muted-foreground block truncate">Unclear</span>;
+          return (
+            <Badge variant="outline" className="max-w-full" title={primary.reasoning}>
+              <span className="truncate">{formatEnumLabel(primary.service)}</span>
+            </Badge>
+          );
+        },
+      },
+      {
+        id: 'budget',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Budget" />,
+        meta: { label: 'Budget' },
+        size: 140,
+        cell: ({ row }) => {
+          const primary = row.original.suggestedServices.find((s) => s.role === 'primary');
+          if (primary && !primary.requiresManualQuote && primary.priceRangeCents) {
+            return <span className="block truncate">{formatCentsRange(primary.priceRangeCents)}</span>;
+          }
+          return <span className="text-muted-foreground block truncate">{formatEnumLabel(row.original.estimatedBudget)}</span>;
+        },
       },
       {
         accessorKey: 'status',
@@ -922,6 +987,13 @@ export function ProspectsTable(): React.JSX.Element {
           if (!open) setSelectedProspectId(null);
         }}
         onChanged={() => setRefreshIndex((prev) => prev + 1)}
+      />
+
+      <SignalDetailDialog
+        selected={selectedSignal}
+        onOpenChange={(open) => {
+          if (!open) setSelectedSignal(null);
+        }}
       />
     </div>
   );

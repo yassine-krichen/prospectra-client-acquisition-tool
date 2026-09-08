@@ -43,6 +43,17 @@ function formatDate(value: Date | string | null): string {
   return date.toLocaleDateString();
 }
 
+// Turns a snake_case enum value into readable English - "ai_agent" becomes
+// "Ai agent". Mirrors `formatEnumLabel` in prospects-table.tsx (duplicated
+// rather than imported - both are small client-safe helpers local to their
+// own file, matching this repo's existing convention).
+function formatEnumLabel(value: string): string {
+  return value
+    .split('_')
+    .map((word, index) => (index === 0 ? word.charAt(0).toUpperCase() + word.slice(1) : word))
+    .join(' ');
+}
+
 interface ActionCardProps {
   title: string;
   description: string;
@@ -245,7 +256,7 @@ function ProspectDetailContent({ prospectId, onChanged, onOpenChange }: Prospect
           <div className="flex flex-col gap-2">
             <DetailRow label="Domain" value={prospect.domain ?? 'None'} />
             <DetailRow label="Industry" value={prospect.industry} />
-            <DetailRow label="Source" value={prospect.source} />
+            <DetailRow label="Source" value={formatEnumLabel(prospect.source)} />
             <DetailRow label="Priority" value={prospect.priorityScore} />
             <DetailRow label="Discovered" value={formatDate(prospect.discoveredAt)} />
             <DetailRow

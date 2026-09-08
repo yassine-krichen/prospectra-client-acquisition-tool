@@ -59,5 +59,3 @@ All three flags are optional:
 - Single category/geography per run - no batching over multiple categories in one invocation.
 - No discovery-run history entry is written (`DiscoveryRun` rows are only created by the main
   `runDiscovery` orchestrator in `discovery.service.ts`, not by this tool).
-- Persisted prospects use `source: 'manual'` - there is no dedicated `ProspectSource` enum value for
-  agent-driven discovery yet.

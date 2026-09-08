@@ -29,9 +29,7 @@ export function mapToDiscoveredProspect(line: AgenticProspectLine): DiscoveredPr
       lng: null,
     },
     companySize: line.companySize,
-    // No dedicated `ProspectSource` value for the agentic tool yet - see
-    // README.md's v1 limitations.
-    source: 'manual',
+    source: 'ai_agent',
     sourceUrl: line.evidenceUrl,
     discoveredAt: new Date(),
     signal: {

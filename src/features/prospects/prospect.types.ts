@@ -20,6 +20,7 @@ export const prospectSourceSchema = z.enum([
   'github',
   'indiehackers',
   'manual',
+  'ai_agent',
   'overpass',
   'yellowpages',
   'companies_house',
