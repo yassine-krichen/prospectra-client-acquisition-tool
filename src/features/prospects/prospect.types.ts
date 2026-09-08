@@ -179,6 +179,9 @@ export const prospectSchema = z.object({
   // Dashboard-only read marker - see the doc comment on `Prospect.seen` in
   // prisma/schema.prisma. Not part of the outreach pipeline's own state.
   seen: z.boolean(),
+  // Dashboard-only pin marker - see the doc comment on `Prospect.favorite`
+  // in prisma/schema.prisma. Not part of the outreach pipeline's own state.
+  favorite: z.boolean(),
   // Dead-letter tracking for the most recent failed `draftProspect` attempt
   // - see the doc comment on `Prospect.lastDraftFailure` in
   // prisma/schema.prisma. Null once the prospect has never failed drafting,

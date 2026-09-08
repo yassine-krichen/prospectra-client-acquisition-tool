@@ -156,6 +156,32 @@ export async function setProspectSeen(prospectId: string, seen: boolean): Promis
   return seenResponseSchema.parse(body);
 }
 
+// --- favorite ---
+
+const favoriteResponseSchema = z.object({ id: z.string(), favorite: z.boolean() });
+export type FavoriteResult = z.infer<typeof favoriteResponseSchema>;
+
+/**
+ * Toggles the dashboard-only "favorite" pin marker (see the doc comment on
+ * `Prospect.favorite` in prisma/schema.prisma) - not part of the outreach
+ * pipeline's own state, so unlike the other actions here this is meant to
+ * be a fast, silent interaction: callers should update local state directly
+ * rather than treating this like enrich/draft/match/win.
+ */
+export async function setProspectFavorite(prospectId: string, favorite: boolean): Promise<FavoriteResult> {
+  const response = await fetch(`/api/prospects/${prospectId}/favorite`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ favorite }),
+  });
+  if (!response.ok) {
+    throw new Error(`Favorite request failed (status ${response.status}).`);
+  }
+
+  const body: unknown = await response.json();
+  return favoriteResponseSchema.parse(body);
+}
+
 // --- delete ---
 
 const deleteResponseSchema = z.union([
@@ -251,6 +277,21 @@ export async function bulkSetProspectsSeen(ids: string[], seen: boolean): Promis
   });
   if (!response.ok) {
     throw new Error(`Bulk seen request failed (status ${response.status}).`);
+  }
+
+  const body: unknown = await response.json();
+  return bulkResponseSchema.parse(body).results;
+}
+
+/** Bulk counterpart to `setProspectFavorite` - see `PATCH /api/prospects/bulk/favorite`. */
+export async function bulkSetProspectsFavorite(ids: string[], favorite: boolean): Promise<BulkActionResult[]> {
+  const response = await fetch('/api/prospects/bulk/favorite', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids, favorite }),
+  });
+  if (!response.ok) {
+    throw new Error(`Bulk favorite request failed (status ${response.status}).`);
   }
 
   const body: unknown = await response.json();

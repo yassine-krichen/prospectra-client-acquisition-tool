@@ -196,6 +196,13 @@ model Prospect {
   // to enrich/draft/send).
   seen Boolean @default(false)
 
+  // Dashboard-only pin marker, toggled by the user from the prospects table
+  // (`PATCH /api/prospects/[id]/favorite`). Purely a "don't let me lose
+  // this one" UX aid, same as `seen` above — has no bearing on the outreach
+  // pipeline itself (unlike `status`, nothing reads this to decide whether
+  // to enrich/draft/send).
+  favorite Boolean @default(false)
+
   drafts         Draft[]
   activeDraftId  String?
   sentAt         DateTime?

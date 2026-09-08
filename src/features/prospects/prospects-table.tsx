@@ -16,6 +16,8 @@ import {
   DotIcon,
   EyeIcon,
   EyeOffIcon,
+  StarIcon,
+  StarOffIcon,
 } from '@hugeicons/core-free-icons';
 
 import { Badge } from '@/components/ui/badge';
@@ -52,8 +54,10 @@ import {
   bulkDraftProspects,
   bulkEnrichProspects,
   bulkMatchProspects,
+  bulkSetProspectsFavorite,
   bulkSetProspectsSeen,
   bulkWinProspects,
+  setProspectFavorite,
   setProspectSeen,
   type BulkActionResult,
 } from '@/features/prospects/prospect-actions';
@@ -94,6 +98,9 @@ interface FiltersState {
   // above rather than as separate component state so `resetFilters`/the
   // cursor-reset-on-change behavior cover it for free.
   hideSeen: boolean;
+  // Same shape as `hideSeen` above, but for the `favorite` flag - translates
+  // to `favorite=true` on the wire (see buildQueryParams).
+  favoriteOnly: boolean;
 }
 
 const DEFAULT_FILTERS: FiltersState = {
@@ -108,6 +115,7 @@ const DEFAULT_FILTERS: FiltersState = {
   hasVerifiedEmail: ALL,
   hasDraftFailure: ALL,
   hideSeen: false,
+  favoriteOnly: false,
 };
 
 const DEFAULT_SORTING: SortingState = [{ id: 'discoveredAt', desc: true }];
@@ -140,6 +148,7 @@ function buildQueryParams(
   if (filters.hasVerifiedEmail !== ALL) params.set('hasVerifiedEmail', filters.hasVerifiedEmail);
   if (filters.hasDraftFailure !== ALL) params.set('hasDraftFailure', filters.hasDraftFailure);
   if (filters.hideSeen) params.set('seen', 'false');
+  if (filters.favoriteOnly) params.set('favorite', 'true');
 
   const sort = sorting[0];
   if (sort && isSortField(sort.id)) {
@@ -294,11 +303,13 @@ function getRecommendation(prospect: ProspectListItem): Recommendation {
   return STATUS_RECOMMENDATION[prospect.status];
 }
 
-type BulkActionKind = 'seen' | 'unseen' | 'enrich' | 'draft' | 'match' | 'win' | 'delete';
+type BulkActionKind = 'seen' | 'unseen' | 'favorite' | 'unfavorite' | 'enrich' | 'draft' | 'match' | 'win' | 'delete';
 
 const BULK_ACTION_LABEL: Record<BulkActionKind, string> = {
   seen: 'Mark seen',
   unseen: 'Mark unseen',
+  favorite: 'Favorite',
+  unfavorite: 'Unfavorite',
   enrich: 'Enrich',
   draft: 'Draft',
   match: 'Match',
@@ -397,6 +408,10 @@ export function ProspectsTable(): React.JSX.Element {
     void runBulkAction(seen ? 'seen' : 'unseen', (ids) => bulkSetProspectsSeen(ids, seen));
   }
 
+  function handleBulkMarkFavorite(favorite: boolean): void {
+    void runBulkAction(favorite ? 'favorite' : 'unfavorite', (ids) => bulkSetProspectsFavorite(ids, favorite));
+  }
+
   function handleConfirmBulkAction(): void {
     const kind = confirmBulkAction;
     setConfirmBulkAction(null);
@@ -412,6 +427,16 @@ export function ProspectsTable(): React.JSX.Element {
     setProspects((prev) => prev.map((p) => (p.id === prospectId ? { ...p, seen } : p)));
     setProspectSeen(prospectId, seen).catch(() => {
       setProspects((prev) => prev.map((p) => (p.id === prospectId ? { ...p, seen: !seen } : p)));
+    });
+  }
+
+  function handleToggleFavorite(prospectId: string, favorite: boolean): void {
+    // Optimistic, silent, no refetch: this is a pin marker for the user's
+    // own benefit, not pipeline state, so it shouldn't feel like an "action"
+    // (no toast, no loading state on the row's other buttons).
+    setProspects((prev) => prev.map((p) => (p.id === prospectId ? { ...p, favorite } : p)));
+    setProspectFavorite(prospectId, favorite).catch(() => {
+      setProspects((prev) => prev.map((p) => (p.id === prospectId ? { ...p, favorite: !favorite } : p)));
     });
   }
 
@@ -490,6 +515,22 @@ export function ProspectsTable(): React.JSX.Element {
             aria-label={row.original.seen ? 'Mark as unseen' : 'Mark as seen'}
           >
             <HugeiconsIcon icon={row.original.seen ? EyeOffIcon : EyeIcon} strokeWidth={2} />
+          </Button>
+        ),
+      },
+      {
+        id: 'favorite',
+        header: 'Favorite',
+        enableHiding: false,
+        size: 48,
+        cell: ({ row }) => (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => handleToggleFavorite(row.original.id, !row.original.favorite)}
+            aria-label={row.original.favorite ? 'Remove from favorites' : 'Add to favorites'}
+          >
+            <HugeiconsIcon icon={row.original.favorite ? StarIcon : StarOffIcon} strokeWidth={2} />
           </Button>
         ),
       },
@@ -705,6 +746,13 @@ export function ProspectsTable(): React.JSX.Element {
           <Checkbox checked={filters.hideSeen} onCheckedChange={(checked) => updateFilter('hideSeen', checked === true)} />
           Hide seen
         </label>
+        <label className="flex h-8 items-center gap-2 text-sm">
+          <Checkbox
+            checked={filters.favoriteOnly}
+            onCheckedChange={(checked) => updateFilter('favoriteOnly', checked === true)}
+          />
+          Favorites only
+        </label>
         <Button variant="outline" onClick={resetFilters}>
           Clear filters
         </Button>
@@ -729,6 +777,22 @@ export function ProspectsTable(): React.JSX.Element {
             onClick={() => handleBulkMarkSeen(false)}
           >
             {bulkActionPending === 'unseen' ? 'Marking unseen…' : 'Mark unseen'}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={bulkActionPending !== null}
+            onClick={() => handleBulkMarkFavorite(true)}
+          >
+            {bulkActionPending === 'favorite' ? 'Favoriting…' : 'Favorite'}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={bulkActionPending !== null}
+            onClick={() => handleBulkMarkFavorite(false)}
+          >
+            {bulkActionPending === 'unfavorite' ? 'Unfavoriting…' : 'Unfavorite'}
           </Button>
           <Button
             size="sm"
