@@ -48,6 +48,7 @@ const LIST_ITEM_SELECT = {
   status: true,
   sentAt: true,
   seen: true,
+  favorite: true,
   lastDraftFailure: true,
   lastOpenedAt: true,
   lastOpenedByNickname: true,
@@ -89,6 +90,7 @@ export interface ListProspectsFilters {
   priorityScoreMax?: number;
   hasVerifiedEmail?: boolean;
   seen?: boolean;
+  favorite?: boolean;
   hasDraftFailure?: boolean;
   /** Whether `domain` is set - see the "Domain" column in prospects-table.tsx. */
   hasDomain?: boolean;
@@ -194,6 +196,7 @@ function buildWhere(
   if (filters.status) where.status = filters.status;
   if (filters.hasVerifiedEmail !== undefined) where.emailVerified = filters.hasVerifiedEmail;
   if (filters.seen !== undefined) where.seen = filters.seen;
+  if (filters.favorite !== undefined) where.favorite = filters.favorite;
   if (filters.hasDraftFailure !== undefined) {
     where.lastDraftFailure = filters.hasDraftFailure ? { not: Prisma.DbNull } : { equals: Prisma.DbNull };
   }
@@ -320,6 +323,7 @@ const FULL_PROSPECT_SELECT = {
   status: true,
   statusHistory: true,
   seen: true,
+  favorite: true,
   lastDraftFailure: true,
   lastOpenedAt: true,
   lastOpenedByNickname: true,

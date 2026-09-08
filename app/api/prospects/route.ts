@@ -32,6 +32,10 @@ const querySchema = z.object({
     .enum(['true', 'false'])
     .optional()
     .transform((value) => (value === undefined ? undefined : value === 'true')),
+  favorite: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((value) => (value === undefined ? undefined : value === 'true')),
   hasDraftFailure: z
     .enum(['true', 'false'])
     .optional()
@@ -70,6 +74,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     priorityScoreMax,
     hasVerifiedEmail,
     seen,
+    favorite,
     hasDraftFailure,
     hasDomain,
     opened,
@@ -92,6 +97,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       priorityScoreMax,
       hasVerifiedEmail,
       seen,
+      favorite,
       hasDraftFailure,
       hasDomain,
       opened,

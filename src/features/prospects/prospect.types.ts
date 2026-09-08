@@ -20,6 +20,7 @@ export const prospectSourceSchema = z.enum([
   'github',
   'indiehackers',
   'manual',
+  'ai_agent',
   'overpass',
   'yellowpages',
   'companies_house',
@@ -196,6 +197,9 @@ export const prospectSchema = z.object({
   // Dashboard-only read marker - see the doc comment on `Prospect.seen` in
   // prisma/schema.prisma. Not part of the outreach pipeline's own state.
   seen: z.boolean(),
+  // Dashboard-only pin marker - see the doc comment on `Prospect.favorite`
+  // in prisma/schema.prisma. Not part of the outreach pipeline's own state.
+  favorite: z.boolean(),
   // "Has a human opened this prospect's detail dialog" marker - see the doc
   // comment on `Prospect.lastOpenedAt` in prisma/schema.prisma. Both null
   // together (never opened) or both set together (most recent open).
