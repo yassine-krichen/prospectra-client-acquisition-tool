@@ -1,0 +1,24 @@
+{
+  "hooks": {
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"systemMessage\": \"Reminder: update .claude/handoff.md before this compaction (see .claude/handoff.md header for what to keep). PreCompact hooks cannot inject context back to the model - this is a UI-visible note only.\"}'"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"systemMessage\": \"Reminder: update .claude/handoff.md before this session ends - it will not update itself.\"}'"
+          }
+        ]
+      }
+    ]
+  }
+}

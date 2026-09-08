@@ -162,6 +162,23 @@ describe('listProspects filters', () => {
     expect(prospects.map((p) => p.companyName)).toEqual(['Kept']);
   });
 
+  it('filters by reason, a case-insensitive substring match against signal.description', async () => {
+    await seedProspect({ signal: { ...DEFAULT_SIGNAL, description: 'Site is served over plain HTTP' }, companyName: 'Kept' });
+    await seedProspect({ signal: { ...DEFAULT_SIGNAL, description: 'Stale copyright year' }, companyName: 'Excluded' });
+
+    const { prospects } = await listProspects({ filters: { reason: 'http' } });
+
+    expect(prospects.map((p) => p.companyName)).toEqual(['Kept']);
+  });
+
+  it('matches reason regardless of case', async () => {
+    await seedProspect({ signal: { ...DEFAULT_SIGNAL, description: 'OUTDATED tech stack' }, companyName: 'Kept' });
+
+    const { prospects } = await listProspects({ filters: { reason: 'outdated' } });
+
+    expect(prospects.map((p) => p.companyName)).toEqual(['Kept']);
+  });
+
   it('combines signalType and signalStrength filters as an AND, not an OR', async () => {
     await seedProspect({ signal: { ...DEFAULT_SIGNAL, type: 'no_website', strength: 'strong' }, companyName: 'Kept' });
     // Matches signalType alone.

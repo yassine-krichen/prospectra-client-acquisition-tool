@@ -104,12 +104,28 @@ export async function isSafeFetchTarget(url: string): Promise<boolean> {
 
 const MAX_REDIRECTS = 3;
 
+// Native `fetch` has no default timeout, and this function used to have no
+// try/catch around its own `fetch()` call at all - a slow/hung third-party
+// site (a scraped listing's website, often small-business hosting with no
+// reliability guarantee) stalled whichever discovery run happened to touch
+// it indefinitely, with no error and no way to tell which of possibly dozens
+// of prospects was the actual cause (confirmed live 2026-08-22: a run got
+// permanently stuck signal-checking an OSM-discovered business's site).
+// Every current caller (detectWebsiteSignals, tech-stack-detector.source.ts)
+// already treats a thrown error here the same as a validation failure - this
+// fixes the root cause once, for all of them, rather than requiring every
+// future caller to remember to guard against it individually.
+const FETCH_TIMEOUT_MS = 10_000;
+
 /**
  * Fetches a URL that may come from attacker-writable data (scraped listings,
  * user-editable business profiles), validating the URL - and every redirect
  * hop - against `isSafeFetchTarget` before it's followed. Returns `null` if
- * the initial URL or any hop fails validation, or after `MAX_REDIRECTS` hops
- * without landing on a final response.
+ * the initial URL or any hop fails validation, the fetch itself errors or
+ * times out (`FETCH_TIMEOUT_MS` per hop), or after `MAX_REDIRECTS` hops
+ * without landing on a final response - every failure mode degrades to
+ * `null`, never a thrown error, so callers never need their own try/catch
+ * around this specifically for network flakiness.
  */
 export async function fetchSafely(url: string): Promise<Response | null> {
   let currentUrl = url;
@@ -117,7 +133,12 @@ export async function fetchSafely(url: string): Promise<Response | null> {
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount++) {
     if (!(await isSafeFetchTarget(currentUrl))) return null;
 
-    const response = await fetch(currentUrl, { redirect: 'manual' });
+    let response: Response;
+    try {
+      response = await fetch(currentUrl, { redirect: 'manual', signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    } catch {
+      return null;
+    }
 
     const isRedirect = response.status >= 300 && response.status < 400;
     if (!isRedirect) return response;

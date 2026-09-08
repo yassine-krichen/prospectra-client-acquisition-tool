@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { HugeiconsIcon, type IconSvgElement } from '@hugeicons/react';
 import {
   Compass01Icon,
@@ -15,6 +15,7 @@ import {
   SourceCodeIcon,
   Alert02Icon,
   Building03Icon,
+  TerminalIcon,
 } from '@hugeicons/core-free-icons';
 
 import { Button } from '@/components/ui/button';
@@ -26,8 +27,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { toastSourceResults, toastError } from '@/lib/toast';
 import {
-  discoveryRunSummarySchema,
   discoveryRunHistorySchema,
+  discoveryStreamLineSchema,
+  type DiscoveryProgressEvent,
   type DiscoveryRunSummary,
   type DiscoveryRunHistoryEntry,
 } from '@/features/discovery/discovery.types';
@@ -68,6 +70,15 @@ const SOURCE_ICONS: Record<string, IconSvgElement> = {
   overpass: MapsLocation01Icon,
   companies_house: Building03Icon,
   texas_comptroller: Building03Icon,
+};
+
+// Always-dark regardless of the site's own light/dark theme - same
+// convention as terminal/log panels in GitHub Actions, Vercel deployments,
+// etc., where the log itself doesn't follow the host page's theme.
+const CONSOLE_LEVEL_CLASS: Record<DiscoveryProgressEvent['level'], string> = {
+  info: 'text-neutral-300',
+  success: 'text-emerald-400',
+  warn: 'text-amber-400',
 };
 
 function isSourceConfigured(source: DiscoverySourceMeta, configuredServices: SystemHealth['configuredServices'] | null): boolean {
@@ -257,11 +268,19 @@ async function fetchDiscoveryHistory(): Promise<DiscoveryRunHistoryEntry[]> {
   return discoveryRunHistorySchema.parse(body);
 }
 
+// Reads the newline-delimited JSON stream `POST /api/pipeline/discover`
+// returns (see that route's doc comment) - calls `onProgress` for each
+// `progress` line as it arrives, live, and resolves with the final
+// `summary` line once the run completes. A malformed line is skipped
+// rather than aborting the whole run - the stream is a UX nicety, not the
+// only way the run's outcome reaches the caller (the final `summary` line
+// still carries everything `discovery-trigger-form.tsx` needs).
 async function triggerDiscovery(
   category: string,
   geography: string,
   branch: Branch,
-  sources: string[]
+  sources: string[],
+  onProgress: (event: DiscoveryProgressEvent) => void
 ): Promise<DiscoveryRunSummary> {
   const response = await fetch('/api/pipeline/discover', {
     method: 'POST',
@@ -269,12 +288,52 @@ async function triggerDiscovery(
     body: JSON.stringify({ category, geography, branch, sources }),
   });
 
-  if (!response.ok) {
+  if (!response.ok || !response.body) {
     throw new Error(`Discovery run failed (status ${response.status}).`);
   }
 
-  const body: unknown = await response.json();
-  return discoveryRunSummarySchema.parse(body);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let summary: DiscoveryRunSummary | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    let newlineIndex = buffer.indexOf('\n');
+    while (newlineIndex !== -1) {
+      const rawLine = buffer.slice(0, newlineIndex);
+      buffer = buffer.slice(newlineIndex + 1);
+      newlineIndex = buffer.indexOf('\n');
+
+      if (!rawLine.trim()) continue;
+
+      let parsedJson: unknown;
+      try {
+        parsedJson = JSON.parse(rawLine);
+      } catch {
+        continue;
+      }
+
+      const line = discoveryStreamLineSchema.safeParse(parsedJson);
+      if (!line.success) continue;
+
+      if (line.data.type === 'progress') {
+        onProgress(line.data);
+      } else if (line.data.type === 'summary') {
+        summary = line.data.summary;
+      } else {
+        throw new Error(line.data.message);
+      }
+    }
+  }
+
+  if (!summary) {
+    throw new Error('Discovery run ended without a summary.');
+  }
+  return summary;
 }
 
 export function DiscoveryTriggerForm(): React.JSX.Element {
@@ -283,6 +342,8 @@ export function DiscoveryTriggerForm(): React.JSX.Element {
   const [branch, setBranch] = useState<Branch>('a');
   const [isRunning, setIsRunning] = useState(false);
   const [summary, setSummary] = useState<DiscoveryRunSummary | null>(null);
+  const [consoleLines, setConsoleLines] = useState<DiscoveryProgressEvent[]>([]);
+  const consoleRef = useRef<HTMLDivElement>(null);
   const [history, setHistory] = useState<DiscoveryRunHistoryEntry[]>([]);
   const [historyRefreshIndex, setHistoryRefreshIndex] = useState(0);
   const [configuredServices, setConfiguredServices] = useState<SystemHealth['configuredServices'] | null>(null);
@@ -334,6 +395,14 @@ export function DiscoveryTriggerForm(): React.JSX.Element {
     };
   }, []);
 
+  // Imperative DOM scroll, not React state - keeps the console panel pinned
+  // to its latest line as new ones stream in, same as any real terminal.
+  useEffect(() => {
+    if (consoleRef.current) {
+      consoleRef.current.scrollTop = consoleRef.current.scrollHeight;
+    }
+  }, [consoleLines]);
+
   // Recompute the default checked-sources set whenever the visible source
   // set changes (branch switch, or configuredServices arriving after the
   // initial render) - the checklist always reflects the confirmed defaults
@@ -365,16 +434,24 @@ export function DiscoveryTriggerForm(): React.JSX.Element {
     event.preventDefault();
     if (isRunning) return;
     setIsRunning(true);
+    setSummary(null);
+    setConsoleLines([]);
 
     try {
-      const result = await triggerDiscovery(category, geography, branch, Array.from(enabledSources));
+      const result = await triggerDiscovery(category, geography, branch, Array.from(enabledSources), (line) =>
+        setConsoleLines((prev) => [...prev, line])
+      );
       setSummary(result);
       toastSourceResults(
         `Discovery run: ${result.totalFound} found, ${result.inserted} inserted, ${result.updated} updated`,
         result.sources
       );
       setHistoryRefreshIndex((prev) => prev + 1);
-    } catch {
+    } catch (error) {
+      setConsoleLines((prev) => [
+        ...prev,
+        { level: 'warn', message: error instanceof Error ? error.message : 'Discovery run failed.' },
+      ]);
       toastError('Discovery run failed.', 'The request itself errored - check your connection and try again.');
     } finally {
       setIsRunning(false);
@@ -523,6 +600,36 @@ export function DiscoveryTriggerForm(): React.JSX.Element {
               </CardFooter>
             </form>
           </Card>
+
+          {isRunning || consoleLines.length > 0 ? (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <HugeiconsIcon icon={TerminalIcon} strokeWidth={2} className="size-4" />
+                  Console
+                </CardTitle>
+                <CardDescription>Live step-by-step output from the current (or most recent) run.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div
+                  ref={consoleRef}
+                  className="max-h-72 overflow-y-auto rounded-md bg-neutral-950 p-3 font-mono text-xs leading-relaxed"
+                >
+                  {consoleLines.map((line, index) => (
+                    <div key={index} className={CONSOLE_LEVEL_CLASS[line.level]}>
+                      {line.message}
+                    </div>
+                  ))}
+                  {isRunning ? (
+                    <div className="flex items-center gap-1.5 text-neutral-500">
+                      <HugeiconsIcon icon={Loading03Icon} strokeWidth={2} className="size-3 animate-spin" />
+                      running…
+                    </div>
+                  ) : null}
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
 
           {summary ? (
             <Card>

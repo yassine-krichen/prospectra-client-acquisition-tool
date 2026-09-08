@@ -35,22 +35,50 @@ const textSearchResponseSchema = z.object({
 
 const placeDetailsResponseSchema = z.object({
   status: z.string(),
-  result: z.object({ website: z.string().optional() }).optional(),
+  result: z
+    .object({
+      website: z.string().optional(),
+      formatted_phone_number: z.string().optional(),
+      formatted_address: z.string().optional(),
+    })
+    .optional(),
 });
 
-async function fetchPlaceWebsite(placeId: string, apiKey: string): Promise<string | null> {
+interface PlaceDetails {
+  website: string | null;
+  phone: string | null;
+  address: string | null;
+}
+
+// `formatted_phone_number`/`formatted_address` are on the same "Contact"/
+// "Basic" legacy Place Details field categories `website` already bills
+// against - no separate SKU, so fetching them alongside the website lookup
+// this source already makes doesn't add a new cost tier. Worth having: a
+// prospect with "No website listed" is this source's own strongest signal
+// (see `buildSignal` below) and therefore has no domain to enrich against
+// (see the enrichment fallback chain) - a phone number is the one real
+// alternate contact channel for it. Not yet exercised in production: this
+// source currently reports itself unavailable because billing isn't
+// enabled on the configured GOOGLE_PLACES_API_KEY (see CLAUDE.md).
+async function fetchPlaceDetails(placeId: string, apiKey: string): Promise<PlaceDetails> {
+  const empty: PlaceDetails = { website: null, phone: null, address: null };
+
   const url = new URL(PLACE_DETAILS_URL);
   url.searchParams.set('place_id', placeId);
-  url.searchParams.set('fields', 'website');
+  url.searchParams.set('fields', 'website,formatted_phone_number,formatted_address');
   url.searchParams.set('key', apiKey);
 
   const response = await fetch(url).catch(() => null);
-  if (!response || !response.ok) return null;
+  if (!response || !response.ok) return empty;
 
   const parsed = placeDetailsResponseSchema.safeParse(await response.json().catch(() => null));
-  if (!parsed.success || parsed.data.status !== 'OK') return null;
+  if (!parsed.success || parsed.data.status !== 'OK') return empty;
 
-  return parsed.data.result?.website ?? null;
+  return {
+    website: parsed.data.result?.website ?? null,
+    phone: parsed.data.result?.formatted_phone_number ?? null,
+    address: parsed.data.result?.formatted_address ?? null,
+  };
 }
 
 async function buildSignal(
@@ -126,13 +154,13 @@ export async function runGooglePlacesSource(query: DiscoveryQuery): Promise<Sour
 
   const prospects: DiscoveredProspect[] = [];
   for (const result of parsed.data.results) {
-    const websiteUrl = await fetchPlaceWebsite(result.place_id, apiKey);
-    const signal = await buildSignal(websiteUrl, result.user_ratings_total, result.business_status);
+    const details = await fetchPlaceDetails(result.place_id, apiKey);
+    const signal = await buildSignal(details.website, result.user_ratings_total, result.business_status);
 
     prospects.push({
       companyName: result.name,
-      domain: extractDomain(websiteUrl),
-      websiteUrl,
+      domain: extractDomain(details.website),
+      websiteUrl: details.website,
       // Google Places Text Search doesn't return a structured industry
       // category we can map to our enum reliably; Branch A's Google Places
       // source is scoped to local/SMB discovery, so default accordingly.
@@ -147,8 +175,8 @@ export async function runGooglePlacesSource(query: DiscoveryQuery): Promise<Sour
       source: 'google_places',
       sourceUrl: `https://www.google.com/maps/place/?q=place_id:${result.place_id}`,
       discoveredAt: new Date(),
-      phone: null,
-      address: null,
+      phone: details.phone,
+      address: details.address,
       corroboratingSourceCount: 1,
       signal,
     });

@@ -1,7 +1,7 @@
 import { Prisma, ProspectStatus as PrismaProspectStatus } from '@/lib/generated/prisma/client';
 import { prisma } from '@/common/db/client';
 import { getEffectiveDailyCap } from '@/features/sending/domain-verification-gate';
-import { getTodaysSendCount } from '@/features/sending/daily-send-counter';
+import { reserveDailySendSlot, rollBackDailySendSlot } from '@/features/sending/daily-send-counter';
 import { sendEmail } from '@/features/sending/resend.client';
 import { renderFollowupTemplate } from '@/features/followups/followup-templates';
 import type { FollowupTouchNumber } from '@/features/followups/followup-templates';
@@ -9,8 +9,8 @@ import { signalSchema } from '@/features/prospects/prospect.types';
 
 // Stage 4 follow-up scheduler. Reuses the exact same send mechanism as
 // send-queue.service.ts (`sendEmail` from resend.client.ts) and the exact
-// same daily-cap gate (`getEffectiveDailyCap()`/`getTodaysSendCount()`,
-// re-checked fresh immediately before every individual send, never cached
+// same daily-cap gate (`getEffectiveDailyCap()`/`reserveDailySendSlot()`,
+// re-reserved fresh immediately before every individual send, never cached
 // across the batch) - a follow-up send is still a send, so it must never be
 // able to blow through the cap via a separate, weaker code path.
 
@@ -145,11 +145,13 @@ async function attemptFollowupSend(
   nextStatus: PrismaProspectStatus
 ): Promise<FollowupOutcome> {
   if (!candidate.contactEmail) {
+    await rollBackDailySendSlot();
     return { prospectId: candidate.id, outcome: 'failed', reason: 'prospect has no contact email on file' };
   }
 
   const signalResult = signalSchema.safeParse(candidate.signal);
   if (!signalResult.success) {
+    await rollBackDailySendSlot();
     return { prospectId: candidate.id, outcome: 'failed', reason: 'prospect has no valid signal on file' };
   }
 
@@ -160,6 +162,7 @@ async function attemptFollowupSend(
     signal: signalResult.data,
   });
   if (!rendered.ok) {
+    await rollBackDailySendSlot();
     return { prospectId: candidate.id, outcome: 'failed', reason: rendered.reasons.join('; ') };
   }
 
@@ -180,6 +183,7 @@ async function attemptFollowupSend(
     // Lost the race: a reply arrived (status is no longer what we read it
     // as), doNotContact flipped true, or a concurrent scheduler run already
     // claimed this prospect. Fail closed - never send.
+    await rollBackDailySendSlot();
     return { prospectId: candidate.id, outcome: 'skipped_not_eligible' };
   }
 
@@ -198,6 +202,8 @@ async function attemptFollowupSend(
     // atomic claim already moved status to `replied`, that claim's WHERE no
     // longer matches `nextStatus`, so this rollback becomes a no-op instead
     // of silently overwriting the reply back to the pre-follow-up status.
+    // The reserved daily-send-cap slot is rolled back too.
+    await rollBackDailySendSlot();
     await prisma.prospect.updateMany({
       where: { id: candidate.id, status: nextStatus },
       data: {
@@ -266,8 +272,11 @@ export async function runFollowupScheduler(limit: number = FOLLOWUP_BATCH_SIZE):
       continue;
     }
 
-    const sentToday = await getTodaysSendCount();
-    if (sentToday >= getEffectiveDailyCap()) {
+    // Atomically reserves a slot against the shared daily cap - see the doc
+    // comment on `reserveDailySendSlot` in daily-send-counter.ts.
+    // `attemptFollowupSend` rolls this back on every path that doesn't end
+    // in a real send.
+    if (!(await reserveDailySendSlot(getEffectiveDailyCap()))) {
       capReached = true;
       outcomes.push({ prospectId: candidate.id, outcome: 'skipped_cap' });
       continue;

@@ -119,4 +119,31 @@ describe('fetchSafely', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(mockLookup).toHaveBeenCalledTimes(2);
   });
+
+  // Regression coverage: `fetch()` here used to have no try/catch at all, so
+  // a network error or a hung/slow target didn't degrade to null the way
+  // this function's own doc comment promises - it just threw (or, with no
+  // timeout on the fetch call either, never resolved at all). Confirmed live
+  // 2026-08-22: a discovery run got permanently stuck signal-checking a
+  // single slow business website, with zero further progress or error.
+  it('returns null (not a thrown error) when the fetch call itself rejects, e.g. a timeout', async () => {
+    mockLookup.mockResolvedValue({ address: '93.184.216.34', family: 4 });
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValue(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchSafely('https://slow.example.com')).resolves.toBeNull();
+  });
+
+  it('passes an AbortSignal to fetch so a hung target does not stall the caller forever', async () => {
+    mockLookup.mockResolvedValue({ address: '93.184.216.34', family: 4 });
+    const fetchMock = vi.fn().mockResolvedValue({ status: 200, ok: true, text: () => Promise.resolve('ok') });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchSafely('https://example.com');
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
 });

@@ -39,10 +39,18 @@ function currentYearMonth(): string {
 async function reserveHunterQuota(): Promise<boolean> {
   const yearMonth = currentYearMonth();
 
-  await prisma.apiUsageCounter.upsert({
-    where: { source_yearMonth: { source: USAGE_SOURCE_KEY, yearMonth } },
-    create: { source: USAGE_SOURCE_KEY, yearMonth, count: 0 },
-    update: {},
+  // `createMany` + `skipDuplicates`, NOT `upsert` - `upsert` is
+  // create-then-update under the hood and is not itself safe against a
+  // genuine concurrent burst of callers racing to create the same row (one
+  // loses and throws a raw unique-constraint error instead of falling back
+  // to the update); verified live via daily-send-counter.ts's identical
+  // fix, caught by a real concurrent-load test against Postgres.
+  // `createMany`+`skipDuplicates` compiles to `INSERT ... ON CONFLICT DO
+  // NOTHING` on Postgres - a single atomic statement, safe at any
+  // concurrency level.
+  await prisma.apiUsageCounter.createMany({
+    data: [{ source: USAGE_SOURCE_KEY, yearMonth, count: 0 }],
+    skipDuplicates: true,
   });
 
   const reserved = await prisma.apiUsageCounter.updateMany({

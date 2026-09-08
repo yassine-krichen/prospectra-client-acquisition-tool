@@ -1,6 +1,7 @@
 import type { DiscoveryRun, Prisma } from '@/lib/generated/prisma/client';
 import { env } from '@/common/config/env';
 import { prisma } from '@/common/db/client';
+import { mapInBatches } from '@/common/async/map-in-batches';
 import { discoveryQuerySchema, type DiscoveredProspect, type DiscoveryQuery, type SourceResult } from '@/features/discovery/discovery.types';
 import { DISCOVERY_SOURCES } from '@/features/discovery/discovery-source-registry';
 import { normalizeAddress, normalizeCompanyName, normalizePhone } from '@/features/discovery/normalize-contact-info';
@@ -71,10 +72,39 @@ export interface DiscoveryRunSummary {
   discardedThinProspects: number;
 }
 
+// Optional step-by-step narration of a run, for the dashboard's streaming
+// console panel (app/api/pipeline/discover/route.ts, discovery-trigger-form.tsx)
+// - a plain callback rather than an event emitter/async generator so
+// `runDiscovery` stays a normal async function callable exactly as before
+// (the cron routes never pass one) with progress reporting as a strictly
+// additive, zero-cost-when-unused concern.
+export interface DiscoveryProgressEvent {
+  level: 'info' | 'success' | 'warn';
+  message: string;
+}
+export type DiscoveryProgressReporter = (event: DiscoveryProgressEvent) => void;
+
+// A broad run can easily produce thousands of prospects (confirmed live
+// 2026-08-30: 2,598 in one run), and every enricher below fetches each
+// prospect's website - a bare `Promise.all` over all of them at once used
+// to fire that many simultaneous outbound requests with zero cap. Batched
+// via `mapInBatches` instead, same fix and same reasoning as
+// `ELEMENT_MAPPING_CONCURRENCY` in overpass.source.ts.
+const ENRICHMENT_CONCURRENCY = 10;
+
 // Maps each registry source key to the function that actually runs it.
 // Built once here rather than duplicating a giant if/else per branch - see
-// `runDiscovery`'s loop over `DISCOVERY_SOURCES`.
-const SOURCE_RUNNERS: Record<string, (query: DiscoveryQuery) => Promise<SourceResult>> = {
+// `runDiscovery`'s loop over `DISCOVERY_SOURCES`. The optional second
+// parameter exists for `runOverpassSource` (the one source whose result set
+// can run into the thousands of elements - see its own doc comment) to
+// report per-batch progress; every other runner here just ignores it, which
+// TypeScript allows without each of them needing to declare an unused
+// parameter (a function taking fewer parameters satisfies a type expecting
+// more, since JS ignores excess call-site arguments).
+const SOURCE_RUNNERS: Record<
+  string,
+  (query: DiscoveryQuery, onElementProgress?: (message: string) => void) => Promise<SourceResult>
+> = {
   google_places: runGooglePlacesSource,
   yellowpages: runYellowPagesSource,
   overpass: runOverpassSource,
@@ -393,11 +423,18 @@ export async function persistProspect(
  * reported in `sources` as skipped with reason `'disabled for this run'`
  * rather than being called at all. When omitted (as the cron route always
  * omits it), every source for the branch runs, preserving prior behavior.
+ *
+ * `onProgress`, when provided, is called synchronously at each meaningful
+ * step (starting a source, a source's outcome, an enricher's outcome,
+ * dedup, each individual persist) - see `app/api/pipeline/discover/route.ts`,
+ * the only caller that passes one, for how these become a live console
+ * stream in the dashboard. Every other caller (both cron routes) omits it.
  */
 export async function runDiscovery(
   input: unknown,
   branch: DiscoveryBranch = 'a',
-  enabledSources?: string[]
+  enabledSources?: string[],
+  onProgress?: DiscoveryProgressReporter
 ): Promise<DiscoveryRunSummary> {
   const query = discoveryQuerySchema.parse(input);
 
@@ -405,21 +442,33 @@ export async function runDiscovery(
     (source) => source.branch !== null && (branch === 'both' || source.branch === branch)
   );
 
+  onProgress?.({
+    level: 'info',
+    message: `Starting discovery: category "${query.category}", geography "${query.geography}", branch ${branch}`,
+  });
+
   const sources: SourceRunSummary[] = [];
   let allProspects: DiscoveredProspect[] = [];
 
   for (const { key } of branchSources) {
     if (enabledSources !== undefined && !enabledSources.includes(key)) {
       sources.push({ source: key, ran: false, reason: 'disabled for this run', count: 0 });
+      onProgress?.({ level: 'info', message: `${key}: skipped (disabled for this run)` });
       continue;
     }
 
-    const result = await SOURCE_RUNNERS[key](query);
+    onProgress?.({ level: 'info', message: `${key}: running…` });
+    const result = await SOURCE_RUNNERS[key](query, (message) => onProgress?.({ level: 'info', message: `${key}: ${message}` }));
     if (result.ok) {
       sources.push({ source: key, ran: true, count: result.prospects.length, reason: result.degradedReason });
       allProspects = allProspects.concat(result.prospects);
+      onProgress?.({ level: 'success', message: `${key}: found ${result.prospects.length} prospect(s)` });
+      if (result.degradedReason) {
+        onProgress?.({ level: 'warn', message: `${key}: ${result.degradedReason}` });
+      }
     } else {
       sources.push({ source: key, ran: false, reason: result.reason, count: 0 });
+      onProgress?.({ level: 'warn', message: `${key}: skipped - ${result.reason}` });
     }
   }
 
@@ -464,14 +513,23 @@ export async function runDiscovery(
   for (const enricher of enrichers) {
     if (!enricher.configured) {
       sources.push({ source: enricher.source, ran: false, reason: enricher.reason, count: 0 });
+      onProgress?.({ level: 'info', message: `${enricher.source}: skipped - ${enricher.reason}` });
       continue;
     }
 
-    const results = await Promise.all(enrichedProspects.map(enricher.enrich));
-    sources.push({ source: enricher.source, ran: true, count: results.filter((result) => result.enriched).length });
+    onProgress?.({ level: 'info', message: `${enricher.source}: enriching ${enrichedProspects.length} prospect(s)…` });
+    const results = await mapInBatches(enrichedProspects, ENRICHMENT_CONCURRENCY, enricher.enrich, (processed, total) => {
+      if (total > ENRICHMENT_CONCURRENCY) {
+        onProgress?.({ level: 'info', message: `${enricher.source}: enriched ${processed}/${total}` });
+      }
+    });
+    const upgradedCount = results.filter((result) => result.enriched).length;
+    sources.push({ source: enricher.source, ran: true, count: upgradedCount });
+    onProgress?.({ level: 'success', message: `${enricher.source}: strengthened ${upgradedCount} signal(s)` });
     enrichedProspects = results.map((result) => result.prospect);
   }
 
+  onProgress?.({ level: 'info', message: `Deduplicating ${enrichedProspects.length} raw result(s)…` });
   const deduped = dedupeProspects(enrichedProspects);
 
   // Deliberately filtered AFTER the full enrichment chain, not before: every
@@ -485,14 +543,26 @@ export async function runDiscovery(
   const actionable = deduped.filter((prospect) => !isThinProspect(prospect));
   const discardedThinProspects = deduped.length - actionable.length;
 
+  onProgress?.({
+    level: 'info',
+    message: `${deduped.length} unique prospect(s) after dedup - saving ${actionable.length} actionable one(s), discarding ${discardedThinProspects} with no usable info`,
+  });
+
   let inserted = 0;
   let updated = 0;
   let skippedDoNotContact = 0;
   for (const prospect of actionable) {
     const outcome = await persistProspect(prospect, query);
-    if (outcome === 'inserted') inserted += 1;
-    else if (outcome === 'updated') updated += 1;
-    else skippedDoNotContact += 1;
+    if (outcome === 'inserted') {
+      inserted += 1;
+      onProgress?.({ level: 'success', message: `Inserted: ${prospect.companyName}` });
+    } else if (outcome === 'updated') {
+      updated += 1;
+      onProgress?.({ level: 'info', message: `Updated: ${prospect.companyName}` });
+    } else {
+      skippedDoNotContact += 1;
+      onProgress?.({ level: 'warn', message: `Skipped (do-not-contact): ${prospect.companyName}` });
+    }
   }
 
   const summary: DiscoveryRunSummary = {
@@ -505,6 +575,11 @@ export async function runDiscovery(
     skippedDoNotContact,
     discardedThinProspects,
   };
+
+  onProgress?.({
+    level: 'success',
+    message: `Done: ${summary.totalFound} found, ${summary.inserted} inserted, ${summary.updated} updated, ${summary.skippedDoNotContact} skipped (do-not-contact)`,
+  });
 
   // Fire-and-record, not fire-and-forget: awaited so a run's history is
   // guaranteed persisted before the caller (cron or dashboard) sees success,

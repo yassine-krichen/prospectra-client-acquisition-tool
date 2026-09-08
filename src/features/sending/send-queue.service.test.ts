@@ -38,8 +38,32 @@ vi.mock('@/features/sending/domain-verification-gate', () => ({
   getEffectiveDailyCap: getEffectiveDailyCapMock,
 }));
 
-const getTodaysSendCountMock = vi.fn();
-vi.mock('@/features/sending/daily-send-counter', () => ({ getTodaysSendCount: getTodaysSendCountMock }));
+// Models `reserveDailySendSlot`'s real atomic-counter semantics closely
+// enough for an orchestration test: `dailySendState.reservedCount` stands in
+// for the row `ApiUsageCounter`-style atomicity actually protects in
+// production (see daily-send-counter.ts) - a test sets it to simulate "N
+// already reserved today" the same way it used to seed `sentSoFar` for the
+// old `getTodaysSendCount` mock.
+const { dailySendState, reserveDailySendSlotMock, rollBackDailySendSlotMock } = vi.hoisted(() => {
+  const state = { reservedCount: 0 };
+  return {
+    dailySendState: state,
+    reserveDailySendSlotMock: vi.fn(async (cap: number) => {
+      if (state.reservedCount < cap) {
+        state.reservedCount += 1;
+        return true;
+      }
+      return false;
+    }),
+    rollBackDailySendSlotMock: vi.fn(async () => {
+      state.reservedCount = Math.max(0, state.reservedCount - 1);
+    }),
+  };
+});
+vi.mock('@/features/sending/daily-send-counter', () => ({
+  reserveDailySendSlot: reserveDailySendSlotMock,
+  rollBackDailySendSlot: rollBackDailySendSlotMock,
+}));
 
 const sendEmailMock = vi.fn();
 vi.mock('@/features/sending/resend.client', () => ({ sendEmail: sendEmailMock }));
@@ -91,7 +115,7 @@ beforeEach(() => {
   findUniqueDraftMock.mockResolvedValue(null);
   updateProspectMock.mockResolvedValue({});
   getEffectiveDailyCapMock.mockReturnValue(10);
-  getTodaysSendCountMock.mockResolvedValue(0);
+  dailySendState.reservedCount = 0;
   sendEmailMock.mockResolvedValue({ ok: true, id: 'resend-message-id' });
 });
 
@@ -133,7 +157,6 @@ describe('approveDrafts do-not-contact enforcement', () => {
 
   it('does not let a do-not-contact skip count against the daily cap', async () => {
     getEffectiveDailyCapMock.mockReturnValue(1);
-    getTodaysSendCountMock.mockResolvedValue(0);
     findManyDraftMock.mockResolvedValue([
       buildDraftRow({ id: 'draft-dnc', priorityScore: 2, prospect: { doNotContact: true } }),
       buildDraftRow({ id: 'draft-sendable', priorityScore: 1, prospect: { doNotContact: false } }),
@@ -149,15 +172,10 @@ describe('approveDrafts do-not-contact enforcement', () => {
 });
 
 describe('approveDrafts daily cap enforcement', () => {
-  it('re-reads the daily send count before every individual send: a batch of 3 with 1 slot of cap headroom sends exactly 1 and skips the rest as skipped_cap', async () => {
+  it('re-reserves a slot before every individual send: a batch of 3 with 1 slot of cap headroom sends exactly 1 and skips the rest as skipped_cap', async () => {
     const CAP = 3;
-    let sentSoFar = CAP - 1; // 2 already sent today, 1 slot of headroom left
+    dailySendState.reservedCount = CAP - 1; // 2 already reserved/sent today, 1 slot of headroom left
     getEffectiveDailyCapMock.mockReturnValue(CAP);
-    getTodaysSendCountMock.mockImplementation(async () => sentSoFar);
-    sendEmailMock.mockImplementation(async () => {
-      sentSoFar += 1; // reflects the send that just "happened"
-      return { ok: true, id: 'resend-message-id' };
-    });
 
     findManyDraftMock.mockResolvedValue([
       buildDraftRow({ id: 'draft-a', priorityScore: 3 }),
@@ -167,10 +185,10 @@ describe('approveDrafts daily cap enforcement', () => {
 
     const results = await approveDrafts([{ draftId: 'draft-a' }, { draftId: 'draft-b' }, { draftId: 'draft-c' }]);
 
-    // A "computed once at batch start" regression would see sentSoFar=2 < 3
-    // for every iteration (since it would never re-read the count after a
-    // send) and would send all 3 instead of 1 - this assertion on the exact
-    // call count is what would catch that regression.
+    // A "computed/reserved once at batch start" regression would never
+    // re-reserve after the first send and would send all 3 instead of 1 -
+    // this assertion on the exact call count is what would catch that
+    // regression.
     expect(sendEmailMock).toHaveBeenCalledTimes(1);
     expect(results).toEqual([
       { draftId: 'draft-a', outcome: 'sent' },
@@ -181,7 +199,6 @@ describe('approveDrafts daily cap enforcement', () => {
 
   it('continues reporting every remaining item as skipped_cap once the cap is hit, rather than stopping the batch silently', async () => {
     getEffectiveDailyCapMock.mockReturnValue(0);
-    getTodaysSendCountMock.mockResolvedValue(0);
     findManyDraftMock.mockResolvedValue([
       buildDraftRow({ id: 'draft-a', priorityScore: 3 }),
       buildDraftRow({ id: 'draft-b', priorityScore: 2 }),
@@ -197,13 +214,7 @@ describe('approveDrafts daily cap enforcement', () => {
 
   it('does not count a do-not-contact skip against the cap even when interleaved with sendable items, and stops sending at exactly the cap', async () => {
     const CAP = 2;
-    let sentSoFar = 0;
     getEffectiveDailyCapMock.mockReturnValue(CAP);
-    getTodaysSendCountMock.mockImplementation(async () => sentSoFar);
-    sendEmailMock.mockImplementation(async () => {
-      sentSoFar += 1;
-      return { ok: true, id: 'resend-message-id' };
-    });
 
     findManyDraftMock.mockResolvedValue([
       buildDraftRow({ id: 'draft-a', priorityScore: 4 }),
@@ -275,7 +286,7 @@ describe('approveDrafts unknown drafts', () => {
 });
 
 describe('approveDrafts missing contact email', () => {
-  it('reports failed without ever calling sendEmail when the prospect has no contact email on file', async () => {
+  it('reports failed without ever calling sendEmail when the prospect has no contact email on file, and rolls back the reserved daily-cap slot since no send happened', async () => {
     findManyDraftMock.mockResolvedValue([buildDraftRow({ id: 'draft-1', prospect: { contactEmail: null } })]);
 
     const results = await approveDrafts([{ draftId: 'draft-1' }]);
@@ -284,6 +295,8 @@ describe('approveDrafts missing contact email', () => {
       { draftId: 'draft-1', outcome: 'failed', reason: 'prospect has no contact email on file' },
     ]);
     expect(sendEmailMock).not.toHaveBeenCalled();
+    expect(reserveDailySendSlotMock).toHaveBeenCalledTimes(1);
+    expect(rollBackDailySendSlotMock).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -310,6 +323,19 @@ describe('approveDrafts send outcome persistence - the core safety boundary', ()
       },
     });
     expect(updateProspectMock).not.toHaveBeenCalled();
+    // A failed send never happened, so the reserved daily-cap slot must be
+    // given back for a later legitimate retry to use.
+    expect(rollBackDailySendSlotMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT roll back the reserved daily-cap slot once a send actually succeeds', async () => {
+    findManyDraftMock.mockResolvedValue([buildDraftRow({ id: 'draft-1' })]);
+
+    const results = await approveDrafts([{ draftId: 'draft-1' }]);
+
+    expect(results).toEqual([{ draftId: 'draft-1', outcome: 'sent' }]);
+    expect(reserveDailySendSlotMock).toHaveBeenCalledTimes(1);
+    expect(rollBackDailySendSlotMock).not.toHaveBeenCalled();
   });
 
   it('clears a previously recorded lastSendFailure once a later approval of the same draft succeeds', async () => {
@@ -451,7 +477,6 @@ describe('approveDrafts already-approved handling (batch snapshot)', () => {
 
   it('does not let an already-approved item consume daily cap headroom or block later legitimate items', async () => {
     getEffectiveDailyCapMock.mockReturnValue(1);
-    getTodaysSendCountMock.mockResolvedValue(0);
     findManyDraftMock.mockResolvedValue([
       buildDraftRow({ id: 'draft-already', priorityScore: 2, approved: true }),
       buildDraftRow({ id: 'draft-sendable', priorityScore: 1 }),
@@ -554,7 +579,7 @@ describe('approveDrafts doNotContact freshness at claim time', () => {
     expect(sendEmailMock).not.toHaveBeenCalled();
   });
 
-  it('falls back to skipped_already_approved when the claim fails but doNotContact is still false on re-read', async () => {
+  it('falls back to skipped_already_approved when the claim fails but doNotContact is still false on re-read, and rolls back the reserved daily-cap slot', async () => {
     findManyDraftMock.mockResolvedValue([buildDraftRow({ id: 'draft-1' })]);
     updateManyDraftMock.mockResolvedValue({ count: 0 });
     findUniqueDraftMock.mockResolvedValue({ prospect: { doNotContact: false } });
@@ -563,5 +588,6 @@ describe('approveDrafts doNotContact freshness at claim time', () => {
 
     expect(results).toEqual([{ draftId: 'draft-1', outcome: 'skipped_already_approved' }]);
     expect(sendEmailMock).not.toHaveBeenCalled();
+    expect(rollBackDailySendSlotMock).toHaveBeenCalledTimes(1);
   });
 });

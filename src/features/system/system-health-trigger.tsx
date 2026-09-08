@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { SystemHealthPanel } from '@/features/system/system-health-panel';
 import type { SystemHealth } from '@/features/system/system-health.service';
 import { deriveOverallStatus, type OverallStatus } from '@/features/system/derive-overall-status';
+import { toastError } from '@/lib/toast';
 
 const STATUS_DOT_CLASS: Record<OverallStatus, string> = {
   ok: 'bg-emerald-500',
@@ -36,7 +37,14 @@ export function SystemHealthTrigger(): React.JSX.Element {
         if (!cancelled) setHealth(data);
       })
       .catch(() => {
-        if (!cancelled) setError('Could not load system health.');
+        if (!cancelled) {
+          setError('Could not load system health.');
+          // This fetch also fires in the background before the dialog is
+          // ever opened (to keep the sidebar status dot accurate) - only
+          // toast when the user is actually looking at the panel, not on
+          // every silent background check.
+          if (open) toastError('Could not load system health.');
+        }
       });
 
     return () => {

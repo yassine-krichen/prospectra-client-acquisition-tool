@@ -204,7 +204,21 @@ model Prospect {
   // to enrich/draft/send).
   favorite Boolean @default(false)
 
+  // Dashboard-only "has a human opened this prospect's detail dialog"
+  // marker, set by `POST /api/prospects/[id]/open` whenever the
+  // prospect-detail dialog is opened - tracks the most recent open only,
+  // not a full history. `lastOpenedByNickname` is a denormalized copy of
+  // User.nickname rather than a relation, matching how session tokens
+  // already carry nickname directly instead of joining to User.
+  lastOpenedAt         DateTime?
+  lastOpenedByNickname String?
+
   drafts         Draft[]
+  // Free-text notes left by whichever account is looking at this prospect -
+  // see the "Comments" section in prospect-detail-dialog.tsx. `authorNickname`
+  // on `ProspectComment` is a denormalized copy of `User.nickname`, same
+  // convention as `lastOpenedByNickname` above.
+  comments       ProspectComment[]
   activeDraftId  String?
   sentAt         DateTime?
   lastFollowupAt DateTime?
@@ -230,6 +244,23 @@ model Prospect {
   // future optional LLM-suggestion overlay on top of the rules engine, not
   // built now.
   suggestedServices Json @default("[]")
+}
+
+// A free-text note left on a Prospect by whichever account is viewing it -
+// visible to both accounts (Noel/EvilWithin), not just the author. Full
+// history, not a single "last comment" field (unlike `Prospect.lastOpenedAt`
+// above) - multiple comments from either account should all remain visible.
+model ProspectComment {
+  id         String   @id @default(cuid())
+  prospect   Prospect @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  prospectId String
+  body       String
+  // Denormalized copy of User.nickname, not a relation - see the comment on
+  // Prospect.comments above.
+  authorNickname String
+  createdAt      DateTime @default(now())
+
+  @@index([prospectId])
 }
 
 model Draft {
@@ -297,6 +328,28 @@ model ApiUsageCounter {
   count     Int    @default(0)
 
   @@unique([source, yearMonth])
+}
+
+// Atomic reservation counter enforcing the daily send cap
+// (`getEffectiveDailyCap()`) - see `reserveDailySendSlot`/
+// `rollBackDailySendSlot` in daily-send-counter.ts. Deliberately separate
+// from `getTodaysSendCount()`'s own count (derived from real
+// `Prospect.sentAt`/`lastFollowupAt`/`Job.lastRetentionTouchAt` timestamps,
+// which stays the source of truth for DISPLAY - e.g. the queue page's "N of
+// M sends used today" banner): that derived count can't be checked and
+// incremented in a single atomic statement the way this dedicated counter
+// can (Postgres serializes concurrent updates to the SAME row, which is
+// exactly what closes the race two derived-count reads can't), the same
+// reasoning `ApiUsageCounter` above already relies on for Hunter/BuiltWith/
+// PeopleDataLabs. `date` is `YYYY-MM-DD` (UTC calendar day), not a
+// `DateTime`, so the uniqueness constraint is a simple string equality
+// rather than a range comparison.
+model DailySendCounter {
+  id    String @id @default(cuid())
+  date  String
+  count Int    @default(0)
+
+  @@unique([date])
 }
 
 // Shared cooldown record for the claude-web-bridge sibling app: whenever ANY

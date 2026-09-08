@@ -26,8 +26,29 @@ vi.mock('@/features/sending/domain-verification-gate', () => ({
   getEffectiveDailyCap: getEffectiveDailyCapMock,
 }));
 
-const getTodaysSendCountMock = vi.fn();
-vi.mock('@/features/sending/daily-send-counter', () => ({ getTodaysSendCount: getTodaysSendCountMock }));
+// Models `reserveDailySendSlot`'s real atomic-counter semantics closely
+// enough for an orchestration test - see the identical mock in
+// send-queue.service.test.ts for the full rationale.
+const { dailySendState, reserveDailySendSlotMock, rollBackDailySendSlotMock } = vi.hoisted(() => {
+  const state = { reservedCount: 0 };
+  return {
+    dailySendState: state,
+    reserveDailySendSlotMock: vi.fn(async (cap: number) => {
+      if (state.reservedCount < cap) {
+        state.reservedCount += 1;
+        return true;
+      }
+      return false;
+    }),
+    rollBackDailySendSlotMock: vi.fn(async () => {
+      state.reservedCount = Math.max(0, state.reservedCount - 1);
+    }),
+  };
+});
+vi.mock('@/features/sending/daily-send-counter', () => ({
+  reserveDailySendSlot: reserveDailySendSlotMock,
+  rollBackDailySendSlot: rollBackDailySendSlotMock,
+}));
 
 const sendEmailMock = vi.fn();
 vi.mock('@/features/sending/resend.client', () => ({ sendEmail: sendEmailMock }));
@@ -81,7 +102,7 @@ beforeEach(() => {
   updateManyJobMock.mockResolvedValue({ count: 1 });
   findFirstJobMock.mockResolvedValue(null);
   getEffectiveDailyCapMock.mockReturnValue(10);
-  getTodaysSendCountMock.mockResolvedValue(0);
+  dailySendState.reservedCount = 0;
   sendEmailMock.mockResolvedValue({ ok: true, id: 'resend-message-id' });
 });
 
@@ -282,6 +303,7 @@ describe('runRetentionScheduler race safety', () => {
 
     expect(outcomes).toEqual([{ jobId: candidate.id, outcome: 'skipped_not_eligible' }]);
     expect(sendEmailMock).not.toHaveBeenCalled();
+    expect(rollBackDailySendSlotMock).toHaveBeenCalledTimes(1);
   });
 
   it('when two concurrent scheduler runs race for the same Job touch, only one atomic claim can win, and the loser never sends', async () => {
@@ -298,15 +320,10 @@ describe('runRetentionScheduler race safety', () => {
 });
 
 describe('runRetentionScheduler daily cap enforcement', () => {
-  it('re-reads the daily send count before every individual send: with 1 slot of headroom in a batch of 2 due Jobs, sends exactly 1 and skips the rest as skipped_cap', async () => {
+  it('re-reserves a slot before every individual send: with 1 slot of headroom in a batch of 2 due Jobs, sends exactly 1 and skips the rest as skipped_cap', async () => {
     const CAP = 3;
-    let sentSoFar = CAP - 1;
+    dailySendState.reservedCount = CAP - 1;
     getEffectiveDailyCapMock.mockReturnValue(CAP);
-    getTodaysSendCountMock.mockImplementation(async () => sentSoFar);
-    sendEmailMock.mockImplementation(async () => {
-      sentSoFar += 1;
-      return { ok: true, id: 'resend-message-id' };
-    });
 
     const candidateA = buildCandidate({ id: 'job-a', deliveredAt: daysAgo(3), retentionTouchCount: 0 });
     const candidateB = buildCandidate({ id: 'job-b', deliveredAt: daysAgo(3), retentionTouchCount: 0 });
@@ -323,7 +340,6 @@ describe('runRetentionScheduler daily cap enforcement', () => {
 
   it('reports every remaining due Job as skipped_cap once the cap is already at/above the limit, without ever calling sendEmail or attempting a claim', async () => {
     getEffectiveDailyCapMock.mockReturnValue(0);
-    getTodaysSendCountMock.mockResolvedValue(0);
     const candidateA = buildCandidate({ id: 'job-a', deliveredAt: daysAgo(3), retentionTouchCount: 0 });
     const candidateB = buildCandidate({ id: 'job-b', deliveredAt: daysAgo(3), retentionTouchCount: 0 });
     findManyJobMock.mockResolvedValue([candidateA, candidateB]);
@@ -346,6 +362,7 @@ describe('runRetentionScheduler missing contact info', () => {
     expect(outcomes).toEqual([{ jobId: candidate.id, outcome: 'failed', reason: 'client has no contact email on file' }]);
     expect(updateManyJobMock).not.toHaveBeenCalled();
     expect(sendEmailMock).not.toHaveBeenCalled();
+    expect(rollBackDailySendSlotMock).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -362,5 +379,17 @@ describe('runRetentionScheduler send failure rollback', () => {
       where: { id: candidate.id, lastRetentionTouchAt: expect.any(Date), retentionTouchCount: 1 },
       data: { lastRetentionTouchAt: null, retentionTouchCount: 0, statusHistory: candidate.statusHistory },
     });
+    expect(rollBackDailySendSlotMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not roll back the reserved daily-cap slot when sendEmail actually succeeds', async () => {
+    const candidate = buildCandidate({ id: 'job-a', deliveredAt: daysAgo(3), retentionTouchCount: 0 });
+    findManyJobMock.mockResolvedValue([candidate]);
+
+    const outcomes = await runRetentionScheduler();
+
+    expect(outcomes).toEqual([{ jobId: 'job-a', outcome: 'sent', touchNumber: 1 }]);
+    expect(reserveDailySendSlotMock).toHaveBeenCalledTimes(1);
+    expect(rollBackDailySendSlotMock).not.toHaveBeenCalled();
   });
 });

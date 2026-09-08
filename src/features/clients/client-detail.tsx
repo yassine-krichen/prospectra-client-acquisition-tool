@@ -91,7 +91,10 @@ export function ClientDetail({ clientId }: ClientDetailProps): React.JSX.Element
         setError(null);
       })
       .catch(() => {
-        if (!cancelled) setError('Failed to load client.');
+        if (!cancelled) {
+          setError('Failed to load client.');
+          toastError('Failed to load client', 'Check your connection and try refreshing.');
+        }
       })
       .finally(() => {
         if (!cancelled) setIsLoading(false);
@@ -134,7 +137,10 @@ export function ClientDetail({ clientId }: ClientDetailProps): React.JSX.Element
   }
 
   if (error || !client) {
-    return <p className="text-destructive p-6 text-sm">{error ?? 'Client not found.'}</p>;
+    // The actual failure reason (if any) was already shown as a toast when
+    // it happened - this is just a neutral "nothing to show" fallback, not
+    // a second error surface.
+    return <p className="text-muted-foreground p-6 text-sm">{error ? 'Failed to load client.' : 'Client not found.'}</p>;
   }
 
   return (

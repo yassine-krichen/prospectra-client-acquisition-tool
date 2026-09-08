@@ -10,7 +10,6 @@ import {
   Loading03Icon,
   UserCircleIcon,
   UnfoldMoreIcon,
-  Alert02Icon,
 } from '@hugeicons/core-free-icons';
 
 import { Button } from '@/components/ui/button';
@@ -19,6 +18,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { KNOWN_USERNAMES, type KnownUsername } from '@/features/auth/known-usernames';
+import { toastError } from '@/lib/toast';
 
 export default function LoginPage(): React.JSX.Element {
   const router = useRouter();
@@ -58,6 +58,7 @@ export default function LoginPage(): React.JSX.Element {
             ? data.error
             : 'That didn\'t work, give it another try.';
         setError(message);
+        toastError('Sign-in failed', message);
         return;
       }
 
@@ -163,13 +164,6 @@ export default function LoginPage(): React.JSX.Element {
                     </button>
                   </div>
                 </div>
-
-                {error ? (
-                  <p className="text-destructive flex items-center gap-1.5 text-sm">
-                    <HugeiconsIcon icon={Alert02Icon} strokeWidth={2} className="size-4 shrink-0" />
-                    {error}
-                  </p>
-                ) : null}
               </div>
             ) : null}
 

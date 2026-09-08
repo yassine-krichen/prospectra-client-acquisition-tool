@@ -1,11 +1,22 @@
 import { z } from 'zod';
 
+import { mapInBatches } from '@/common/async/map-in-batches';
 import { buildNoSignalDetectedFallback, detectWebsiteSignals } from '@/features/discovery/signal-detection';
 import { extractDomain } from '@/features/discovery/normalize-domain';
 import { geocodeToOsmArea, OSM_USER_AGENT } from '@/features/discovery/sources/geocode-nominatim';
 import type { DiscoveredProspect, DiscoveryQuery, SourceResult } from '@/features/discovery/discovery.types';
 
 const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
+
+// A broad category+geography combo easily returns thousands of OSM elements
+// (confirmed live 2026-08-22: "cafe" in "New York" returned 2,595 elements,
+// 1,285 with a website tag) - `mapElementToProspect` fetches each tagged
+// website to check it for signals, and doing that one at a time made a
+// single run take 20+ minutes even after fetchSafely got its own timeout
+// (bounded per-request, not bounded in aggregate). Processed in fixed-size
+// concurrent batches instead - each element still only ever gets fetched by
+// this app once, this just stops waiting for one before starting the next.
+const ELEMENT_MAPPING_CONCURRENCY = 10;
 
 interface OsmTag {
   key: string;
@@ -149,8 +160,18 @@ async function mapElementToProspect(
  * matching elements to prospects. Returns a typed "unavailable" result -
  * rather than throwing - when geocoding or the Overpass request fails, so
  * a bad geography string or a down Overpass instance doesn't crash discovery.
+ *
+ * `onElementProgress`, when provided, is called once per concurrency batch
+ * with a human-readable "checked X/Y" message - a broad category+geography
+ * combo can return thousands of elements (see `ELEMENT_MAPPING_CONCURRENCY`'s
+ * doc comment), and that phase alone can run several minutes, so the
+ * dashboard's console panel (discovery.service.ts's `onProgress`) has
+ * something to show for it instead of one long silent step.
  */
-export async function runOverpassSource(query: DiscoveryQuery): Promise<SourceResult> {
+export async function runOverpassSource(
+  query: DiscoveryQuery,
+  onElementProgress?: (message: string) => void
+): Promise<SourceResult> {
   const area = await geocodeToOsmArea(query.geography);
   if (!area) {
     return { ok: false, reason: 'source unavailable: could not resolve geography to a location' };
@@ -161,10 +182,19 @@ export async function runOverpassSource(query: DiscoveryQuery): Promise<SourceRe
 
   let response: Response;
   try {
+    // Native `fetch` has no default timeout - without an explicit one here,
+    // a slow/overloaded public Overpass instance stalls the whole discovery
+    // run indefinitely rather than degrading (confirmed live 2026-08-22).
+    // The query's own `[timeout:25]` is a server-side hint asking Overpass
+    // to abort ITS processing after 25s - it doesn't bound how long the
+    // client waits for a response, hence this separate client-side timeout,
+    // set a bit longer to give the server a chance to honor its own hint
+    // and respond (even with an error) before this gives up on it too.
     response = await fetch(OVERPASS_URL, {
       method: 'POST',
       headers: { 'User-Agent': OSM_USER_AGENT, 'Content-Type': 'text/plain' },
       body: overpassQuery,
+      signal: AbortSignal.timeout(35_000),
     });
   } catch (error) {
     return {
@@ -182,11 +212,20 @@ export async function runOverpassSource(query: DiscoveryQuery): Promise<SourceRe
     return { ok: false, reason: 'source unavailable: Overpass response did not match the expected shape' };
   }
 
-  const prospects: DiscoveredProspect[] = [];
-  for (const element of parsed.data.elements) {
-    const prospect = await mapElementToProspect(element, query);
-    if (prospect) prospects.push(prospect);
-  }
+  const totalElements = parsed.data.elements.length;
+  onElementProgress?.(`found ${totalElements} OSM element(s), checking each one's website…`);
+
+  let foundSoFar = 0;
+  const mapped = await mapInBatches(
+    parsed.data.elements,
+    ELEMENT_MAPPING_CONCURRENCY,
+    (element) => mapElementToProspect(element, query),
+    (processed, total, batchResults) => {
+      foundSoFar += batchResults.filter((prospect) => prospect !== null).length;
+      onElementProgress?.(`checked ${processed}/${total} element(s), ${foundSoFar} prospect(s) so far`);
+    }
+  );
+  const prospects = mapped.filter((prospect): prospect is DiscoveredProspect => prospect !== null);
 
   return { ok: true, prospects };
 }

@@ -8,8 +8,6 @@ import { HugeiconsIcon } from '@hugeicons/react';
 import {
   Alert02Icon,
   AlertCircleIcon,
-  ArrowDown01Icon,
-  ArrowUp01Icon,
   CheckmarkCircle02Icon,
   Clock01Icon,
   Compass01Icon,
@@ -25,6 +23,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
+import { Command, CommandEmpty, CommandGroup, CommandItem, CommandList } from '@/components/ui/command';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { DataTable } from '@/components/data-table/data-table';
 import { DataTableColumnHeader } from '@/components/data-table/data-table-column-header';
@@ -34,12 +34,12 @@ import { DataTableCursorPagination } from '@/components/data-table/data-table-pa
 import { ProspectDetailDialog } from '@/features/prospects/prospect-detail-dialog';
 import { SignalDetailDialog, type SelectedSignal } from '@/features/prospects/signal-detail-dialog';
 import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
+import { cn } from '@/lib/utils';
 import {
   industrySchema,
   projectFitSchema,
   prospectListItemSchema,
   prospectSourceSchema,
-  prospectStatusSchema,
   signalStrengthSchema,
   signalTypeSchema,
   type Industry,
@@ -58,6 +58,7 @@ import {
   bulkSetProspectsFavorite,
   bulkSetProspectsSeen,
   bulkWinProspects,
+  markProspectOpened,
   setProspectFavorite,
   setProspectSeen,
   type BulkActionResult,
@@ -68,32 +69,33 @@ import {
 // which must not end up in the client bundle.
 type SortField = 'priorityScore' | 'discoveredAt' | 'sentAt';
 
-const SORT_FIELD_LABELS: Record<SortField, string> = {
-  priorityScore: 'Priority',
-  discoveredAt: 'Discovered',
-  sentAt: 'Sent',
-};
-
 const listProspectsResponseSchema = z.object({
   prospects: z.array(prospectListItemSchema),
   nextCursor: z.string().nullable(),
 });
 
+const listReasonsResponseSchema = z.object({ reasons: z.array(z.string()) });
+
 // Sentinel used by the filter `Select`s in place of an empty string - Radix
 // `Select.Item` requires a non-empty `value`.
 const ALL = 'all';
+
+// localStorage key for the "last opened prospect" row highlight - see
+// `lastOpenedProspectId`/`openProspectDialog` below.
+const LAST_OPENED_PROSPECT_STORAGE_KEY = 'biz-scraper:last-opened-prospect-id';
 
 interface FiltersState {
   source: ProspectSource | typeof ALL;
   signalType: SignalType | typeof ALL;
   signalStrength: SignalStrength | typeof ALL;
+  // Free-text substring match against the signal's description (the
+  // "Reason" half of the Signal : Reason column) - not an enum like
+  // signalType/signalStrength, so a plain string rather than ALL-sentinel'd.
+  reason: string;
   industry: Industry | typeof ALL;
   projectFit: ProjectFit | typeof ALL;
-  status: ProspectStatus | typeof ALL;
-  priorityScoreMin: string;
-  priorityScoreMax: string;
-  hasVerifiedEmail: typeof ALL | 'true' | 'false';
-  hasDraftFailure: typeof ALL | 'true' | 'false';
+  hasDomain: typeof ALL | 'true' | 'false';
+  opened: typeof ALL | 'true' | 'false';
   // Client-side-only convenience filter - translates to `seen=false` on the
   // wire (see buildQueryParams). Kept alongside the server-backed filters
   // above rather than as separate component state so `resetFilters`/the
@@ -104,17 +106,18 @@ interface FiltersState {
   favoriteOnly: boolean;
 }
 
+// Default view hides Low/Medium-signal prospects - see the note rendered
+// above the filter bar. Still overridable via the Signal strength filter or
+// "Clear filters" (which returns here, not to ALL - this is the default).
 const DEFAULT_FILTERS: FiltersState = {
   source: ALL,
   signalType: ALL,
-  signalStrength: ALL,
+  signalStrength: 'strong',
+  reason: '',
   industry: ALL,
   projectFit: ALL,
-  status: ALL,
-  priorityScoreMin: '',
-  priorityScoreMax: '',
-  hasVerifiedEmail: ALL,
-  hasDraftFailure: ALL,
+  hasDomain: ALL,
+  opened: ALL,
   hideSeen: false,
   favoriteOnly: false,
 };
@@ -141,13 +144,11 @@ function buildQueryParams(
   if (filters.source !== ALL) params.set('source', filters.source);
   if (filters.signalType !== ALL) params.set('signalType', filters.signalType);
   if (filters.signalStrength !== ALL) params.set('signalStrength', filters.signalStrength);
+  if (filters.reason.trim() !== '') params.set('reason', filters.reason.trim());
   if (filters.industry !== ALL) params.set('industry', filters.industry);
   if (filters.projectFit !== ALL) params.set('projectFit', filters.projectFit);
-  if (filters.status !== ALL) params.set('status', filters.status);
-  if (filters.priorityScoreMin.trim() !== '') params.set('priorityScoreMin', filters.priorityScoreMin);
-  if (filters.priorityScoreMax.trim() !== '') params.set('priorityScoreMax', filters.priorityScoreMax);
-  if (filters.hasVerifiedEmail !== ALL) params.set('hasVerifiedEmail', filters.hasVerifiedEmail);
-  if (filters.hasDraftFailure !== ALL) params.set('hasDraftFailure', filters.hasDraftFailure);
+  if (filters.hasDomain !== ALL) params.set('hasDomain', filters.hasDomain);
+  if (filters.opened !== ALL) params.set('opened', filters.opened);
   if (filters.hideSeen) params.set('seen', 'false');
   if (filters.favoriteOnly) params.set('favorite', 'true');
 
@@ -174,8 +175,31 @@ async function fetchProspects(
   return listProspectsResponseSchema.parse(body);
 }
 
-function formatDate(value: Date | null): string {
-  return value ? value.toLocaleDateString() : 'No Record';
+// Backs the "Reason contains" filter's combobox - the distinct set of
+// `signal.description` values that actually exist right now, so the
+// dropdown suggests real values instead of an editor guessing free text.
+async function fetchReasonOptions(): Promise<string[]> {
+  const response = await fetch('/api/prospects/reasons');
+  if (!response.ok) {
+    throw new Error(`Failed to load reason options (status ${response.status}).`);
+  }
+
+  const body: unknown = await response.json();
+  return listReasonsResponseSchema.parse(body).reasons;
+}
+
+// Replaces the old Status column - a prospect's pipeline status is still
+// used elsewhere (see STATUS_RECOMMENDATION below, which drives the
+// Recommended Action column), just no longer surfaced as its own column or
+// filter here. Calendar-day difference (not a raw 24h-bucket one), so a
+// prospect discovered at 11pm yesterday reads "1 day ago" rather than
+// "Today" just because it's within the last 24 hours.
+function formatDiscovered(discoveredAt: Date): string {
+  const startOfDay = (date: Date): number => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const daysAgo = Math.round((startOfDay(new Date()) - startOfDay(discoveredAt)) / (1000 * 60 * 60 * 24));
+
+  const relative = daysAgo <= 0 ? 'Today' : daysAgo === 1 ? '1 day ago' : `${daysAgo} days ago`;
+  return `${discoveredAt.toLocaleDateString()} · ${relative}`;
 }
 
 // Formats a cents integer as whole dollars, e.g. 150000 -> "1,500". Mirrors
@@ -314,6 +338,26 @@ const RECOMMENDATION_ICON: Record<RecommendationTone, typeof CheckmarkCircle02Ic
 
 function getRecommendation(prospect: ProspectListItem): Recommendation {
   if (isLikelyLowValue(prospect)) return { label: 'Ignore', tone: 'red' };
+  // Every enrichment source (Hunter, People Data Labs, pattern-guess + MX)
+  // requires a domain to search against - `enrichProspect` itself
+  // short-circuits with "prospect has no domain to enrich against" for
+  // these, so recommending "Enrich" here would send a human to click a
+  // button guaranteed to no-op. Common, not an edge case: OpenStreetMap,
+  // Yellow Pages, and Google Places all produce a strong "no website"
+  // signal specifically because the business has none, and both registry
+  // sources (Companies House, Texas Comptroller) never carry a website at
+  // all.
+  if (prospect.status === 'new' && !prospect.domain && !prospect.websiteUrl) {
+    // A domain-less prospect isn't necessarily a dead end - Yellow Pages
+    // and OpenStreetMap (the two sources most likely to produce one) often
+    // still capture a phone number, a real alternate contact channel none
+    // of the enrichment sources need a domain for. Only fall back to "no
+    // path yet" when there's genuinely nothing to act on.
+    if (prospect.phone) {
+      return { label: `Call ${prospect.phone}`, tone: 'green' };
+    }
+    return { label: 'Find website first', tone: 'neutral' };
+  }
   return STATUS_RECOMMENDATION[prospect.status];
 }
 
@@ -344,7 +388,6 @@ export function ProspectsTable(): React.JSX.Element {
   const [prospects, setProspects] = useState<ProspectListItem[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   // Bumped after any action inside the detail dialog succeeds, to
   // re-trigger the load effect below so status/priorityScore/sentAt reflect
   // the change from the server.
@@ -356,6 +399,62 @@ export function ProspectsTable(): React.JSX.Element {
   // Which prospect's signal detail dialog is open, if any - see
   // signal-detail-dialog.tsx.
   const [selectedSignal, setSelectedSignal] = useState<SelectedSignal | null>(null);
+  // The last prospect whose dialog was opened, kept highlighted in the table
+  // after the dialog closes so re-finding it in a long list doesn't mean
+  // re-scanning company names from scratch. Starts `null` (matches the
+  // server-rendered markup) and is hydrated from localStorage in an effect
+  // rather than a lazy useState initializer, so this never diverges from
+  // what was server-rendered during hydration - it's private to this
+  // browser, never shared with or persisted by the server.
+  const [lastOpenedProspectId, setLastOpenedProspectId] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      setLastOpenedProspectId(window.localStorage.getItem(LAST_OPENED_PROSPECT_STORAGE_KEY));
+    } catch {
+      // Private browsing / storage disabled - no highlight, not fatal.
+    }
+  }, []);
+
+  function openProspectDialog(prospectId: string): void {
+    setSelectedProspectId(prospectId);
+    setLastOpenedProspectId(prospectId);
+    try {
+      window.localStorage.setItem(LAST_OPENED_PROSPECT_STORAGE_KEY, prospectId);
+    } catch {
+      // Private browsing / storage disabled - the in-memory state above
+      // still highlights it for the rest of this page view either way.
+    }
+
+    // Records the open server-side for the "Opened" column - who opened it
+    // comes back from the server (the session cookie's nickname), not
+    // something this client component already knows. Best-effort: a failure
+    // here shouldn't block the dialog the user is already looking at.
+    markProspectOpened(prospectId)
+      .then(({ lastOpenedAt, lastOpenedByNickname }) => {
+        setProspects((prev) =>
+          prev.map((p) => (p.id === prospectId ? { ...p, lastOpenedAt, lastOpenedByNickname } : p))
+        );
+      })
+      .catch(() => {
+        // Non-fatal - see the comment above.
+      });
+  }
+
+  // Distinct reason values fetched once for the "Reason contains" combobox
+  // (see ReasonFilterCombobox below) - loaded independently of the
+  // paginated prospects fetch below since it isn't affected by filters/sort/
+  // cursor. Failure just leaves the dropdown empty; free-text substring
+  // filtering (the field's original behavior) still works either way.
+  const [reasonOptions, setReasonOptions] = useState<string[]>([]);
+
+  useEffect(() => {
+    fetchReasonOptions()
+      .then(setReasonOptions)
+      .catch(() => {
+        // Non-fatal - see the comment on `reasonOptions` above.
+      });
+  }, []);
 
   // Bulk-select state - mirrors approval-queue-table.tsx's Set<string>
   // pattern rather than TanStack Table's built-in row-selection feature, for
@@ -372,7 +471,6 @@ export function ProspectsTable(): React.JSX.Element {
   useEffect(() => {
     let cancelled = false;
     setIsLoading(true);
-    setError(null);
 
     fetchProspects(buildQueryParams(filters, sorting, currentCursor, limit))
       .then((result) => {
@@ -386,7 +484,7 @@ export function ProspectsTable(): React.JSX.Element {
         setSelected(new Set());
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError(errorMessage(err));
+        if (!cancelled) toastError('Failed to load prospects', errorMessage(err));
       })
       .finally(() => {
         if (!cancelled) setIsLoading(false);
@@ -475,14 +573,6 @@ export function ProspectsTable(): React.JSX.Element {
     setCursorStack([]);
   }
 
-  function setSortField(field: SortField): void {
-    handleSortingChange([{ id: field, desc: sorting[0]?.desc ?? true }]);
-  }
-
-  function toggleSortDirection(): void {
-    handleSortingChange([{ id: sorting[0]?.id ?? 'discoveredAt', desc: !(sorting[0]?.desc ?? true) }]);
-  }
-
   function goToNextPage(): void {
     if (!nextCursor) return;
     setCursorStack((prev) => [...prev, nextCursor]);
@@ -558,7 +648,7 @@ export function ProspectsTable(): React.JSX.Element {
         accessorKey: 'companyName',
         header: 'Company',
         enableHiding: false,
-        size: 200,
+        size: 140,
         cell: ({ row }) => (
           <span className="flex min-w-0 items-center gap-1.5">
             {!row.original.seen ? (
@@ -571,8 +661,8 @@ export function ProspectsTable(): React.JSX.Element {
             ) : null}
             <button
               type="button"
-              className="min-w-0 truncate text-left text-white underline underline-offset-2"
-              onClick={() => setSelectedProspectId(row.original.id)}
+              className="min-w-0 truncate text-left text-primary underline underline-offset-2 dark:text-white"
+              onClick={() => openProspectDialog(row.original.id)}
             >
               {row.original.companyName}
             </button>
@@ -590,11 +680,55 @@ export function ProspectsTable(): React.JSX.Element {
         ),
       },
       {
+        id: 'opened',
+        header: 'Opened',
+        enableHiding: false,
+        // Compact and placed right after Company (rather than further right,
+        // near Sent/Recommended Action) specifically so it's visible without
+        // horizontal scroll on a typical viewport - see `tableClassName="table-fixed"`
+        // below: every column's `size` is part of a deliberately small total
+        // budget so the table stays within a typical viewport - see the
+        // comment on the Signal column's own `size` for why.
+        size: 95,
+        cell: ({ row }) =>
+          row.original.lastOpenedAt && row.original.lastOpenedByNickname ? (
+            // `whitespace-normal break-words` on every line - without it,
+            // `TableCell`'s default `whitespace-nowrap` lets a long
+            // date/time string visibly bleed past this column's narrow
+            // fixed width into the next column instead of wrapping
+            // (verified live - it overlapped the Domain column's text).
+            // Date and time are split onto their own lines (rather than one
+            // `toLocaleString()` call) so each line is short enough to fit
+            // without wrapping at all in the common case.
+            <span className="flex flex-col text-xs leading-tight whitespace-normal">
+              <span className="text-sm font-medium">Yes</span>
+              <span className="text-muted-foreground break-words">{row.original.lastOpenedAt.toLocaleDateString()}</span>
+              <span className="text-muted-foreground break-words">{row.original.lastOpenedAt.toLocaleTimeString()}</span>
+              <span className="text-muted-foreground break-words">by {row.original.lastOpenedByNickname}</span>
+            </span>
+          ) : (
+            <span className="text-muted-foreground text-sm font-medium">No</span>
+          ),
+      },
+      {
+        id: 'domain',
+        header: 'Domain',
+        enableHiding: false,
+        // Compact, same reasoning as the Opened column above re: staying
+        // within the viewport without horizontal scroll.
+        size: 55,
+        cell: ({ row }) => (row.original.domain ? 'Yes' : 'No'),
+      },
+      {
         id: 'signal',
-        // Deliberately the one column with no `size` - see `tableClassName="table-fixed"`
-        // below: under a fixed table layout, the column left without an explicit
-        // width absorbs all the space the other (narrow, fixed-width) columns
-        // don't use, instead of every column stretching evenly and leaving gaps.
+        // Explicit `size`, not left auto - under `tableClassName="table-fixed"`,
+        // a column with no `size` does NOT absorb leftover space (verified
+        // live - it takes only its own header label's natural width and the
+        // *sum* of every column's `size` becomes the table's real total
+        // width). Every column here has a deliberately small explicit size
+        // so the total stays under ~990px, fitting a 1280px-wide browser
+        // window without the table needing its own horizontal scrollbar.
+        size: 200,
         header: ({ column }) => <DataTableColumnHeader column={column} label="Signal : Reason" />,
         meta: { label: 'Signal : Reason' },
         cell: ({ row }) => (
@@ -621,9 +755,9 @@ export function ProspectsTable(): React.JSX.Element {
       },
       {
         accessorKey: 'projectFit',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Project fit" />,
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Fit" />,
         meta: { label: 'Project fit' },
-        size: 140,
+        size: 70,
         cell: ({ row }) => <span className="block truncate">{formatEnumLabel(row.original.projectFit)}</span>,
       },
       {
@@ -655,33 +789,25 @@ export function ProspectsTable(): React.JSX.Element {
         },
       },
       {
-        accessorKey: 'status',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Status" />,
-        meta: { label: 'Status' },
-        size: 120,
-        cell: ({ row }) =>
-          row.original.status === 'enriched' ? (
-            <Badge variant="success">
-              <HugeiconsIcon icon={CheckmarkCircle02Icon} data-icon="inline-start" strokeWidth={2} />
-              {formatEnumLabel(row.original.status)}
-            </Badge>
-          ) : (
-            <span className="block truncate">{formatEnumLabel(row.original.status)}</span>
-          ),
+        accessorKey: 'discoveredAt',
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Discovered" />,
+        meta: { label: 'Discovered' },
+        size: 80,
+        cell: ({ row }) => <span className="block truncate">{formatDiscovered(row.original.discoveredAt)}</span>,
       },
       {
         accessorKey: 'sentAt',
         header: ({ column }) => <DataTableColumnHeader column={column} label="Sent" />,
         meta: { label: 'Sent' },
         enableSorting: true,
-        size: 120,
-        cell: ({ row }) => formatDate(row.original.sentAt),
+        size: 48,
+        cell: ({ row }) => (row.original.sentAt ? 'Yes' : 'No'),
       },
       {
         id: 'recommendedAction',
-        header: ({ column }) => <DataTableColumnHeader column={column} label="Recommended Action" />,
+        header: ({ column }) => <DataTableColumnHeader column={column} label="Action" />,
         meta: { label: 'Recommended Action' },
-        size: 160,
+        size: 115,
         cell: ({ row }) => {
           const recommendation = getRecommendation(row.original);
           return (
@@ -718,6 +844,9 @@ export function ProspectsTable(): React.JSX.Element {
         <p className="text-muted-foreground text-sm">
           Every lead discovery has found, ready to enrich, draft, and send. Click a company name for full details.
         </p>
+        <p className="text-muted-foreground text-sm">
+          Showing High signal strength only by default - use the Signal strength filter below to see Low/Medium too.
+        </p>
       </div>
 
       <div className="flex flex-wrap items-end gap-3">
@@ -739,6 +868,11 @@ export function ProspectsTable(): React.JSX.Element {
           options={signalStrengthSchema.options}
           onChange={(value) => updateFilter('signalStrength', value as FiltersState['signalStrength'])}
         />
+        <ReasonFilterCombobox
+          value={filters.reason}
+          options={reasonOptions}
+          onChange={(value) => updateFilter('reason', value)}
+        />
         <FilterSelect
           label="Industry"
           value={filters.industry}
@@ -751,62 +885,12 @@ export function ProspectsTable(): React.JSX.Element {
           options={projectFitSchema.options}
           onChange={(value) => updateFilter('projectFit', value as FiltersState['projectFit'])}
         />
-        <FilterSelect
-          label="Status"
-          value={filters.status}
-          options={prospectStatusSchema.options}
-          onChange={(value) => updateFilter('status', value as FiltersState['status'])}
+        <BooleanFilterSelect
+          label="Has domain"
+          value={filters.hasDomain}
+          onChange={(value) => updateFilter('hasDomain', value)}
         />
-        <FilterSelect
-          label="Verified email"
-          value={filters.hasVerifiedEmail}
-          options={['true', 'false']}
-          onChange={(value) => updateFilter('hasVerifiedEmail', value as FiltersState['hasVerifiedEmail'])}
-        />
-        <FilterSelect
-          label="Draft failure"
-          value={filters.hasDraftFailure}
-          options={['true', 'false']}
-          onChange={(value) => updateFilter('hasDraftFailure', value as FiltersState['hasDraftFailure'])}
-        />
-        <div className="flex flex-col gap-1">
-          <label className="text-muted-foreground text-xs">Priority min</label>
-          <Input
-            type="number"
-            className="w-24"
-            value={filters.priorityScoreMin}
-            onChange={(event) => updateFilter('priorityScoreMin', event.target.value)}
-          />
-        </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-muted-foreground text-xs">Priority max</label>
-          <Input
-            type="number"
-            className="w-24"
-            value={filters.priorityScoreMax}
-            onChange={(event) => updateFilter('priorityScoreMax', event.target.value)}
-          />
-        </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-muted-foreground text-xs">Sort by</label>
-          <div className="flex items-center gap-1">
-            <Select value={sorting[0]?.id ?? 'discoveredAt'} onValueChange={(value) => setSortField(value as SortField)}>
-              <SelectTrigger className="w-32">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {SORT_FIELDS.map((field) => (
-                  <SelectItem key={field} value={field}>
-                    {SORT_FIELD_LABELS[field]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button variant="outline" size="icon" onClick={toggleSortDirection} aria-label="Toggle sort direction">
-              <HugeiconsIcon icon={sorting[0]?.desc ? ArrowDown01Icon : ArrowUp01Icon} strokeWidth={2} />
-            </Button>
-          </div>
-        </div>
+        <BooleanFilterSelect label="Opened" value={filters.opened} onChange={(value) => updateFilter('opened', value)} />
         <label className="flex h-8 items-center gap-2 text-sm">
           <Checkbox checked={filters.hideSeen} onCheckedChange={(checked) => updateFilter('hideSeen', checked === true)} />
           Hide seen
@@ -938,20 +1022,32 @@ export function ProspectsTable(): React.JSX.Element {
         </DialogContent>
       </Dialog>
 
-      {error ? <p className="text-destructive text-sm">Couldn&apos;t load prospects: {error}</p> : null}
-
       {isLoading ? (
         <DataTableSkeleton columnCount={columns.length} rowCount={6} withViewOptions={false} />
       ) : (
         <DataTable
           table={table}
-          // Fixed layout + every column but Signal:Reason declaring an
-          // explicit `size` (see the columns above): the table still fills
-          // the full width, but the narrow columns stay tight to their
-          // content instead of stretching evenly and leaving gaps - the
-          // Signal:Reason column absorbs whatever width is left over.
+          // Fixed layout, every column declares an explicit `size` (see the
+          // columns above) - keeping `DataTable`'s default `w-full` matters:
+          // dropping it (tried `w-auto`, reverted) lets cell content expand
+          // a column past its declared `size` since there's no longer a
+          // hard total-width constraint forcing `table-layout: fixed` to
+          // clamp it. The real remaining source of horizontal overflow
+          // (tried and reverted an `overflow-x-hidden` hack here, which just
+          // silently clipped real header text instead of fixing anything -
+          // see the shortened column labels below) was header labels wider
+          // than their column's narrow rescaled width: `TableHead` is
+          // `whitespace-nowrap`, so a header that doesn't fit bleeds past
+          // its column boundary instead of wrapping, which is what was
+          // actually inflating the table's scrollable width.
           tableClassName="table-fixed"
-          getRowClassName={(row) => (row.original.seen ? 'opacity-50' : undefined)}
+          getRowClassName={(row) =>
+            cn(
+              row.original.seen && 'opacity-50',
+              row.original.id === lastOpenedProspectId &&
+                'bg-primary/10 hover:bg-primary/15 dark:bg-primary/20 dark:hover:bg-primary/30'
+            )
+          }
           pagination={
             <DataTableCursorPagination
               pageNumber={cursorStack.length + 1}
@@ -1023,6 +1119,113 @@ function FilterSelect({ label, value, options, onChange }: FilterSelectProps): R
           ))}
         </SelectContent>
       </Select>
+    </div>
+  );
+}
+
+interface BooleanFilterSelectProps {
+  label: string;
+  value: typeof ALL | 'true' | 'false';
+  onChange: (value: typeof ALL | 'true' | 'false') => void;
+}
+
+// Same shape as `FilterSelect`, but for the `'true' | 'false'` wire-format
+// boolean filters (Has domain, Opened) - shows "Yes"/"No" instead of the raw
+// string values, which `FilterSelect` would otherwise render verbatim.
+function BooleanFilterSelect({ label, value, onChange }: BooleanFilterSelectProps): React.JSX.Element {
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-muted-foreground text-xs">{label}</label>
+      <Select value={value} onValueChange={(next) => onChange(next as typeof ALL | 'true' | 'false')}>
+        <SelectTrigger className="w-28">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={ALL}>All</SelectItem>
+          <SelectItem value="true">Yes</SelectItem>
+          <SelectItem value="false">No</SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
+const REASON_COMBOBOX_MAX_SUGGESTIONS = 50;
+
+interface ReasonFilterComboboxProps {
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+}
+
+// Free-text "contains" filter (see `FiltersState.reason`'s doc comment) with
+// a combobox layered on top, suggesting the distinct `signal.description`
+// values that actually exist right now (`reasonOptions`, fetched once via
+// `fetchReasonOptions`). Deliberately keeps the plain `Input` as the source
+// of truth rather than routing through `CommandInput` - typing still filters
+// the table by substring exactly as before; the dropdown is a discoverable
+// shortcut on top; not a constraint to only these exact values.
+function ReasonFilterCombobox({ value, options, onChange }: ReasonFilterComboboxProps): React.JSX.Element {
+  const [open, setOpen] = useState(false);
+
+  const suggestions = useMemo(() => {
+    const query = value.trim().toLowerCase();
+    const matches = query === '' ? options : options.filter((option) => option.toLowerCase().includes(query));
+    return matches.slice(0, REASON_COMBOBOX_MAX_SUGGESTIONS);
+  }, [options, value]);
+
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-muted-foreground text-xs">Reason contains</label>
+      <Popover open={open} onOpenChange={setOpen}>
+        {/* `PopoverAnchor`, not `PopoverTrigger` - Radix's Trigger primitive
+            forces `type="button"` onto whatever it wraps via `asChild`,
+            which silently turns this text `Input` unfocusable/untypable.
+            `Popover.Anchor` positions the popover the same way without
+            touching the child's props; `open` is driven manually below via
+            onFocus/onChange instead of Radix's own click-to-toggle. */}
+        <PopoverAnchor asChild>
+          <Input
+            className="w-48"
+            placeholder="e.g. outdated, no HTTPS"
+            value={value}
+            onChange={(event) => {
+              onChange(event.target.value);
+              setOpen(true);
+            }}
+            onFocus={() => setOpen(true)}
+          />
+        </PopoverAnchor>
+        <PopoverContent
+          className="w-(--radix-popover-trigger-width) p-0"
+          align="start"
+          // Keeps focus in the `Input` above so typing isn't interrupted the
+          // moment the dropdown opens - same reason the login page's account
+          // combobox doesn't apply here (that one's trigger is a button, not
+          // an editable field).
+          onOpenAutoFocus={(event) => event.preventDefault()}
+        >
+          <Command shouldFilter={false}>
+            <CommandList>
+              <CommandEmpty>No matching reason yet.</CommandEmpty>
+              <CommandGroup>
+                {suggestions.map((option) => (
+                  <CommandItem
+                    key={option}
+                    value={option}
+                    onSelect={() => {
+                      onChange(option);
+                      setOpen(false);
+                    }}
+                  >
+                    {option}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
     </div>
   );
 }

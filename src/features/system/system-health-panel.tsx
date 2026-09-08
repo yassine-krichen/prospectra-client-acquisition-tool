@@ -11,6 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Separator } from '@/components/ui/separator';
 import type { SystemHealth } from '@/features/system/system-health.service';
 import type { DbPingResult } from '@/app/api/system/db-ping/route';
+import { toastError } from '@/lib/toast';
 
 interface SystemHealthPanelProps {
   health: SystemHealth | null;
@@ -78,15 +79,20 @@ export function SystemHealthPanel({ health, error }: SystemHealthPanelProps): Re
       const response = await fetch('/api/system/db-ping');
       const result: DbPingResult = await response.json();
       setPing(result);
+      if (!result.ok) toastError('Database ping failed', result.error ?? undefined);
     } catch {
       setPing({ ok: false, latencyMs: null, good: false, error: 'Request failed.' });
+      toastError('Database ping failed', 'Request failed.');
     } finally {
       setIsPinging(false);
     }
   }
 
   if (error) {
-    return <p className="text-sm text-destructive">{error}</p>;
+    // The failure itself is toasted by the caller (system-health-trigger.tsx)
+    // - this is just a neutral "nothing to show" fallback, not a second
+    // error surface.
+    return <p className="text-muted-foreground text-sm">{error}</p>;
   }
 
   if (!health) {
@@ -131,7 +137,7 @@ export function SystemHealthPanel({ health, error }: SystemHealthPanelProps): Re
             {ping.ok ? (
               <span className="text-foreground">{ping.latencyMs}ms</span>
             ) : (
-              <span className="text-destructive">{ping.error ?? 'Ping failed.'}</span>
+              <span className="text-muted-foreground">{ping.error ?? 'Ping failed.'}</span>
             )}
           </div>
         ) : (

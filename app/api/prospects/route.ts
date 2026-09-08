@@ -18,6 +18,7 @@ const querySchema = z.object({
   source: prospectSourceSchema.optional(),
   signalType: signalTypeSchema.optional(),
   signalStrength: signalStrengthSchema.optional(),
+  reason: z.string().min(1).optional(),
   industry: industrySchema.optional(),
   projectFit: projectFitSchema.optional(),
   status: prospectStatusSchema.optional(),
@@ -39,6 +40,14 @@ const querySchema = z.object({
     .enum(['true', 'false'])
     .optional()
     .transform((value) => (value === undefined ? undefined : value === 'true')),
+  hasDomain: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((value) => (value === undefined ? undefined : value === 'true')),
+  opened: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((value) => (value === undefined ? undefined : value === 'true')),
   sortField: z.enum(['priorityScore', 'discoveredAt', 'sentAt']).optional(),
   sortDirection: z.enum(['asc', 'desc']).optional(),
   cursor: z.string().optional(),
@@ -57,6 +66,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     source,
     signalType,
     signalStrength,
+    reason,
     industry,
     projectFit,
     status,
@@ -66,6 +76,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     seen,
     favorite,
     hasDraftFailure,
+    hasDomain,
+    opened,
     sortField,
     sortDirection,
     cursor,
@@ -77,6 +89,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       source,
       signalType,
       signalStrength,
+      reason,
       industry,
       projectFit,
       status,
@@ -86,6 +99,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       seen,
       favorite,
       hasDraftFailure,
+      hasDomain,
+      opened,
     },
     sortField,
     sortDirection,

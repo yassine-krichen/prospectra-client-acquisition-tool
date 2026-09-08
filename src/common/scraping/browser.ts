@@ -1,4 +1,4 @@
-import { chromium, type Browser, type BrowserContext } from 'playwright';
+import { chromium, type Browser, type BrowserContext, type LaunchOptions } from 'playwright-core';
 
 // Sites like yellowpages.com block plain `fetch()` requests as bot traffic.
 // A real headless-Chromium context (with a realistic user agent) reliably
@@ -30,6 +30,38 @@ export interface ScrapingSession {
   context: BrowserContext;
 }
 
+// Vercel (and AWS Lambda generally) run functions on Amazon Linux with no
+// Chromium binary available at all - the full `playwright` package's own
+// ~300MB+ download can't ship inside a serverless function bundle, which is
+// what used to fail at runtime with "Cannot find module
+// .../playwright-core/browsers.json" (playwright-core looking for a browser
+// that was never there). `@sparticuz/chromium` ships a Lambda-compiled,
+// brotli-compressed Chromium build sized to actually fit. Locally, none of
+// this runs - `chromium.launch()` finds the Chromium the full `playwright`
+// package (a devDependency purely for this) downloads to the shared
+// Playwright browser cache on `npm install`/`npx playwright install`, which
+// `playwright-core` resolves the same way without needing its own copy.
+const IS_SERVERLESS = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+
+/**
+ * Exported (rather than inlined into `launchScrapingSession`) purely so a
+ * test can exercise both branches without actually launching a browser.
+ */
+export async function resolveLaunchOptions(isServerless: boolean = IS_SERVERLESS): Promise<LaunchOptions> {
+  const baseArgs = ['--disable-blink-features=AutomationControlled'];
+
+  if (!isServerless) {
+    return { headless: true, args: baseArgs };
+  }
+
+  const sparticuzChromium = (await import('@sparticuz/chromium')).default;
+  return {
+    headless: true,
+    executablePath: await sparticuzChromium.executablePath(),
+    args: [...sparticuzChromium.args, ...baseArgs],
+  };
+}
+
 /**
  * Launches a headless Chromium browser + context configured to look like a
  * normal desktop browser. Callers are responsible for calling
@@ -56,10 +88,7 @@ export interface ScrapingSession {
  * pass 100% of the time.
  */
 export async function launchScrapingSession(): Promise<ScrapingSession> {
-  const browser = await chromium.launch({
-    headless: true,
-    args: ['--disable-blink-features=AutomationControlled'],
-  });
+  const browser = await chromium.launch(await resolveLaunchOptions());
   const context = await browser.newContext({
     userAgent: DEFAULT_USER_AGENT,
     extraHTTPHeaders: CLIENT_HINTS_HEADERS,

@@ -29,8 +29,29 @@ vi.mock('@/features/sending/domain-verification-gate', () => ({
   getEffectiveDailyCap: getEffectiveDailyCapMock,
 }));
 
-const getTodaysSendCountMock = vi.fn();
-vi.mock('@/features/sending/daily-send-counter', () => ({ getTodaysSendCount: getTodaysSendCountMock }));
+// Models `reserveDailySendSlot`'s real atomic-counter semantics closely
+// enough for an orchestration test - see the identical mock in
+// send-queue.service.test.ts for the full rationale.
+const { dailySendState, reserveDailySendSlotMock, rollBackDailySendSlotMock } = vi.hoisted(() => {
+  const state = { reservedCount: 0 };
+  return {
+    dailySendState: state,
+    reserveDailySendSlotMock: vi.fn(async (cap: number) => {
+      if (state.reservedCount < cap) {
+        state.reservedCount += 1;
+        return true;
+      }
+      return false;
+    }),
+    rollBackDailySendSlotMock: vi.fn(async () => {
+      state.reservedCount = Math.max(0, state.reservedCount - 1);
+    }),
+  };
+});
+vi.mock('@/features/sending/daily-send-counter', () => ({
+  reserveDailySendSlot: reserveDailySendSlotMock,
+  rollBackDailySendSlot: rollBackDailySendSlotMock,
+}));
 
 const sendEmailMock = vi.fn();
 vi.mock('@/features/sending/resend.client', () => ({ sendEmail: sendEmailMock }));
@@ -89,7 +110,7 @@ beforeEach(() => {
   updateMock.mockResolvedValue({});
   findUniqueDraftMock.mockResolvedValue(null);
   getEffectiveDailyCapMock.mockReturnValue(10);
-  getTodaysSendCountMock.mockResolvedValue(0);
+  dailySendState.reservedCount = 0;
   sendEmailMock.mockResolvedValue({ ok: true, id: 'resend-message-id' });
 });
 
@@ -304,19 +325,15 @@ describe('runFollowupScheduler reply-vs-follow-up race', () => {
 
     expect(outcomes).toEqual([{ prospectId: candidate.id, outcome: 'skipped_not_eligible' }]);
     expect(sendEmailMock).not.toHaveBeenCalled();
+    expect(rollBackDailySendSlotMock).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('runFollowupScheduler daily cap enforcement', () => {
-  it('re-reads the daily send count before every individual send: with 1 slot of headroom in a batch of 2 due prospects, sends exactly 1 and skips the rest as skipped_cap', async () => {
+  it('re-reserves a slot before every individual send: with 1 slot of headroom in a batch of 2 due prospects, sends exactly 1 and skips the rest as skipped_cap', async () => {
     const CAP = 3;
-    let sentSoFar = CAP - 1;
+    dailySendState.reservedCount = CAP - 1;
     getEffectiveDailyCapMock.mockReturnValue(CAP);
-    getTodaysSendCountMock.mockImplementation(async () => sentSoFar);
-    sendEmailMock.mockImplementation(async () => {
-      sentSoFar += 1;
-      return { ok: true, id: 'resend-message-id' };
-    });
 
     const candidateA = buildCandidate({ id: 'prospect-a', priorityScore: 2 });
     const candidateB = buildCandidate({ id: 'prospect-b', priorityScore: 1 });
@@ -333,7 +350,6 @@ describe('runFollowupScheduler daily cap enforcement', () => {
 
   it('reports every remaining due prospect as skipped_cap once the cap is already at/above the limit, without ever calling sendEmail or attempting a claim', async () => {
     getEffectiveDailyCapMock.mockReturnValue(0);
-    getTodaysSendCountMock.mockResolvedValue(0);
     const candidateA = buildCandidate({ id: 'prospect-a', priorityScore: 2 });
     const candidateB = buildCandidate({ id: 'prospect-b', priorityScore: 1 });
     findManyMock.mockResolvedValue([candidateA, candidateB]);
@@ -347,14 +363,13 @@ describe('runFollowupScheduler daily cap enforcement', () => {
 
   it('does not consult the cap at all for a followup_3 prospect being marked dead (dead transitions are not sends)', async () => {
     getEffectiveDailyCapMock.mockReturnValue(0);
-    getTodaysSendCountMock.mockResolvedValue(0);
     const candidate = buildCandidate({ status: 'followup_3', lastFollowupAt: daysAgo(FOLLOWUP_INTERVAL_DAYS + 1) });
     findManyMock.mockResolvedValue([candidate]);
 
     const outcomes = await runFollowupScheduler();
 
     expect(outcomes).toEqual([{ prospectId: candidate.id, outcome: 'marked_dead' }]);
-    expect(getTodaysSendCountMock).not.toHaveBeenCalled();
+    expect(reserveDailySendSlotMock).not.toHaveBeenCalled();
   });
 });
 
@@ -370,6 +385,7 @@ describe('runFollowupScheduler missing contact info / invalid signal', () => {
     ]);
     expect(updateManyMock).not.toHaveBeenCalled();
     expect(sendEmailMock).not.toHaveBeenCalled();
+    expect(rollBackDailySendSlotMock).toHaveBeenCalledTimes(1);
   });
 
   it('reports failed without attempting the claim when the prospect has no valid signal on file', async () => {
@@ -383,6 +399,7 @@ describe('runFollowupScheduler missing contact info / invalid signal', () => {
     ]);
     expect(updateManyMock).not.toHaveBeenCalled();
     expect(sendEmailMock).not.toHaveBeenCalled();
+    expect(rollBackDailySendSlotMock).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -412,6 +429,18 @@ describe('runFollowupScheduler send failure rollback', () => {
         statusHistory: candidate.statusHistory,
       },
     });
+    expect(rollBackDailySendSlotMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not roll back the reserved daily-cap slot when sendEmail actually succeeds', async () => {
+    const candidate = buildCandidate({ id: 'prospect-a' });
+    findManyMock.mockResolvedValue([candidate]);
+
+    const outcomes = await runFollowupScheduler();
+
+    expect(outcomes).toEqual([{ prospectId: 'prospect-a', outcome: 'sent', touch: 2 }]);
+    expect(reserveDailySendSlotMock).toHaveBeenCalledTimes(1);
+    expect(rollBackDailySendSlotMock).not.toHaveBeenCalled();
   });
 
   it('does not resurrect a prospect into follow-up eligibility when a concurrent reply flips status to replied before the send-failure rollback runs: rollback updateMany matches 0 rows and the prospect stays replied', async () => {

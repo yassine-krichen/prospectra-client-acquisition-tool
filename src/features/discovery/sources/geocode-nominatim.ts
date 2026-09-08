@@ -52,7 +52,14 @@ export async function geocodeToOsmArea(geography: string): Promise<GeocodedArea 
 
   let response: Response;
   try {
-    response = await fetch(url, { headers: { 'User-Agent': OSM_USER_AGENT } });
+    // Native `fetch` has no default timeout - without this, a slow/hung
+    // public Nominatim instance stalls the whole discovery run
+    // indefinitely (confirmed live 2026-08-22: a run got stuck on
+    // "overpass: running…" with no further progress and no error, ever).
+    response = await fetch(url, {
+      headers: { 'User-Agent': OSM_USER_AGENT },
+      signal: AbortSignal.timeout(15_000),
+    });
   } catch {
     return null;
   }

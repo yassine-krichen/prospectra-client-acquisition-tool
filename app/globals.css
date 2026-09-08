@@ -40,7 +40,7 @@
 }
 
 .dark {
-    --background: oklch(0.148 0.004 228.8);
+    --background: oklch(0 0 0);
     --foreground: oklch(0.987 0.002 197.1);
     --card: oklch(0.218 0.008 223.9);
     --card-foreground: oklch(0.987 0.002 197.1);
@@ -63,7 +63,7 @@
     --chart-3: oklch(0.45 0.017 213.2);
     --chart-4: oklch(0.378 0.015 216);
     --chart-5: oklch(0.275 0.011 216.9);
-    --sidebar: oklch(0.218 0.008 223.9);
+    --sidebar: oklch(0 0 0);
     --sidebar-foreground: oklch(0.987 0.002 197.1);
     --sidebar-primary: oklch(0.715 0.143 215.221);
     --sidebar-primary-foreground: oklch(0.302 0.056 229.695);

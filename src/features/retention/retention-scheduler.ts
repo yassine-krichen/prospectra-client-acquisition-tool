@@ -1,14 +1,14 @@
 import { JobCadence, JobStatus, Prisma } from '@/lib/generated/prisma/client';
 import { prisma } from '@/common/db/client';
 import { getEffectiveDailyCap } from '@/features/sending/domain-verification-gate';
-import { getTodaysSendCount } from '@/features/sending/daily-send-counter';
+import { reserveDailySendSlot, rollBackDailySendSlot } from '@/features/sending/daily-send-counter';
 import { sendEmail } from '@/features/sending/resend.client';
 import { renderRetentionTemplate } from '@/features/retention/retention-templates';
 import type { RetentionTouchNumber, RetentionVariant } from '@/features/retention/retention-templates';
 
 // Phase 8 retention scheduler. Mirrors followup-scheduler.ts file-for-file:
 // the same shared daily-cap gate (`getEffectiveDailyCap()`/
-// `getTodaysSendCount()`, re-checked fresh immediately before every
+// `reserveDailySendSlot()`, re-reserved fresh immediately before every
 // individual send, never cached across the batch - a retention send is
 // still a send, protecting the same sending-domain reputation as cold
 // outreach/follow-ups), and the same atomic-claim-via-`updateMany` race
@@ -143,11 +143,13 @@ async function attemptRetentionSend(
   variant: RetentionVariant
 ): Promise<RetentionOutcome> {
   if (!candidate.client.contactEmail) {
+    await rollBackDailySendSlot();
     return { jobId: candidate.id, outcome: 'failed', reason: 'client has no contact email on file' };
   }
 
   const rendered = renderRetentionTemplate(touchNumber, { companyName: candidate.client.companyName, variant });
   if (!rendered.ok) {
+    await rollBackDailySendSlot();
     return { jobId: candidate.id, outcome: 'failed', reason: rendered.reasons.join('; ') };
   }
 
@@ -175,6 +177,7 @@ async function attemptRetentionSend(
     // Lost the race: doNotContact flipped true, the Job's status changed
     // concurrently, or a concurrent scheduler run already claimed this exact
     // touch. Fail closed - never send.
+    await rollBackDailySendSlot();
     return { jobId: candidate.id, outcome: 'skipped_not_eligible' };
   }
 
@@ -191,7 +194,9 @@ async function attemptRetentionSend(
     // the exact values THIS call's claim just set (rather than an
     // unconditional update), mirroring attemptFollowupSend's rollback
     // fingerprint - just keyed to these fields instead of `status`, since a
-    // retention touch never changes `status`.
+    // retention touch never changes `status`. The reserved daily-send-cap
+    // slot is rolled back too.
+    await rollBackDailySendSlot();
     await prisma.job.updateMany({
       where: { id: candidate.id, lastRetentionTouchAt: now, retentionTouchCount: priorRetentionTouchCount + 1 },
       data: {
@@ -258,8 +263,11 @@ export async function runRetentionScheduler(limit: number = RETENTION_BATCH_SIZE
       continue;
     }
 
-    const sentToday = await getTodaysSendCount();
-    if (sentToday >= getEffectiveDailyCap()) {
+    // Atomically reserves a slot against the shared daily cap - see the doc
+    // comment on `reserveDailySendSlot` in daily-send-counter.ts.
+    // `attemptRetentionSend` rolls this back on every path that doesn't end
+    // in a real send.
+    if (!(await reserveDailySendSlot(getEffectiveDailyCap()))) {
       capReached = true;
       outcomes.push({ jobId: candidate.id, outcome: 'skipped_cap' });
       continue;
