@@ -198,7 +198,7 @@ function isThinProspect(prospect: DiscoveredProspect): boolean {
  * closes that hole; the same reasoning applies to strip-mall-style shared
  * addresses in the US.
  */
-function dedupeProspects(prospects: DiscoveredProspect[]): DiscoveredProspect[] {
+export function dedupeProspects(prospects: DiscoveredProspect[]): DiscoveredProspect[] {
   const byDomain = new Map<string, DiscoveredProspect>();
   const byPhone = new Map<string, DiscoveredProspect>();
   const byNameAndAddress = new Map<string, DiscoveredProspect>();
@@ -283,7 +283,7 @@ async function findExistingProspect(
  * refreshed, so a routine re-scrape can never pull a permanently-opted-out
  * prospect back into the normal discovery/drafting/sending flow.
  */
-async function persistProspect(
+export async function persistProspect(
   prospect: DiscoveredProspect,
   query: DiscoveryQuery
 ): Promise<'inserted' | 'updated' | 'skipped_do_not_contact'> {
