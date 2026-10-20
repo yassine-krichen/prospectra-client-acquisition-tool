@@ -41,12 +41,12 @@ export function buildFromAddress(): string | null {
  */
 export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult> {
   if (!env.RESEND_API_KEY) {
-    return { ok: false, reason: 'resend not configured: RESEND_API_KEY is not set' };
+    return { ok: false, reason: 'resend not configured: RESEND_API_KEY is not set', definitelyNotSent: true };
   }
 
   const from = buildFromAddress();
   if (!from) {
-    return { ok: false, reason: 'resend not configured: SENDING_DOMAIN is not set' };
+    return { ok: false, reason: 'resend not configured: SENDING_DOMAIN is not set', definitelyNotSent: true };
   }
 
   let response: Response;
@@ -68,7 +68,10 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
   if (!response.ok) {
     const parsedError = resendErrorSchema.safeParse(json);
     const detail = parsedError.success ? `: ${parsedError.data.message}` : '';
-    return { ok: false, reason: `resend responded with ${response.status}${detail}` };
+    // A 4xx means Resend rejected the request before sending, except 408
+    // (request timeout), which can race a send that still completes.
+    const rejectedBeforeSend = response.status >= 400 && response.status < 500 && response.status !== 408;
+    return { ok: false, reason: `resend responded with ${response.status}${detail}`, definitelyNotSent: rejectedBeforeSend };
   }
 
   const parsed = resendSuccessSchema.safeParse(json);

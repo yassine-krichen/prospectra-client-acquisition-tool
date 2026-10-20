@@ -19,20 +19,11 @@ import type { Signal } from '@/features/prospects/prospect.types';
 // very short scraped `companyName`/signal snippet could otherwise push a
 // rendered body outside the allowed range.
 
-// Each touch number gets a distinct angle, per the spec's "not a bare 'just
-// bumping this'" requirement. These angles loosely correspond to AIDA's
-// Interest/Desire/Action stages (a different value-prop angle → a fast,
-// low-commitment next step → the no-pressure close) - noted here only as a
-// cross-reference, not a restructure of these already-validated templates.
-//   - touch 2 (first follow-up): a different value-prop angle (speed/cost of
-//     a lean direct build vs. the back-and-forth of a larger agency).
-//   - touch 3 (second follow-up): deliberately shorter and more direct -
-//     acknowledges the earlier notes and offers a fast, low-commitment next
-//     step (a scoped estimate).
-//   - touch 4 (third/final follow-up): the "no worries either way" close -
-//     explicitly signals this is the last touch and leaves the door open
-//     without any pressure tactic.
-export type FollowupTouchNumber = 2 | 3 | 4;
+// Cold-outreach data supports one follow-up only (see MAX_TOTAL_TOUCHES in
+// followup-scheduler.ts), so there is a single template: a different
+// value-prop angle from the original (speed/cost of a lean direct build vs.
+// the back-and-forth of a larger agency), not a bare "just bumping this".
+export type FollowupTouchNumber = 2;
 
 export interface FollowupTemplateInput {
   companyName: string;
@@ -70,22 +61,11 @@ function buildSubject(input: FollowupTemplateInput): string {
 
 function buildTouch2Body(input: FollowupTemplateInput): string {
   const signalSnippet = truncateForEmail(input.signal.description);
-  return `Following up on my earlier note about ${input.companyName} - figured I'd share a different angle in case the first one didn't land. The gap I flagged (${signalSnippet}) tends to compound: teams lose weeks to back-and-forth with agencies before a single line of code ships, when a small, direct build usually gets there faster and for less. If a faster path forward is even mildly interesting right now, I'm happy to sketch out what that could look like for ${input.companyName} specifically - no pressure if the timing's off.`;
-}
-
-function buildTouch3Body(input: FollowupTemplateInput): string {
-  const signalSnippet = truncateForEmail(input.signal.description);
-  return `Quick follow-up on ${input.companyName} - inboxes get noisy, so I'll keep this short. The issue I flagged earlier (${signalSnippet}) is the kind of thing that quietly costs conversions until someone fixes it, and it's usually a small, contained project rather than a full rebuild. If that's useful, I can put together a short scope and rough estimate this week - just reply and I'll send it over.`;
-}
-
-function buildTouch4Body(input: FollowupTemplateInput): string {
-  return `Last note from me on this, promise. I've reached out a couple of times about ${input.companyName} and haven't heard back, which is a completely fine signal that it isn't a priority right now. If that changes down the line, the door stays open - just reply to this thread and I'll pick it back up from there. Either way, wishing ${input.companyName} well, and I won't follow up again after this one.`;
+  return `Bumping my note about ${input.companyName}, in case it got buried. The gap I flagged (${signalSnippet}) is usually a small, contained fix rather than a full rebuild. If it's useful, I can send a short scope and rough estimate this week - just reply and I'll put it together. No worries if the timing's off.`;
 }
 
 const TOUCH_BUILDERS: Record<FollowupTouchNumber, (input: FollowupTemplateInput) => string> = {
   2: buildTouch2Body,
-  3: buildTouch3Body,
-  4: buildTouch4Body,
 };
 
 export interface FollowupTemplateRenderSuccess {

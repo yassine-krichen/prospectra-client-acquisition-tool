@@ -19,17 +19,18 @@ import { signalSchema } from '@/features/prospects/prospect.types';
 // one-line staleness test. Revisit if a later phase wants per-touch spacing.
 export const FOLLOWUP_INTERVAL_DAYS = 4;
 
-// "3-4 touches ... auto-dead after 4 unanswered touches" is read here as: 4
-// TOTAL touches (the original send counts as touch 1), with `dead` firing
-// once the 4th touch (`followup_3`) has itself gone unanswered past its own
-// follow-up window - not a same-tick "send touch 4 then instantly mark
-// dead". Concretely:
+// Cold-outreach data (6,337 emails, r/PublicRelations): one email ~4.1%
+// replies, plus one follow-up a few days later ~6.6%, a second follow-up only
+// ~6.9%, anything past that irritates recipients. So: 2 TOTAL touches (the
+// original counts as touch 1) - one follow-up, then `dead` once that
+// follow-up has itself gone unanswered for a full interval.
 //   sent (touch 1 sent, followupCount 0)
 //     -> stale by FOLLOWUP_INTERVAL_DAYS -> send touch 2 -> followup_1 (count 1)
-//     -> stale again                      -> send touch 3 -> followup_2 (count 2)
-//     -> stale again                      -> send touch 4 -> followup_3 (count 3)
-//     -> stale again (touch 4 unanswered) -> no touch 5; status -> dead
-export const MAX_TOTAL_TOUCHES = 4;
+//     -> stale again (touch 2 unanswered) -> no touch 3; status -> dead
+// `followup_2`/`followup_3` stay in the enum and are still swept to `dead`
+// here so prospects already in those states under the old 4-touch cycle
+// aren't stranded.
+export const MAX_TOTAL_TOUCHES = 2;
 
 // Batch size per scheduler invocation. The candidate query itself is bounded
 // by status + doNotContact only (Prisma can't cheaply filter on the computed
@@ -38,6 +39,11 @@ export const MAX_TOTAL_TOUCHES = 4;
 // any send is attempted. Fine at this app's current prospect volume - revisit
 // with a raw/indexed query if that stops being true.
 export const FOLLOWUP_BATCH_SIZE = 20;
+
+// Added to a prospect whose follow-up send failed ambiguously and so was
+// deliberately not rolled back or retried; an operator should confirm in the
+// provider dashboard whether touch 2 actually went out.
+export const FOLLOWUP_SEND_UNCONFIRMED_TAG = 'followup-send-unconfirmed';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -48,16 +54,12 @@ const FOLLOWUP_ELIGIBLE_STATUSES = [
   PrismaProspectStatus.followup_3,
 ] as const;
 
-// Maps a prospect's *current* status to the next touch it's due for and the
-// status it advances to on a successful send. `followup_3` is deliberately
-// absent - it has no "next touch": once stale again it goes to `dead`
-// instead (handled separately in the scheduling loop below).
-const TOUCH_TRANSITIONS: Partial<
-  Record<PrismaProspectStatus, { touch: FollowupTouchNumber; nextStatus: PrismaProspectStatus }>
-> = {
-  [PrismaProspectStatus.sent]: { touch: 2, nextStatus: PrismaProspectStatus.followup_1 },
-  [PrismaProspectStatus.followup_1]: { touch: 3, nextStatus: PrismaProspectStatus.followup_2 },
-  [PrismaProspectStatus.followup_2]: { touch: 4, nextStatus: PrismaProspectStatus.followup_3 },
+// The only send this scheduler makes: a `sent` prospect gets touch 2 and
+// advances to `followup_1`. Every `followup_*` status has no next touch -
+// once stale again it goes to `dead` instead (see the scheduling loop).
+const SECOND_TOUCH: { touch: FollowupTouchNumber; nextStatus: PrismaProspectStatus } = {
+  touch: 2,
+  nextStatus: PrismaProspectStatus.followup_1,
 };
 
 const PROSPECT_SELECT = {
@@ -103,9 +105,9 @@ async function fetchOriginalSubject(activeDraftId: string | null): Promise<strin
 }
 
 /**
- * Marks a `followup_3` prospect whose window has elapsed again (touch 4 sent
- * and unanswered) as permanently `dead`. Uses the same atomic-claim pattern
- * as a send below - `updateMany` with `status: followup_3` in the `WHERE` -
+ * Marks a `followup_*` prospect whose window has elapsed again (its last
+ * touch sent and unanswered) as permanently `dead`. Uses the same atomic-claim pattern
+ * as a send below - `updateMany` with `status: candidate.status` in the `WHERE` -
  * so a reply arriving concurrently (which would have already advanced status
  * to `replied`) makes this a no-op instead of overwriting a reply.
  */
@@ -114,7 +116,7 @@ async function markDead(candidate: CandidateProspect): Promise<FollowupOutcome> 
   const now = new Date();
 
   const claim = await prisma.prospect.updateMany({
-    where: { id: candidate.id, status: PrismaProspectStatus.followup_3, doNotContact: false },
+    where: { id: candidate.id, status: candidate.status, doNotContact: false },
     data: {
       status: PrismaProspectStatus.dead,
       statusHistory: [...statusHistory, { status: PrismaProspectStatus.dead, timestamp: now.toISOString() }],
@@ -193,9 +195,31 @@ async function attemptFollowupSend(
     body: rendered.template.body,
   });
 
+  if (!sendResult.ok && !sendResult.definitelyNotSent) {
+    // Ambiguous failure (timeout, 5xx, unparseable response): the provider
+    // may have delivered. Rolling back would let the next run send touch 2
+    // again, breaking the never-send-twice invariant, so the claim stays
+    // (status is already followup_1, which is never re-sent) and the
+    // prospect is tagged so an operator can check the provider dashboard.
+    try {
+      await prisma.prospect.updateMany({
+        where: { id: candidate.id, status: nextStatus },
+        data: { tags: { push: FOLLOWUP_SEND_UNCONFIRMED_TAG } },
+      });
+    } catch (error) {
+      console.error(`failed to tag prospect ${candidate.id} as ${FOLLOWUP_SEND_UNCONFIRMED_TAG}`, error);
+    }
+    return {
+      prospectId: candidate.id,
+      outcome: 'failed',
+      reason: `send outcome unconfirmed, not retried: ${sendResult.reason}`,
+    };
+  }
+
   if (!sendResult.ok) {
-    // Roll back the claim so a later scheduler run can legitimately retry -
-    // a failed send must never permanently strand a prospect mid-sequence.
+    // Definite non-delivery (see `definitelyNotSent`): roll back the claim so
+    // a later scheduler run can legitimately retry - a rejected send must
+    // never permanently strand a prospect mid-sequence.
     // Conditioned on `status: nextStatus` (the status THIS call's claim just
     // set) rather than an unconditional update: if a reply landed during the
     // `sendEmail` network round-trip and reply-detection.service.ts's own
@@ -221,7 +245,7 @@ async function attemptFollowupSend(
 
 /**
  * Finds prospects due for their next follow-up touch and sends it (or marks
- * them `dead` once touch 4 has itself gone unanswered - see
+ * them `dead` once the last touch has itself gone unanswered - see
  * `MAX_TOTAL_TOUCHES`'s doc comment). Eligibility:
  *
  *   - `status` in `sent`/`followup_1`/`followup_2`/`followup_3`
@@ -254,16 +278,8 @@ export async function runFollowupScheduler(limit: number = FOLLOWUP_BATCH_SIZE):
   let capReached = false;
 
   for (const candidate of batch) {
-    if (candidate.status === PrismaProspectStatus.followup_3) {
+    if (candidate.status !== PrismaProspectStatus.sent) {
       outcomes.push(await markDead(candidate));
-      continue;
-    }
-
-    const transition = TOUCH_TRANSITIONS[candidate.status];
-    if (!transition) {
-      // Should be unreachable given FOLLOWUP_ELIGIBLE_STATUSES, but fail
-      // closed (skip, don't guess) rather than send with an undefined touch.
-      outcomes.push({ prospectId: candidate.id, outcome: 'skipped_not_eligible' });
       continue;
     }
 
@@ -282,7 +298,7 @@ export async function runFollowupScheduler(limit: number = FOLLOWUP_BATCH_SIZE):
       continue;
     }
 
-    outcomes.push(await attemptFollowupSend(candidate, transition.touch, transition.nextStatus));
+    outcomes.push(await attemptFollowupSend(candidate, SECOND_TOUCH.touch, SECOND_TOUCH.nextStatus));
   }
 
   return outcomes;

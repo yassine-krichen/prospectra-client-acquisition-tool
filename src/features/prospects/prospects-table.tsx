@@ -316,6 +316,8 @@ const STATUS_RECOMMENDATION: Record<ProspectStatus, Recommendation> = {
   queued: { label: 'Awaiting send', tone: 'neutral' },
   sent: { label: 'Awaiting reply', tone: 'neutral' },
   followup_1: { label: 'Awaiting reply', tone: 'neutral' },
+  // followup_2/3 are legacy (old 4-touch cycle); no new prospect reaches them,
+  // but existing rows can still hold them.
   followup_2: { label: 'Awaiting reply', tone: 'neutral' },
   followup_3: { label: 'Awaiting reply', tone: 'neutral' },
   replied: { label: 'Win', tone: 'green' },

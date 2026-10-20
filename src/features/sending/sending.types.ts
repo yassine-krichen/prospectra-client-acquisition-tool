@@ -27,6 +27,11 @@ export interface SendEmailFailure {
   ok: false;
   /** Human-readable reason, e.g. "resend responded with 422". */
   reason: string;
+  /** True only when the provider definitively did not send (missing config,
+   * or a 4xx rejection). Absent/false means ambiguous (timeout, 5xx,
+   * unparseable response): the email may have been delivered, so callers
+   * that must never double-send have to treat it as possibly sent. */
+  definitelyNotSent?: boolean;
 }
 
 export type SendEmailResult = SendEmailSuccess | SendEmailFailure;

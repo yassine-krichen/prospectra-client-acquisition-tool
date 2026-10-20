@@ -56,7 +56,7 @@ vi.mock('@/features/sending/daily-send-counter', () => ({
 const sendEmailMock = vi.fn();
 vi.mock('@/features/sending/resend.client', () => ({ sendEmail: sendEmailMock }));
 
-const { runFollowupScheduler, FOLLOWUP_INTERVAL_DAYS } = await import('./followup-scheduler');
+const { runFollowupScheduler, FOLLOWUP_INTERVAL_DAYS, FOLLOWUP_SEND_UNCONFIRMED_TAG } = await import('./followup-scheduler');
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -149,28 +149,27 @@ describe('runFollowupScheduler eligibility and touch progression', () => {
     );
   });
 
-  it('sends touch 3 to a followup_1 prospect stale again, transitioning it to followup_2', async () => {
+  it('marks a followup_1 prospect dead once stale again and sends no 3rd touch (one follow-up only)', async () => {
     const candidate = buildCandidate({ status: 'followup_1', followupCount: 1, lastFollowupAt: daysAgo(FOLLOWUP_INTERVAL_DAYS + 1) });
     findManyMock.mockResolvedValue([candidate]);
 
     const outcomes = await runFollowupScheduler();
 
-    expect(outcomes).toEqual([{ prospectId: candidate.id, outcome: 'sent', touch: 3 }]);
+    expect(outcomes).toEqual([{ prospectId: candidate.id, outcome: 'marked_dead' }]);
     expect(updateManyMock).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: candidate.id, status: 'followup_1', doNotContact: false }, data: expect.objectContaining({ status: 'followup_2', followupCount: 2 }) })
+      expect.objectContaining({ where: { id: candidate.id, status: 'followup_1', doNotContact: false }, data: expect.objectContaining({ status: 'dead' }) })
     );
+    expect(sendEmailMock).not.toHaveBeenCalled();
   });
 
-  it('sends touch 4 to a followup_2 prospect stale again, transitioning it to followup_3', async () => {
+  it('sweeps a legacy followup_2 prospect to dead instead of stranding it, with no send', async () => {
     const candidate = buildCandidate({ status: 'followup_2', followupCount: 2, lastFollowupAt: daysAgo(FOLLOWUP_INTERVAL_DAYS + 1) });
     findManyMock.mockResolvedValue([candidate]);
 
     const outcomes = await runFollowupScheduler();
 
-    expect(outcomes).toEqual([{ prospectId: candidate.id, outcome: 'sent', touch: 4 }]);
-    expect(updateManyMock).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: candidate.id, status: 'followup_2', doNotContact: false }, data: expect.objectContaining({ status: 'followup_3', followupCount: 3 }) })
-    );
+    expect(outcomes).toEqual([{ prospectId: candidate.id, outcome: 'marked_dead' }]);
+    expect(sendEmailMock).not.toHaveBeenCalled();
   });
 
   it('skips a prospect that has not yet gone stale, without calling sendEmail or attempting any claim', async () => {
@@ -226,7 +225,7 @@ describe('runFollowupScheduler eligibility and touch progression', () => {
   });
 });
 
-describe('runFollowupScheduler dead transition after touch 4', () => {
+describe('runFollowupScheduler dead transition for legacy followup_3 prospects', () => {
   it('marks a followup_3 prospect dead once stale again, and never calls sendEmail for it (no 5th touch)', async () => {
     const candidate = buildCandidate({ status: 'followup_3', followupCount: 3, lastFollowupAt: daysAgo(FOLLOWUP_INTERVAL_DAYS + 1) });
     findManyMock.mockResolvedValue([candidate]);
@@ -404,8 +403,8 @@ describe('runFollowupScheduler missing contact info / invalid signal', () => {
 });
 
 describe('runFollowupScheduler send failure rollback', () => {
-  it('rolls the claim back to the prior status/lastFollowupAt/followupCount when sendEmail fails, conditioned on the claim\'s new status (followup_1) so a later legitimate retry is not permanently blocked', async () => {
-    sendEmailMock.mockResolvedValue({ ok: false, reason: 'resend responded with 500' });
+  it('rolls the claim back to the prior status/lastFollowupAt/followupCount when sendEmail definitely did not send, conditioned on the claim\'s new status (followup_1) so a later legitimate retry is not permanently blocked', async () => {
+    sendEmailMock.mockResolvedValue({ ok: false, reason: 'resend responded with 422', definitelyNotSent: true });
     const priorLastFollowupAt = daysAgo(FOLLOWUP_INTERVAL_DAYS + 1);
     const candidate = buildCandidate({ status: 'sent', sentAt: priorLastFollowupAt, followupCount: 0, lastFollowupAt: null });
     findManyMock.mockResolvedValue([candidate]);
@@ -413,7 +412,7 @@ describe('runFollowupScheduler send failure rollback', () => {
     const outcomes = await runFollowupScheduler();
 
     expect(outcomes).toEqual([
-      { prospectId: candidate.id, outcome: 'failed', reason: 'resend responded with 500' },
+      { prospectId: candidate.id, outcome: 'failed', reason: 'resend responded with 422' },
     ]);
     // Conditioned rollback: WHERE keys off `followup_1` - the status THIS
     // call's claim just set - not an unconditional `update`. This is what
@@ -444,7 +443,7 @@ describe('runFollowupScheduler send failure rollback', () => {
   });
 
   it('does not resurrect a prospect into follow-up eligibility when a concurrent reply flips status to replied before the send-failure rollback runs: rollback updateMany matches 0 rows and the prospect stays replied', async () => {
-    sendEmailMock.mockResolvedValue({ ok: false, reason: 'resend responded with 500' });
+    sendEmailMock.mockResolvedValue({ ok: false, reason: 'resend responded with 422', definitelyNotSent: true });
     const candidate = buildCandidate({ status: 'sent', sentAt: daysAgo(FOLLOWUP_INTERVAL_DAYS + 1), followupCount: 0, lastFollowupAt: null });
     findManyMock.mockResolvedValue([candidate]);
 
@@ -459,7 +458,7 @@ describe('runFollowupScheduler send failure rollback', () => {
     const outcomes = await runFollowupScheduler();
 
     expect(outcomes).toEqual([
-      { prospectId: candidate.id, outcome: 'failed', reason: 'resend responded with 500' },
+      { prospectId: candidate.id, outcome: 'failed', reason: 'resend responded with 422' },
     ]);
     expect(updateManyMock).toHaveBeenCalledTimes(2);
     expect(updateManyMock).toHaveBeenLastCalledWith({
@@ -475,6 +474,47 @@ describe('runFollowupScheduler send failure rollback', () => {
     // prospect is left as `replied` by the concurrent reply claim, not
     // resurrected back to `sent`/follow-up-eligible.
     await expect(updateManyMock.mock.results[1].value).resolves.toEqual({ count: 0 });
+  });
+
+  it('keeps the claim (no rollback to sent) and tags the prospect when sendEmail fails ambiguously, since the provider may have delivered', async () => {
+    sendEmailMock.mockResolvedValue({ ok: false, reason: 'resend responded with 500' });
+    const candidate = buildCandidate({ status: 'sent', followupCount: 0, lastFollowupAt: null });
+    findManyMock.mockResolvedValue([candidate]);
+
+    const outcomes = await runFollowupScheduler();
+
+    expect(outcomes).toEqual([
+      {
+        prospectId: candidate.id,
+        outcome: 'failed',
+        reason: 'send outcome unconfirmed, not retried: resend responded with 500',
+      },
+    ]);
+    expect(updateManyMock).toHaveBeenCalledTimes(2);
+    expect(updateManyMock).toHaveBeenLastCalledWith({
+      where: { id: candidate.id, status: 'followup_1' },
+      data: { tags: { push: FOLLOWUP_SEND_UNCONFIRMED_TAG } },
+    });
+    for (const [args] of updateManyMock.mock.calls) {
+      expect(args.data).not.toHaveProperty('status', 'sent');
+    }
+    expect(rollBackDailySendSlotMock).not.toHaveBeenCalled();
+  });
+
+  it('does not re-send touch 2 on the next run after an ambiguous failure, because the prospect is now followup_1 and not yet stale', async () => {
+    sendEmailMock.mockResolvedValue({ ok: false, reason: 'resend request failed (timeout)' });
+    findManyMock.mockResolvedValue([buildCandidate({ status: 'sent' })]);
+    await runFollowupScheduler();
+    expect(sendEmailMock).toHaveBeenCalledTimes(1);
+
+    // What the DB holds after the kept claim: followup_1, lastFollowupAt now.
+    findManyMock.mockResolvedValue([
+      buildCandidate({ status: 'followup_1', followupCount: 1, lastFollowupAt: new Date() }),
+    ]);
+    const secondRun = await runFollowupScheduler();
+
+    expect(secondRun).toEqual([]);
+    expect(sendEmailMock).toHaveBeenCalledTimes(1);
   });
 });
 

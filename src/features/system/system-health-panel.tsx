@@ -42,6 +42,7 @@ const STATUS_LABELS: Record<string, string> = {
   queued: 'Queued',
   sent: 'Sent',
   followup_1: 'Follow-up 1',
+  // Legacy statuses from the old 4-touch cycle; kept so existing rows display.
   followup_2: 'Follow-up 2',
   followup_3: 'Follow-up 3',
   replied: 'Replied',
