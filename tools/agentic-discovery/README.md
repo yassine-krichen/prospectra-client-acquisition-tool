@@ -21,12 +21,17 @@ outside `src/` on purpose - it is not part of the Next.js app and is never impor
 npm run discover:agentic -- --category "law firm" --geography "New York, NY" --count 8
 ```
 
-All three flags are optional:
+All flags are optional:
 
 - `--category` defaults to today's rotation entry from `pickDailyCategory` (same fixed New York
   category list the automated discovery cron uses).
 - `--geography` defaults to `"New York, NY"`.
 - `--count` defaults to `8`.
+- `--track` is `khalid` or `voreon` (see Tracks below).
+- `--out` is the directory for the track report (see Tracks below).
+- `--preference` is a free-text soft preference about job size/type (e.g. `"prefer quick wins like
+  landing page refreshes"`). Never a hard filter — the agent still reports any qualifying prospect
+  regardless of job size, it only affects prioritization.
 
 ## What it does
 
@@ -59,3 +64,10 @@ All three flags are optional:
 - Single category/geography per run - no batching over multiple categories in one invocation.
 - No discovery-run history entry is written (`DiscoveryRun` rows are only created by the main
   `runDiscovery` orchestrator in `discovery.service.ts`, not by this tool).
+
+## Tracks (`--track khalid|voreon`)
+
+`--track` tunes the prompt and writes a markdown handoff. Reports go to `--out <dir>` if given,
+else (khalid only) the `KHALID_PROSPECTS_DIR` env var, else the gitignored `outreach/` folder in this
+repo. The `voreon` report includes contact name/email and whether the email was `published`
+or `guessed`. Prospects with no email found are kept (`emailSource: none`) so they can be chased by hand.

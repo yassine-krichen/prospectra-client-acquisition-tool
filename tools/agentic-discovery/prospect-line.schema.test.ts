@@ -153,4 +153,10 @@ describe('agenticProspectLineSchema', () => {
 
     expect(result.success).toBe(true);
   });
+
+  it('rejects non-http(s) evidenceUrl and contactPageUrl schemes', () => {
+    expect(agenticProspectLineSchema.safeParse({ ...validLine(), evidenceUrl: 'javascript:alert(1)' }).success).toBe(false);
+    expect(agenticProspectLineSchema.safeParse({ ...validLine(), evidenceUrl: 'file:///etc/passwd' }).success).toBe(false);
+    expect(agenticProspectLineSchema.safeParse({ ...validLine(), contactPageUrl: 'data:text/html,x' }).success).toBe(false);
+  });
 });

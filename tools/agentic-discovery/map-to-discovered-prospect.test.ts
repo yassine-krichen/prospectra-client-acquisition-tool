@@ -20,6 +20,12 @@ function validLine(overrides: Partial<AgenticProspectLine> = {}): AgenticProspec
     evidenceUrl: 'https://acmedental.com',
     evidenceSummary: 'curl shows no TLS certificate',
     secondarySignal: null,
+    contactName: null,
+    contactRole: null,
+    contactEmail: null,
+    emailSource: 'none',
+    contactPageUrl: null,
+    pitchAngle: null,
     ...overrides,
   };
 }

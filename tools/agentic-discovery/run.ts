@@ -6,9 +6,11 @@ import type { DiscoveredProspect, DiscoveryQuery } from '@/features/discovery/di
 import { pickDailyCategory } from '@/features/discovery/ny-target-categories';
 
 import { runClaudeAgent } from './claude-cli';
+import type { AgenticProspectLine } from './prospect-line.schema';
 import { mapToDiscoveredProspect } from './map-to-discovered-prospect';
 import { agenticProspectLineSchema } from './prospect-line.schema';
-import { buildDiscoveryPrompt } from './prompt-template';
+import { buildDiscoveryPrompt, type DiscoveryTrack } from './prompt-template';
+import { writeProspectReport } from './write-prospect-report';
 
 const DEFAULT_GEOGRAPHY = 'New York, NY';
 const DEFAULT_COUNT = 8;
@@ -18,35 +20,59 @@ interface InvalidLine {
   error: string;
 }
 
-function parseArgs(argv: string[]): { category: string; geography: string; count: number } {
+interface ParsedArgs {
+  category: string;
+  geography: string;
+  count: number;
+  preference?: string;
+  track?: DiscoveryTrack;
+  outDir?: string;
+}
+
+function parseArgs(argv: string[]): ParsedArgs {
+  // A flag as the last arg (or followed by another flag) is an error rather
+  // than a silent fall-back to the default: a typo'd run would otherwise
+  // quietly use the wrong track/preference.
   const get = (flag: string): string | undefined => {
     const index = argv.indexOf(flag);
-    return index !== -1 ? argv[index + 1] : undefined;
+    if (index === -1) return undefined;
+    const value = argv[index + 1];
+    if (value === undefined || value.startsWith('--')) {
+      throw new Error(`${flag} requires a value`);
+    }
+    return value;
   };
 
   const category = get('--category') ?? pickDailyCategory(new Date());
   const geography = get('--geography') ?? DEFAULT_GEOGRAPHY;
   const countArg = get('--count');
-  const count = countArg ? Number.parseInt(countArg, 10) : DEFAULT_COUNT;
+  if (countArg !== undefined && !/^[1-9]\d*$/.test(countArg)) {
+    throw new Error(`--count must be a positive integer, got "${countArg}"`);
+  }
+  const count = countArg !== undefined ? Number.parseInt(countArg, 10) : DEFAULT_COUNT;
+  const preference = get('--preference');
+  const trackArg = get('--track');
+  if (trackArg !== undefined && trackArg !== 'khalid' && trackArg !== 'voreon') {
+    throw new Error(`--track must be "khalid" or "voreon", got "${trackArg}"`);
+  }
 
-  return { category, geography, count: Number.isFinite(count) && count > 0 ? count : DEFAULT_COUNT };
+  return { category, geography, count, preference, track: trackArg, outDir: get('--out') };
 }
 
 async function main(): Promise<void> {
-  const { category, geography, count } = parseArgs(process.argv.slice(2));
+  const { category, geography, count, preference, track, outDir } = parseArgs(process.argv.slice(2));
   const query: DiscoveryQuery = { category, geography };
 
   console.log(`Running agentic discovery for category="${category}" geography="${geography}" count=${count}...`);
 
-  const prompt = buildDiscoveryPrompt({ category, geography, count });
+  const prompt = buildDiscoveryPrompt({ category, geography, count, preference, track });
 
   let rawOutput: string;
   try {
     rawOutput = await runClaudeAgent(prompt);
   } catch (error) {
-    console.error('claude CLI run failed:', (error as Error).message);
-    process.exit(1);
-    return;
+    // Rethrown (not process.exit) so the .finally below still disconnects prisma.
+    throw new Error(`claude CLI run failed: ${(error as Error).message}`);
   }
 
   const lines = rawOutput
@@ -56,6 +82,7 @@ async function main(): Promise<void> {
 
   const invalidLines: InvalidLine[] = [];
   const mappedProspects: DiscoveredProspect[] = [];
+  const validLines: AgenticProspectLine[] = [];
 
   for (const line of lines) {
     let parsedJson: unknown;
@@ -72,6 +99,7 @@ async function main(): Promise<void> {
       continue;
     }
 
+    validLines.push(result.data);
     mappedProspects.push(mapToDiscoveredProspect(result.data));
   }
 
@@ -99,11 +127,18 @@ async function main(): Promise<void> {
   console.log(`Updated: ${updated}`);
   console.log(`Skipped (do not contact): ${skippedDoNotContact}`);
 
-  await prisma.$disconnect();
+  if (track) {
+    const reportPath = writeProspectReport({ track, category, geography, lines: validLines, outDir });
+    console.log(`Report written: ${reportPath}`);
+  }
 }
 
-main().catch(async (error: unknown) => {
-  console.error('Agentic discovery run failed:', error);
-  await prisma.$disconnect();
-  process.exit(1);
-});
+main()
+  .catch((error: unknown) => {
+    console.error('Agentic discovery run failed:', error);
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    // Always release the DB connection, whether the run or the report write threw.
+    await prisma.$disconnect();
+  });
