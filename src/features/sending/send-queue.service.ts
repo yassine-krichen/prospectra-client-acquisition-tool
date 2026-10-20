@@ -3,6 +3,7 @@ import { prisma } from '@/common/db/client';
 import { getEffectiveDailyCap } from '@/features/sending/domain-verification-gate';
 import { reserveDailySendSlot, rollBackDailySendSlot } from '@/features/sending/daily-send-counter';
 import { sendEmail } from '@/features/sending/resend.client';
+import { SEND_UNCONFIRMED_TAG } from '@/features/sending/sending.types';
 import type { ApprovalOutcome, ApprovalRequestItem } from '@/features/sending/sending.types';
 
 // This module is the one place in the codebase where a code path can
@@ -11,6 +12,9 @@ import type { ApprovalOutcome, ApprovalRequestItem } from '@/features/sending/se
 // without a human clicking approve first" - means `approveDrafts` below is
 // the ONLY function that may call `sendEmail`, and it is only ever reached
 // via a human-initiated approval request (the /api/queue/approve route).
+
+const UNCONFIRMED_REFUSAL_REASON =
+  'an earlier send for this prospect has an unconfirmed outcome; verify in Resend and clear the send-unconfirmed tag before re-sending';
 
 const DRAFT_SELECT = {
   id: true,
@@ -26,6 +30,7 @@ const DRAFT_SELECT = {
       priorityScore: true,
       contactEmail: true,
       statusHistory: true,
+      tags: true,
     },
   },
 } as const satisfies Prisma.DraftSelect;
@@ -70,10 +75,14 @@ type DraftWithProspect = Prisma.DraftGetPayload<{ select: typeof DRAFT_SELECT }>
  *      (`sentAt`, `statusHistory`, `activeDraftId`) - the claim from step 4
  *      already persisted `Draft.approved = true`, so a crash between the
  *      send succeeding and this step can never cause a resend, only a
- *      (recoverable) prospect-status lag. On failure, the claim is rolled
- *      back (`Draft.approved` reset to `false`) so a legitimate retry can
+ *      (recoverable) prospect-status lag. On a definite
+ *      non-delivery (`definitelyNotSent`), the claim is rolled back
+ *      (`Draft.approved` reset to `false`) so a legitimate retry can
  *      re-approve the same draft, while the edited body is kept regardless
- *      of send outcome so a human's edit is never lost.
+ *      of send outcome so a human's edit is never lost. On an ambiguous
+ *      failure the claim and cap slot are kept and the prospect is tagged
+ *      `send-unconfirmed`, so nothing for it can be sent again until an
+ *      operator has checked the provider dashboard.
  *
  * Returns one outcome per requested item, in the same order the items were
  * requested in (regardless of the priority order they were processed in).
@@ -129,6 +138,18 @@ export async function approveDrafts(items: ApprovalRequestItem[]): Promise<Appro
       continue;
     }
 
+    // An earlier send for this prospect may have gone out (ambiguous
+    // failure). Approving any other variant could email them twice, so an
+    // operator must verify in the provider dashboard and clear the tag first.
+    if (draft.prospect.tags.includes(SEND_UNCONFIRMED_TAG)) {
+      outcomeByDraftId.set(item.draftId, {
+        draftId: item.draftId,
+        outcome: 'failed',
+        reason: UNCONFIRMED_REFUSAL_REASON,
+      });
+      continue;
+    }
+
     // Atomically reserves a slot against the shared daily cap - see the doc
     // comment on `reserveDailySendSlot` for why this (not a plain
     // `getTodaysSendCount() >= cap` read) is what actually closes the race
@@ -165,7 +186,11 @@ export async function approveDrafts(items: ApprovalRequestItem[]): Promise<Appro
     }
 
     const claim = await prisma.draft.updateMany({
-      where: { id: draft.id, approved: false, prospect: { doNotContact: false } },
+      where: {
+        id: draft.id,
+        approved: false,
+        prospect: { doNotContact: false, NOT: { tags: { has: SEND_UNCONFIRMED_TAG } } },
+      },
       data: claimData,
     });
 
@@ -179,8 +204,16 @@ export async function approveDrafts(items: ApprovalRequestItem[]): Promise<Appro
       await rollBackDailySendSlot();
       const fresh = await prisma.draft.findUnique({
         where: { id: draft.id },
-        select: { prospect: { select: { doNotContact: true } } },
+        select: { prospect: { select: { doNotContact: true, tags: true } } },
       });
+      if (fresh?.prospect.tags.includes(SEND_UNCONFIRMED_TAG)) {
+        outcomeByDraftId.set(item.draftId, {
+          draftId: item.draftId,
+          outcome: 'failed',
+          reason: UNCONFIRMED_REFUSAL_REASON,
+        });
+        continue;
+      }
       const outcome = fresh?.prospect.doNotContact ? 'skipped_do_not_contact' : 'skipped_already_approved';
       outcomeByDraftId.set(item.draftId, { draftId: item.draftId, outcome });
       continue;
@@ -194,8 +227,41 @@ export async function approveDrafts(items: ApprovalRequestItem[]): Promise<Appro
       body: bodyToSend,
     });
 
+    if (!sendResult.ok && !sendResult.definitelyNotSent) {
+      // Ambiguous failure (timeout, 5xx, unparseable response): the provider
+      // may have delivered. Rolling back would let the draft be approved and
+      // sent again, so the claim (Draft.approved = true) stays and so does
+      // the cap slot, since the email may really have left. Recorded where
+      // the operator looks: lastSendFailure.unconfirmed on the draft and a
+      // tag on the prospect, which also blocks sibling variants. Each write is
+      // best-effort because the durable claim above already prevents a resend.
+      const occurredAt = new Date().toISOString();
+      try {
+        await prisma.draft.update({
+          where: { id: draft.id },
+          data: { lastSendFailure: { reason: sendResult.reason, occurredAt, unconfirmed: true } },
+        });
+      } catch (error) {
+        console.error(`failed to record unconfirmed send on draft ${draft.id}`, error);
+      }
+      try {
+        await prisma.prospect.updateMany({
+          where: { id: draft.prospectId, NOT: { tags: { has: SEND_UNCONFIRMED_TAG } } },
+          data: { tags: { push: SEND_UNCONFIRMED_TAG } },
+        });
+      } catch (error) {
+        console.error(`failed to tag prospect ${draft.prospectId} as ${SEND_UNCONFIRMED_TAG}`, error);
+      }
+      outcomeByDraftId.set(item.draftId, {
+        draftId: item.draftId,
+        outcome: 'failed',
+        reason: `send outcome unconfirmed, not retried: ${sendResult.reason}`,
+      });
+      continue;
+    }
+
     if (!sendResult.ok) {
-      // Roll back the claim so a legitimate retry can re-approve this
+      // Definite non-delivery: roll back the claim so a legitimate retry can re-approve this
       // draft later - a failed send must never permanently lock a draft
       // out of ever being sent. The edited body (if any) is kept: it was
       // applied above regardless of send outcome, so a human's edit is

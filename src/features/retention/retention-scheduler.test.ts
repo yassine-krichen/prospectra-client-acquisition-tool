@@ -367,14 +367,58 @@ describe('runRetentionScheduler missing contact info', () => {
 });
 
 describe('runRetentionScheduler send failure rollback', () => {
-  it('rolls the claim back to the prior lastRetentionTouchAt/retentionTouchCount when sendEmail fails', async () => {
-    sendEmailMock.mockResolvedValue({ ok: false, reason: 'resend responded with 500' });
+  it('keeps the claim and cap slot on an ambiguous failure, records it in statusHistory, and does not resend on the next run', async () => {
+    sendEmailMock.mockResolvedValue({ ok: false, reason: 'resend responded with 503' });
     const candidate = buildCandidate({ deliveredAt: daysAgo(3), retentionTouchCount: 0, lastRetentionTouchAt: null });
     findManyJobMock.mockResolvedValue([candidate]);
 
     const outcomes = await runRetentionScheduler();
 
-    expect(outcomes).toEqual([{ jobId: candidate.id, outcome: 'failed', reason: 'resend responded with 500' }]);
+    expect(outcomes).toEqual([
+      { jobId: candidate.id, outcome: 'failed', reason: 'send outcome unconfirmed, not retried: resend responded with 503' },
+    ]);
+    expect(rollBackDailySendSlotMock).not.toHaveBeenCalled();
+    // Only the claim and the unconfirmed marker are written - never a
+    // rollback to the prior touch count.
+    expect(updateManyJobMock).toHaveBeenCalledTimes(2);
+    const markerWrite = updateManyJobMock.mock.calls[1][0] as { data: Record<string, unknown> };
+    expect(markerWrite.data).not.toHaveProperty('retentionTouchCount');
+    expect(markerWrite.data.statusHistory).toEqual([
+      ...(candidate.statusHistory as unknown[]),
+      { status: 'retention_touch_1', timestamp: expect.any(String) },
+      { status: 'retention_send_unconfirmed_touch_1', timestamp: expect.any(String) },
+    ]);
+
+    // Next run reads the persisted (claimed) state: touch 1 was just
+    // recorded, so the Job is not due again and nothing is sent.
+    sendEmailMock.mockClear();
+    findManyJobMock.mockResolvedValue([{ ...candidate, retentionTouchCount: 1, lastRetentionTouchAt: new Date() }]);
+    await runRetentionScheduler();
+    expect(sendEmailMock).not.toHaveBeenCalled();
+  });
+
+  it('still returns the unconfirmed failure and keeps the cap slot when recording the marker fails', async () => {
+    sendEmailMock.mockResolvedValue({ ok: false, reason: 'timeout' });
+    const candidate = buildCandidate({ deliveredAt: daysAgo(3), retentionTouchCount: 0, lastRetentionTouchAt: null });
+    findManyJobMock.mockResolvedValue([candidate]);
+    updateManyJobMock.mockResolvedValueOnce({ count: 1 }).mockRejectedValueOnce(new Error('db down'));
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const outcomes = await runRetentionScheduler();
+
+    expect(outcomes[0]).toMatchObject({ outcome: 'failed' });
+    expect(rollBackDailySendSlotMock).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
+  it('rolls the claim back to the prior lastRetentionTouchAt/retentionTouchCount when sendEmail fails', async () => {
+    sendEmailMock.mockResolvedValue({ ok: false, reason: 'resend responded with 422', definitelyNotSent: true });
+    const candidate = buildCandidate({ deliveredAt: daysAgo(3), retentionTouchCount: 0, lastRetentionTouchAt: null });
+    findManyJobMock.mockResolvedValue([candidate]);
+
+    const outcomes = await runRetentionScheduler();
+
+    expect(outcomes).toEqual([{ jobId: candidate.id, outcome: 'failed', reason: 'resend responded with 422' }]);
     expect(updateManyJobMock).toHaveBeenLastCalledWith({
       where: { id: candidate.id, lastRetentionTouchAt: expect.any(Date), retentionTouchCount: 1 },
       data: { lastRetentionTouchAt: null, retentionTouchCount: 0, statusHistory: candidate.statusHistory },

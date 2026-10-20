@@ -2,6 +2,7 @@ import { Prisma, ProspectStatus as PrismaProspectStatus } from '@/lib/generated/
 import { prisma } from '@/common/db/client';
 import { getEffectiveDailyCap, isDomainVerified } from '@/features/sending/domain-verification-gate';
 import { getTodaysSendCount } from '@/features/sending/daily-send-counter';
+import { SEND_UNCONFIRMED_TAG } from '@/features/sending/sending.types';
 import type { QueueItemView, QueueListResult } from '@/features/sending/sending.types';
 
 // Explicit projection - the queue view only needs enough of each prospect
@@ -16,6 +17,7 @@ const QUEUE_SELECT = {
   doNotContact: true,
   priorityScore: true,
   activeDraftId: true,
+  tags: true,
   drafts: {
     select: {
       id: true,
@@ -33,6 +35,15 @@ const QUEUE_SELECT = {
 
 type QueueProspectRow = Prisma.ProspectGetPayload<{ select: typeof QUEUE_SELECT }>;
 type QueueDraftRow = QueueProspectRow['drafts'][number];
+
+function isUnconfirmedFailure(lastSendFailure: Prisma.JsonValue | null): boolean {
+  return (
+    typeof lastSendFailure === 'object' &&
+    lastSendFailure !== null &&
+    !Array.isArray(lastSendFailure) &&
+    lastSendFailure.unconfirmed === true
+  );
+}
 
 /**
  * Picks which of a prospect's drafts to pre-select/highlight as the default
@@ -89,6 +100,7 @@ export async function listApprovalQueue(): Promise<QueueListResult> {
       contactName: prospect.contactName,
       contactEmail: prospect.contactEmail,
       doNotContact: prospect.doNotContact,
+      sendUnconfirmed: prospect.tags.includes(SEND_UNCONFIRMED_TAG),
       priorityScore: prospect.priorityScore,
       drafts: sortedDrafts.map((draft) => ({
         id: draft.id,
@@ -100,6 +112,7 @@ export async function listApprovalQueue(): Promise<QueueListResult> {
         edited: draft.edited,
         approved: draft.approved,
         hasSendFailure: draft.lastSendFailure !== null,
+        sendUnconfirmed: isUnconfirmedFailure(draft.lastSendFailure),
       })),
       defaultDraftId: defaultDraft?.id ?? null,
     };

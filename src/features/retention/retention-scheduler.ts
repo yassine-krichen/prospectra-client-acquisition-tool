@@ -124,6 +124,12 @@ async function resolveVariant(
   return siblingMonthlyJob ? 'checkin_only' : 'with_upsell';
 }
 
+// Prefix of the statusHistory entry (followed by the touch number) appended to
+// a Job whose retention send failed ambiguously and was deliberately not
+// retried; an operator should confirm in the provider dashboard whether that
+// touch actually went out.
+export const RETENTION_SEND_UNCONFIRMED_STATUS_PREFIX = 'retention_send_unconfirmed_touch_';
+
 /**
  * Attempts one retention touch for a candidate already confirmed stale and
  * eligible for `touchNumber`/`variant`. The atomic claim below closes the
@@ -187,9 +193,39 @@ async function attemptRetentionSend(
     body: rendered.template.body,
   });
 
+  if (!sendResult.ok && !sendResult.definitelyNotSent) {
+    // Ambiguous failure (timeout, 5xx, unparseable response): the provider
+    // may have delivered. Rolling back would let the next run send this touch
+    // again, breaking the never-send-twice invariant, so the claim
+    // (lastRetentionTouchAt/retentionTouchCount) and the cap slot stay, and
+    // the next touch is simply scheduled by the normal gap. A Job has no
+    // tags, so the operator-visible marker is an extra statusHistory entry;
+    // the write is best-effort since the claim alone already prevents a resend.
+    try {
+      await prisma.job.updateMany({
+        where: { id: candidate.id, lastRetentionTouchAt: now, retentionTouchCount: priorRetentionTouchCount + 1 },
+        data: {
+          statusHistory: [
+            ...statusHistory,
+            { status: `retention_touch_${touchNumber}`, timestamp: now.toISOString() },
+            { status: `${RETENTION_SEND_UNCONFIRMED_STATUS_PREFIX}${touchNumber}`, timestamp: new Date().toISOString() },
+          ],
+        },
+      });
+    } catch (error) {
+      console.error(`failed to record unconfirmed retention send for job ${candidate.id}`, error);
+    }
+    return {
+      jobId: candidate.id,
+      outcome: 'failed',
+      reason: `send outcome unconfirmed, not retried: ${sendResult.reason}`,
+    };
+  }
+
   if (!sendResult.ok) {
-    // Roll back the claim so a later scheduler run can legitimately retry -
-    // a failed send must never permanently strand a Job mid-sequence.
+    // Definite non-delivery (see `definitelyNotSent`): roll back the claim so
+    // a later scheduler run can legitimately retry -
+    // a rejected send must never permanently strand a Job mid-sequence.
     // Conditioned on `lastRetentionTouchAt`/`retentionTouchCount` equalling
     // the exact values THIS call's claim just set (rather than an
     // unconditional update), mirroring attemptFollowupSend's rollback

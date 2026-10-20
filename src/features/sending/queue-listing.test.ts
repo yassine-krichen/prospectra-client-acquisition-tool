@@ -47,6 +47,7 @@ interface ProspectOverrides {
   activeDraftId?: string | null;
   drafts?: ReturnType<typeof buildDraft>[];
   priorityScore?: number;
+  tags?: string[];
 }
 
 function buildProspect(overrides: ProspectOverrides = {}) {
@@ -58,6 +59,7 @@ function buildProspect(overrides: ProspectOverrides = {}) {
     doNotContact: false,
     priorityScore: overrides.priorityScore ?? 1,
     activeDraftId: overrides.activeDraftId ?? null,
+    tags: overrides.tags ?? [],
     drafts: overrides.drafts ?? [],
   };
 }
@@ -219,5 +221,26 @@ describe('listApprovalQueue capStatus', () => {
     const { capStatus } = await listApprovalQueue();
 
     expect(capStatus).toEqual({ domainVerified: true, effectiveDailyCap: 25, sentToday: 7 });
+  });
+});
+
+describe('listApprovalQueue unconfirmed sends', () => {
+  it('flags a prospect tagged send-unconfirmed and a draft whose failure is unconfirmed, but not a definite failure', async () => {
+    findManyMock.mockResolvedValue([
+      buildProspect({
+        tags: ['send-unconfirmed'],
+        drafts: [
+          buildDraft({ id: 'draft-1', variant: 1, lastSendFailure: { reason: 'timeout', occurredAt: 'x', unconfirmed: true } }),
+          buildDraft({ id: 'draft-2', variant: 2, lastSendFailure: { reason: '422', occurredAt: 'x' } }),
+          buildDraft({ id: 'draft-3', variant: 3 }),
+        ],
+      }),
+    ]);
+
+    const { items } = await listApprovalQueue();
+
+    expect(items[0].sendUnconfirmed).toBe(true);
+    expect(items[0].drafts.map((draft) => draft.sendUnconfirmed)).toEqual([true, false, false]);
+    expect(items[0].drafts.map((draft) => draft.hasSendFailure)).toEqual([true, true, false]);
   });
 });

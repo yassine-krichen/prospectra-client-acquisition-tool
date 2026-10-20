@@ -12,14 +12,21 @@ import { Prisma } from '@/lib/generated/prisma/client';
 // suites, so they're mocked here too - only send-queue.service.ts's own
 // ordering, cap re-check, and success/failure persistence logic is under
 // test.
-const { findManyDraftMock, updateDraftMock, updateManyDraftMock, findUniqueDraftMock, updateProspectMock } =
-  vi.hoisted(() => ({
+const {
+  findManyDraftMock,
+  updateDraftMock,
+  updateManyDraftMock,
+  findUniqueDraftMock,
+  updateProspectMock,
+  updateManyProspectMock,
+} = vi.hoisted(() => ({
     findManyDraftMock: vi.fn(),
     updateDraftMock: vi.fn(),
     updateManyDraftMock: vi.fn(),
     findUniqueDraftMock: vi.fn(),
     updateProspectMock: vi.fn(),
-  }));
+    updateManyProspectMock: vi.fn(),
+}));
 
 vi.mock('@/common/db/client', () => ({
   prisma: {
@@ -29,7 +36,7 @@ vi.mock('@/common/db/client', () => ({
       updateMany: updateManyDraftMock,
       findUnique: findUniqueDraftMock,
     },
-    prospect: { update: updateProspectMock },
+    prospect: { update: updateProspectMock, updateMany: updateManyProspectMock },
   },
 }));
 
@@ -82,6 +89,7 @@ interface DraftRowOverrides {
     doNotContact: boolean;
     contactEmail: string | null;
     statusHistory: unknown;
+    tags: string[];
   }>;
 }
 
@@ -101,6 +109,7 @@ function buildDraftRow(overrides: DraftRowOverrides = {}) {
       contactEmail:
         overrides.prospect?.contactEmail === undefined ? 'contact@example.com' : overrides.prospect.contactEmail,
       statusHistory: overrides.prospect?.statusHistory ?? [],
+      tags: overrides.prospect?.tags ?? [],
     },
   };
 }
@@ -114,6 +123,7 @@ beforeEach(() => {
   updateManyDraftMock.mockResolvedValue({ count: 1 });
   findUniqueDraftMock.mockResolvedValue(null);
   updateProspectMock.mockResolvedValue({});
+  updateManyProspectMock.mockResolvedValue({ count: 1 });
   getEffectiveDailyCapMock.mockReturnValue(10);
   dailySendState.reservedCount = 0;
   sendEmailMock.mockResolvedValue({ ok: true, id: 'resend-message-id' });
@@ -302,7 +312,7 @@ describe('approveDrafts missing contact email', () => {
 
 describe('approveDrafts send outcome persistence - the core safety boundary', () => {
   it('claims the draft (approved:true) before sending, then rolls the claim back to approved:false when the send fails - never leaving Prospect.status/sentAt set', async () => {
-    sendEmailMock.mockResolvedValue({ ok: false, reason: 'resend responded with 422' });
+    sendEmailMock.mockResolvedValue({ ok: false, reason: 'resend responded with 422', definitelyNotSent: true });
     findManyDraftMock.mockResolvedValue([buildDraftRow({ id: 'draft-1' })]);
 
     const results = await approveDrafts([{ draftId: 'draft-1' }]);
@@ -312,7 +322,7 @@ describe('approveDrafts send outcome persistence - the core safety boundary', ()
     // impossible), but since the send failed it must be rolled back so a
     // later legitimate retry can re-approve this draft.
     expect(updateManyDraftMock).toHaveBeenCalledWith({
-      where: { id: 'draft-1', approved: false, prospect: { doNotContact: false } },
+      where: { id: 'draft-1', approved: false, prospect: { doNotContact: false, NOT: { tags: { has: 'send-unconfirmed' } } } },
       data: { approved: true },
     });
     expect(updateDraftMock).toHaveBeenCalledWith({
@@ -340,7 +350,7 @@ describe('approveDrafts send outcome persistence - the core safety boundary', ()
 
   it('clears a previously recorded lastSendFailure once a later approval of the same draft succeeds', async () => {
     findManyDraftMock.mockResolvedValue([buildDraftRow({ id: 'draft-1' })]);
-    sendEmailMock.mockResolvedValueOnce({ ok: false, reason: 'network error' });
+    sendEmailMock.mockResolvedValueOnce({ ok: false, reason: 'network error', definitelyNotSent: true });
 
     await approveDrafts([{ draftId: 'draft-1' }]);
     expect(updateDraftMock).toHaveBeenCalledWith({
@@ -371,7 +381,7 @@ describe('approveDrafts send outcome persistence - the core safety boundary', ()
     expect(results).toEqual([{ draftId: 'draft-1', outcome: 'sent' }]);
 
     expect(updateManyDraftMock).toHaveBeenCalledWith({
-      where: { id: 'draft-1', approved: false, prospect: { doNotContact: false } },
+      where: { id: 'draft-1', approved: false, prospect: { doNotContact: false, NOT: { tags: { has: 'send-unconfirmed' } } } },
       data: { approved: true },
     });
     // The rollback-with-failure-reason shape must never fire on a successful
@@ -416,21 +426,21 @@ describe('approveDrafts editedBody handling', () => {
     await approveDrafts([{ draftId: 'draft-1', editedBody: 'human-edited body' }]);
 
     expect(updateManyDraftMock).toHaveBeenCalledWith({
-      where: { id: 'draft-1', approved: false, prospect: { doNotContact: false } },
+      where: { id: 'draft-1', approved: false, prospect: { doNotContact: false, NOT: { tags: { has: 'send-unconfirmed' } } } },
       data: { approved: true, body: 'human-edited body', edited: true },
     });
     expect(sendEmailMock).toHaveBeenCalledWith(expect.objectContaining({ body: 'human-edited body' }));
   });
 
   it('keeps the editedBody applied to Draft.body even when the subsequent send attempt fails - only approved is rolled back', async () => {
-    sendEmailMock.mockResolvedValue({ ok: false, reason: 'network error' });
+    sendEmailMock.mockResolvedValue({ ok: false, reason: 'network error', definitelyNotSent: true });
     findManyDraftMock.mockResolvedValue([buildDraftRow({ id: 'draft-1' })]);
 
     const results = await approveDrafts([{ draftId: 'draft-1', editedBody: 'edited body' }]);
 
     expect(results).toEqual([{ draftId: 'draft-1', outcome: 'failed', reason: 'network error' }]);
     expect(updateManyDraftMock).toHaveBeenCalledWith({
-      where: { id: 'draft-1', approved: false, prospect: { doNotContact: false } },
+      where: { id: 'draft-1', approved: false, prospect: { doNotContact: false, NOT: { tags: { has: 'send-unconfirmed' } } } },
       data: { approved: true, body: 'edited body', edited: true },
     });
     // The rollback only resets `approved` (plus recording the failure) - it
@@ -551,7 +561,7 @@ describe('approveDrafts concurrent requests for the same draftId (cross-request 
 
   it('allows a legitimate retry to succeed after a prior send attempt failed and rolled the claim back', async () => {
     findManyDraftMock.mockResolvedValue([buildDraftRow({ id: 'draft-1' })]);
-    sendEmailMock.mockResolvedValueOnce({ ok: false, reason: 'network error' });
+    sendEmailMock.mockResolvedValueOnce({ ok: false, reason: 'network error', definitelyNotSent: true });
 
     const firstAttempt = await approveDrafts([{ draftId: 'draft-1' }]);
     expect(firstAttempt).toEqual([{ draftId: 'draft-1', outcome: 'failed', reason: 'network error' }]);
@@ -571,7 +581,7 @@ describe('approveDrafts doNotContact freshness at claim time', () => {
   it('reports skipped_do_not_contact (not skipped_already_approved) when doNotContact flips true between the initial read and the atomic claim', async () => {
     findManyDraftMock.mockResolvedValue([buildDraftRow({ id: 'draft-1' })]);
     updateManyDraftMock.mockResolvedValue({ count: 0 });
-    findUniqueDraftMock.mockResolvedValue({ prospect: { doNotContact: true } });
+    findUniqueDraftMock.mockResolvedValue({ prospect: { doNotContact: true, tags: [] } });
 
     const results = await approveDrafts([{ draftId: 'draft-1' }]);
 
@@ -582,12 +592,81 @@ describe('approveDrafts doNotContact freshness at claim time', () => {
   it('falls back to skipped_already_approved when the claim fails but doNotContact is still false on re-read, and rolls back the reserved daily-cap slot', async () => {
     findManyDraftMock.mockResolvedValue([buildDraftRow({ id: 'draft-1' })]);
     updateManyDraftMock.mockResolvedValue({ count: 0 });
-    findUniqueDraftMock.mockResolvedValue({ prospect: { doNotContact: false } });
+    findUniqueDraftMock.mockResolvedValue({ prospect: { doNotContact: false, tags: [] } });
 
     const results = await approveDrafts([{ draftId: 'draft-1' }]);
 
     expect(results).toEqual([{ draftId: 'draft-1', outcome: 'skipped_already_approved' }]);
     expect(sendEmailMock).not.toHaveBeenCalled();
     expect(rollBackDailySendSlotMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('approveDrafts ambiguous send failure (never send twice)', () => {
+  it('keeps the draft approved and the cap slot, records the unconfirmed state on the draft and prospect, and never rolls back', async () => {
+    sendEmailMock.mockResolvedValue({ ok: false, reason: 'resend responded with 503' });
+    findManyDraftMock.mockResolvedValue([buildDraftRow({ id: 'draft-1' })]);
+
+    const results = await approveDrafts([{ draftId: 'draft-1' }]);
+
+    expect(results).toEqual([
+      { draftId: 'draft-1', outcome: 'failed', reason: 'send outcome unconfirmed, not retried: resend responded with 503' },
+    ]);
+    expect(rollBackDailySendSlotMock).not.toHaveBeenCalled();
+    expect(updateDraftMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ approved: false }) })
+    );
+    expect(updateDraftMock).toHaveBeenCalledWith({
+      where: { id: 'draft-1' },
+      data: { lastSendFailure: { reason: 'resend responded with 503', occurredAt: expect.any(String), unconfirmed: true } },
+    });
+    expect(updateManyProspectMock).toHaveBeenCalledWith({
+      where: { id: 'prospect-1', NOT: { tags: { has: 'send-unconfirmed' } } },
+      data: { tags: { push: 'send-unconfirmed' } },
+    });
+    expect(updateProspectMock).not.toHaveBeenCalled();
+  });
+
+  it('does not send again on a later approval of the same draft or of a sibling variant once the prospect is tagged', async () => {
+    sendEmailMock.mockResolvedValueOnce({ ok: false, reason: 'timeout' });
+    findManyDraftMock.mockResolvedValue([buildDraftRow({ id: 'draft-1' })]);
+    await approveDrafts([{ draftId: 'draft-1' }]);
+    expect(sendEmailMock).toHaveBeenCalledTimes(1);
+
+    // The persisted state the next request will read back from the database.
+    findManyDraftMock.mockResolvedValue([
+      buildDraftRow({ id: 'draft-1', approved: true, prospect: { tags: ['send-unconfirmed'] } }),
+      buildDraftRow({ id: 'draft-2', prospect: { tags: ['send-unconfirmed'] } }),
+    ]);
+    const results = await approveDrafts([{ draftId: 'draft-1' }, { draftId: 'draft-2' }]);
+
+    expect(results[0]).toEqual({ draftId: 'draft-1', outcome: 'skipped_already_approved' });
+    expect(results[1]).toMatchObject({ draftId: 'draft-2', outcome: 'failed' });
+    expect(sendEmailMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a sibling variant whose prospect was tagged between the read and the claim', async () => {
+    findManyDraftMock.mockResolvedValue([buildDraftRow({ id: 'draft-2' })]);
+    updateManyDraftMock.mockResolvedValue({ count: 0 });
+    findUniqueDraftMock.mockResolvedValue({ prospect: { doNotContact: false, tags: ['send-unconfirmed'] } });
+
+    const results = await approveDrafts([{ draftId: 'draft-2' }]);
+
+    expect(results[0]).toMatchObject({ draftId: 'draft-2', outcome: 'failed' });
+    expect(sendEmailMock).not.toHaveBeenCalled();
+  });
+
+  it('still reports the unconfirmed outcome (and never resends) when recording it fails', async () => {
+    sendEmailMock.mockResolvedValue({ ok: false, reason: 'timeout' });
+    findManyDraftMock.mockResolvedValue([buildDraftRow({ id: 'draft-1' })]);
+    updateDraftMock.mockRejectedValue(new Error('db down'));
+    updateManyProspectMock.mockRejectedValue(new Error('db down'));
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const results = await approveDrafts([{ draftId: 'draft-1' }]);
+
+    expect(results[0]).toMatchObject({ outcome: 'failed' });
+    expect(rollBackDailySendSlotMock).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
   });
 });

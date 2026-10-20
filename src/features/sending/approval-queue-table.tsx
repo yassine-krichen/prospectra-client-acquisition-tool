@@ -245,7 +245,7 @@ export function ApprovalQueueTable(): React.JSX.Element {
   }
 
   function selectableProspectIds(): string[] {
-    return items.filter((item) => item.drafts.length > 0 && !item.doNotContact).map((item) => item.prospectId);
+    return items.filter((item) => item.drafts.length > 0 && !item.doNotContact && !item.sendUnconfirmed).map((item) => item.prospectId);
   }
 
   function toggleSelectAll(): void {
@@ -384,7 +384,7 @@ export function ApprovalQueueTable(): React.JSX.Element {
       ) : (
         <div className="flex flex-col gap-4">
           {items.map((item) => {
-            const blocked = item.doNotContact || item.drafts.length === 0;
+            const blocked = item.doNotContact || item.sendUnconfirmed || item.drafts.length === 0;
             const selectedVariantId = chosenDraftId[item.prospectId];
 
             return (
@@ -413,8 +413,22 @@ export function ApprovalQueueTable(): React.JSX.Element {
                         Do not contact
                       </Badge>
                     ) : null}
+                    {item.sendUnconfirmed ? (
+                      <Badge variant="destructive">
+                        <HugeiconsIcon icon={AlertCircleIcon} data-icon="inline-start" strokeWidth={2} />
+                        Send unconfirmed
+                      </Badge>
+                    ) : null}
                   </div>
                 </div>
+
+                {item.sendUnconfirmed ? (
+                  <p className="text-sm">
+                    A send to this prospect timed out or got an unclear response, so the email may already have gone
+                    out. Sending is locked: check the Resend dashboard, then clear the send-unconfirmed tag on the
+                    prospect only if it was not delivered.
+                  </p>
+                ) : null}
 
                 {item.drafts.length === 0 ? (
                   <p className="text-muted-foreground text-sm">No drafts on file for this prospect.</p>
@@ -443,7 +457,11 @@ export function ApprovalQueueTable(): React.JSX.Element {
                               />
                               {frameworkLabel(draft.framework)}
                             </label>
-                            {draft.hasSendFailure ? <Badge variant="destructive">Send failed</Badge> : null}
+                            {draft.sendUnconfirmed ? (
+                              <Badge variant="destructive">Send unconfirmed</Badge>
+                            ) : draft.hasSendFailure ? (
+                              <Badge variant="destructive">Send failed</Badge>
+                            ) : null}
                           </div>
 
                           <p className="text-sm font-medium">{draft.subject}</p>

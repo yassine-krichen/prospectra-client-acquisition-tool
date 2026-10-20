@@ -11,6 +11,12 @@ import { z } from 'zod';
 // bare interfaces, since those are the ones an API consumer must not just
 // trust.
 
+// Added to a prospect whose first-touch send failed ambiguously (timeout,
+// 5xx, unparseable response): the email may have been delivered, so the
+// approval queue refuses to send any variant for it until an operator has
+// checked the provider dashboard and cleared the tag.
+export const SEND_UNCONFIRMED_TAG = 'send-unconfirmed';
+
 export interface SendEmailInput {
   to: string;
   subject: string;
@@ -99,6 +105,9 @@ export const queueDraftViewSchema = z.object({
   // failure detail itself): this is a minimal "something went wrong, retry
   // or investigate" indicator for the queue UI, not a dedicated failures view.
   hasSendFailure: z.boolean(),
+  // True when `lastSendFailure.unconfirmed` is set: the send's outcome is
+  // unknown (the email may have gone out), as opposed to a definite failure.
+  sendUnconfirmed: z.boolean(),
 });
 export type QueueDraftView = z.infer<typeof queueDraftViewSchema>;
 
@@ -108,6 +117,8 @@ export const queueItemViewSchema = z.object({
   contactName: z.string().nullable(),
   contactEmail: z.string().nullable(),
   doNotContact: z.boolean(),
+  // Prospect carries SEND_UNCONFIRMED_TAG: sending is locked for every variant.
+  sendUnconfirmed: z.boolean(),
   priorityScore: z.number().int(),
   /**
    * Every draft variant this prospect has (normally 3), sorted by variant
