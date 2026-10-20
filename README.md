@@ -5,7 +5,7 @@
   <p>
     <em>Finds companies whose own website reveals technical debt, drafts the outreach, and refuses to send anything a human hasn't approved.</em>
   </p>
-  <p>(repo: biz-scraper)</p>
+  <p>(repo: prospectra-client-acquisition-tool)</p>
 
   ![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=nextdotjs)
   ![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue?logo=typescript)
