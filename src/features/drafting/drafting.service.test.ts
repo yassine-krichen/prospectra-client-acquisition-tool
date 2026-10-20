@@ -87,7 +87,7 @@ function buildProspectRow(overrides: ProspectRowOverrides = {}) {
   };
 }
 
-// 60 filler words (comfortably inside the 50-125 MIN_WORDS/MAX_WORDS range)
+// 60 filler words (comfortably inside the 55-100 MIN_WORDS/MAX_WORDS range)
 // prefixed with a label so each variant's body is distinguishable, and
 // containing none of BANNED_PHRASES - needed so these fixtures pass
 // validate-draft-output.ts's post-generation validation, which

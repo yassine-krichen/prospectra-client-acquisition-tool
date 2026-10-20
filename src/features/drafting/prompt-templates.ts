@@ -6,8 +6,13 @@ import type { DraftableProspect } from '@/features/drafting/drafting.types';
 // (claude-bridge.client.ts) so a "more human" rewrite can't drift outside the
 // same bounds the original draft was held to.
 
-export const MIN_WORDS = 50;
-export const MAX_WORDS = 125;
+// Bounds are slightly wider than the 60-90 word target the prompt asks for.
+// Basis: a 6,337-email cold-outreach analysis (r/PublicRelations) found
+// <100 words replied ~11.9% vs ~1.9% for 100-200 and ~0.3% for 200+, with
+// 60-90 the sweet spot. The hard cap sits just above the target so a
+// borderline draft still validates instead of burning a retry.
+export const MIN_WORDS = 55;
+export const MAX_WORDS = 100;
 
 // Common cold-email clichés this app refuses to send. Not exhaustive - a
 // small starter list per the spec; extend as new clichés turn up in review.
@@ -209,7 +214,8 @@ ${fenceUntrustedData('PROSPECT DATA', prospectData)}
 ${framework.instructionBlock(prospect)}
 
 Hard constraints:
-- The email body must be between ${MIN_WORDS} and ${MAX_WORDS} words.
+- The email body must be between ${MIN_WORDS} and ${MAX_WORDS} words; aim for 60-90. Shorter reads like a real person asking one clear thing.
+- The subject line must be under 30 characters, plain and lowercase-friendly, and include a concrete number when one fits naturally (e.g. "3 fixes for your site"). Never clickbait.
 - Include exactly ONE specific observation, drawn only from the signal above.
 - Include exactly ONE soft ask (e.g. "worth a quick chat?") - never a hard
   call-to-action ("book a call now", "reply today", any deadline/urgency).
