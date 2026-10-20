@@ -30,6 +30,11 @@ tasks:
     cmds:
       - powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort {{.PORT}} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id \$_ -Force -ErrorAction SilentlyContinue }"
 
+  discover:agentic:
+    desc: On-demand Claude Code prospect discovery (needs logged-in `claude` CLI). Args after --
+    cmds:
+      - npm run discover:agentic -- {{.CLI_ARGS}}
+
   test:
     desc: Run the test suite (Vitest - includes proxy.test.ts at the repo root)
     cmds:

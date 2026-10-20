@@ -31,3 +31,5 @@ next-env.d.ts
 # Prisma
 prisma/*.db
 /lib/generated/prisma
+outreach/
+.playwright-mcp/
