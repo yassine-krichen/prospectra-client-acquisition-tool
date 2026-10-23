@@ -26,6 +26,8 @@ interface DraftOverrides {
   variant: number;
   humanizedBody?: string | null;
   lastSendFailure?: unknown;
+  approved?: boolean;
+  generatedAt?: Date;
 }
 
 function buildDraft(overrides: DraftOverrides) {
@@ -37,7 +39,8 @@ function buildDraft(overrides: DraftOverrides) {
     body: 'Body',
     humanizedBody: overrides.humanizedBody ?? null,
     edited: false,
-    approved: false,
+    approved: overrides.approved ?? false,
+    generatedAt: overrides.generatedAt ?? new Date(Date.now() - 60 * 60 * 1000),
     lastSendFailure: overrides.lastSendFailure ?? null,
   };
 }
@@ -48,6 +51,7 @@ interface ProspectOverrides {
   drafts?: ReturnType<typeof buildDraft>[];
   priorityScore?: number;
   tags?: string[];
+  sentAt?: Date | null;
 }
 
 function buildProspect(overrides: ProspectOverrides = {}) {
@@ -60,6 +64,7 @@ function buildProspect(overrides: ProspectOverrides = {}) {
     priorityScore: overrides.priorityScore ?? 1,
     activeDraftId: overrides.activeDraftId ?? null,
     tags: overrides.tags ?? [],
+    sentAt: overrides.sentAt === undefined ? null : overrides.sentAt,
     drafts: overrides.drafts ?? [],
   };
 }
@@ -242,5 +247,59 @@ describe('listApprovalQueue unconfirmed sends', () => {
     expect(items[0].sendUnconfirmed).toBe(true);
     expect(items[0].drafts.map((draft) => draft.sendUnconfirmed)).toEqual([true, false, false]);
     expect(items[0].drafts.map((draft) => draft.hasSendFailure)).toEqual([true, true, false]);
+  });
+
+  it('shows the locked state for a prospect with an approved draft and no tag, since the tag write may have failed', async () => {
+    findManyMock.mockResolvedValue([
+      buildProspect({
+        tags: [],
+        drafts: [buildDraft({ id: 'draft-1', variant: 1, approved: true }), buildDraft({ id: 'draft-2', variant: 2 })],
+      }),
+    ]);
+
+    const { items } = await listApprovalQueue();
+
+    expect(items[0].sendUnconfirmed).toBe(true);
+    expect(items[0].sendInFlight).toBe(false);
+  });
+
+  it('shows a send claimed moments ago as sending, not as unconfirmed, so it cannot be resolved yet', async () => {
+    findManyMock.mockResolvedValue([
+      buildProspect({
+        tags: [],
+        drafts: [
+          buildDraft({
+            id: 'draft-1',
+            variant: 1,
+            approved: true,
+            lastSendFailure: { inFlight: true, startedAt: new Date(Date.now() - 30 * 1000).toISOString() },
+          }),
+          buildDraft({ id: 'draft-2', variant: 2 }),
+        ],
+      }),
+    ]);
+
+    const { items } = await listApprovalQueue();
+
+    expect(items[0].sendInFlight).toBe(true);
+    expect(items[0].sendUnconfirmed).toBe(false);
+    expect(items[0].drafts.map((draft) => draft.hasSendFailure)).toEqual([false, false]);
+  });
+
+  it('does not lock a re-drafted prospect that already has a recorded send', async () => {
+    findManyMock.mockResolvedValue([
+      buildProspect({
+        tags: [],
+        sentAt: new Date('2026-01-01T00:00:00.000Z'),
+        drafts: [
+          buildDraft({ id: 'draft-1', variant: 1, approved: true, generatedAt: new Date('2025-12-31T00:00:00.000Z') }),
+          buildDraft({ id: 'draft-2', variant: 2 }),
+        ],
+      }),
+    ]);
+
+    const { items } = await listApprovalQueue();
+
+    expect(items[0].sendUnconfirmed).toBe(false);
   });
 });

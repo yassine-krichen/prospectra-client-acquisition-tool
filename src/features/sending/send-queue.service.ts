@@ -5,6 +5,7 @@ import { reserveDailySendSlot, rollBackDailySendSlot } from '@/features/sending/
 import { sendEmail } from '@/features/sending/resend.client';
 import { SEND_UNCONFIRMED_TAG } from '@/features/sending/sending.types';
 import type { ApprovalOutcome, ApprovalRequestItem } from '@/features/sending/sending.types';
+import { buildInFlightMarker, getSendLockState } from '@/features/sending/unconfirmed-send';
 
 // This module is the one place in the codebase where a code path can
 // actually cause an email to leave the system. The core safety invariant
@@ -14,7 +15,13 @@ import type { ApprovalOutcome, ApprovalRequestItem } from '@/features/sending/se
 // via a human-initiated approval request (the /api/queue/approve route).
 
 const UNCONFIRMED_REFUSAL_REASON =
-  'an earlier send for this prospect has an unconfirmed outcome; verify in Resend and clear the send-unconfirmed tag before re-sending';
+  'an earlier send for this prospect has an unconfirmed outcome; check Resend, then use "It was delivered" or "Not delivered, allow resend" on the Queue page before sending again';
+
+const SENDING_REFUSAL_REASON =
+  'another variant for this prospect is being sent right now; wait for it to finish (a few minutes at most) before sending again';
+
+const NOT_DRAFTED_REFUSAL_REASON =
+  'this prospect is no longer waiting for a first send (it was already sent, replied, or closed)';
 
 const DRAFT_SELECT = {
   id: true,
@@ -31,11 +38,77 @@ const DRAFT_SELECT = {
       contactEmail: true,
       statusHistory: true,
       tags: true,
+      status: true,
+      sentAt: true,
+      // Every variant's claim state, so a sibling that is approved but not yet
+      // (or never confirmed) sent locks this one - see getSendLockState.
+      drafts: { select: { approved: true, generatedAt: true, lastSendFailure: true } },
     },
   },
 } as const satisfies Prisma.DraftSelect;
 
 type DraftWithProspect = Prisma.DraftGetPayload<{ select: typeof DRAFT_SELECT }>;
+
+const CLAIM_PROSPECT_SELECT = {
+  status: true,
+  sentAt: true,
+  tags: true,
+  drafts: { select: { id: true, approved: true, generatedAt: true, lastSendFailure: true } },
+} as const satisfies Prisma.ProspectSelect;
+
+type ClaimResult = { kind: 'claimed' } | { kind: 'lost' } | { kind: 'refused'; reason: string };
+
+/**
+ * The claim for one draft, run in a transaction that first takes a row lock
+ * on the Prospect (SELECT ... FOR UPDATE). Two tabs approving two different
+ * variants of one prospect claim two different Draft rows, so a conditional
+ * update on the draft alone cannot see the other claim. With the lock they
+ * serialize: the second transaction waits, then reads the first one's
+ * committed approval and refuses. The sibling decision is made in code, after
+ * the lock, rather than in the UPDATE's WHERE, because it depends on several
+ * things at once (status, sentAt, each sibling's approval and age) - see
+ * `blockingApprovedDrafts` for the rule.
+ *
+ * `lost` means this draft itself was already approved or the guarded update
+ * matched no row (doNotContact flipped, tag appeared); the caller re-reads to
+ * report which.
+ */
+async function claimDraft(
+  draft: DraftWithProspect,
+  claimData: Prisma.DraftUpdateManyMutationInput
+): Promise<ClaimResult> {
+  return prisma.$transaction(async (tx): Promise<ClaimResult> => {
+    await tx.$queryRaw`SELECT id FROM "Prospect" WHERE id = ${draft.prospectId} FOR UPDATE`;
+
+    const prospect = await tx.prospect.findUnique({ where: { id: draft.prospectId }, select: CLAIM_PROSPECT_SELECT });
+    if (!prospect) return { kind: 'lost' };
+    if (prospect.drafts.some((candidate) => candidate.id === draft.id && candidate.approved)) return { kind: 'lost' };
+
+    // A prospect that has been sent (status moved on) must not take a second
+    // first-touch send from a stale tab or a sibling variant.
+    if (prospect.status !== PrismaProspectStatus.drafted) {
+      return { kind: 'refused', reason: NOT_DRAFTED_REFUSAL_REASON };
+    }
+
+    const lock = getSendLockState({
+      tags: prospect.tags,
+      sentAt: prospect.sentAt,
+      drafts: prospect.drafts.filter((sibling) => sibling.id !== draft.id),
+    });
+    if (lock === 'sending') return { kind: 'refused', reason: SENDING_REFUSAL_REASON };
+    if (lock === 'unconfirmed') return { kind: 'refused', reason: UNCONFIRMED_REFUSAL_REASON };
+
+    const updated = await tx.draft.updateMany({
+      where: {
+        id: draft.id,
+        approved: false,
+        prospect: { doNotContact: false, NOT: { tags: { has: SEND_UNCONFIRMED_TAG } } },
+      },
+      data: claimData,
+    });
+    return updated.count === 1 ? { kind: 'claimed' } : { kind: 'lost' };
+  });
+}
 
 /**
  * Approves and attempts to send one or more drafts. For each requested
@@ -138,14 +211,21 @@ export async function approveDrafts(items: ApprovalRequestItem[]): Promise<Appro
       continue;
     }
 
-    // An earlier send for this prospect may have gone out (ambiguous
-    // failure). Approving any other variant could email them twice, so an
-    // operator must verify in the provider dashboard and clear the tag first.
-    if (draft.prospect.tags.includes(SEND_UNCONFIRMED_TAG)) {
+    // Fast-path refusals from the batch snapshot (the claim below re-checks
+    // all of this under the prospect lock): not waiting for a first send, a
+    // sibling being sent right now, or an earlier send whose outcome is
+    // unknown. Approving any of those could email the prospect twice, so an
+    // operator must resolve it first.
+    if (draft.prospect.status !== PrismaProspectStatus.drafted) {
+      outcomeByDraftId.set(item.draftId, { draftId: item.draftId, outcome: 'failed', reason: NOT_DRAFTED_REFUSAL_REASON });
+      continue;
+    }
+    const lockState = getSendLockState(draft.prospect);
+    if (lockState !== 'none') {
       outcomeByDraftId.set(item.draftId, {
         draftId: item.draftId,
         outcome: 'failed',
-        reason: UNCONFIRMED_REFUSAL_REASON,
+        reason: lockState === 'sending' ? SENDING_REFUSAL_REASON : UNCONFIRMED_REFUSAL_REASON,
       });
       continue;
     }
@@ -179,28 +259,48 @@ export async function approveDrafts(items: ApprovalRequestItem[]): Promise<Appro
     // (matching the cap's "re-check immediately before sending" standard).
     // Any human edit is applied in this same statement so it can never land
     // on a draft that's concurrently being sent elsewhere.
-    const claimData: Prisma.DraftUpdateManyMutationInput = { approved: true };
+    // The in-flight marker records when this attempt started (there is no
+    // Draft timestamp for it), so a send that is still running can be told
+    // apart from an abandoned one - see unconfirmed-send.ts.
+    const claimData: Prisma.DraftUpdateManyMutationInput = {
+      approved: true,
+      lastSendFailure: buildInFlightMarker(new Date()),
+    };
     if (item.editedBody !== undefined) {
       claimData.body = item.editedBody;
       claimData.edited = true;
     }
 
-    const claim = await prisma.draft.updateMany({
-      where: {
-        id: draft.id,
-        approved: false,
-        prospect: { doNotContact: false, NOT: { tags: { has: SEND_UNCONFIRMED_TAG } } },
-      },
-      data: claimData,
-    });
+    let claim: ClaimResult;
+    try {
+      claim = await claimDraft(draft, claimData);
+    } catch (error) {
+      // The claim transaction failed (connection, deadlock). Nothing was sent
+      // and nothing is known to be committed: give the cap slot back and keep
+      // going with the rest of the batch rather than aborting it.
+      console.error(`failed to claim draft ${draft.id}`, error);
+      await rollBackDailySendSlot();
+      outcomeByDraftId.set(item.draftId, {
+        draftId: item.draftId,
+        outcome: 'failed',
+        reason: 'could not claim the draft because of an internal error; nothing was sent',
+      });
+      continue;
+    }
 
-    if (claim.count !== 1) {
+    if (claim.kind === 'refused') {
+      await rollBackDailySendSlot();
+      outcomeByDraftId.set(item.draftId, { draftId: item.draftId, outcome: 'failed', reason: claim.reason });
+      continue;
+    }
+
+    if (claim.kind === 'lost') {
       // Something changed since our initial read: the draft was already
       // approved (a concurrent/overlapping request, a duplicate draftId
       // earlier in this same batch, or an earlier approval entirely), or
       // the prospect's doNotContact flipped true in the interim (e.g. a
-      // concurrent unsubscribe). Re-read to report the precise reason
-      // rather than guessing.
+      // concurrent unsubscribe) or it got the unconfirmed tag. Re-read to
+      // report the precise reason rather than guessing.
       await rollBackDailySendSlot();
       const fresh = await prisma.draft.findUnique({
         where: { id: draft.id },
@@ -285,17 +385,16 @@ export async function approveDrafts(items: ApprovalRequestItem[]): Promise<Appro
     const statusHistory = Array.isArray(draft.prospect.statusHistory) ? draft.prospect.statusHistory : [];
     const sentAt = new Date();
 
-    // Clears any prior send failure recorded on this exact draft (e.g. a
-    // previous approval attempt that failed and was retried) now that a send
-    // has actually succeeded - dead-letter tracking should never keep
-    // reporting a stale failure for a draft that has since gone out fine.
-    await prisma.draft.update({ where: { id: draft.id }, data: { lastSendFailure: Prisma.DbNull } });
-
     // Draft.approved is already committed (via the claim above) by the
     // time the email actually goes out, so this is just advancing the
     // prospect's status - it does not need to be transactional with the
     // claim (which must complete, and stay committed, before the external
     // send call, not alongside it).
+    //
+    // Order matters: the prospect moves to `sent` BEFORE the in-flight marker
+    // is cleared. The marker is what keeps a sibling variant locked out; if
+    // it were cleared first and this update then failed, the prospect would
+    // still be `drafted` with no marker, and a sibling could be sent.
     await prisma.prospect.update({
       where: { id: draft.prospectId },
       data: {
@@ -305,6 +404,13 @@ export async function approveDrafts(items: ApprovalRequestItem[]): Promise<Appro
         statusHistory: [...statusHistory, { status: PrismaProspectStatus.sent, timestamp: sentAt.toISOString() }],
       },
     });
+
+    // Clears the in-flight marker and any prior send failure recorded on this
+    // exact draft (e.g. a previous approval attempt that failed and was
+    // retried) now that a send has actually succeeded - dead-letter tracking
+    // should never keep reporting a stale failure for a draft that has since
+    // gone out fine.
+    await prisma.draft.update({ where: { id: draft.id }, data: { lastSendFailure: Prisma.DbNull } });
 
     outcomeByDraftId.set(item.draftId, { draftId: item.draftId, outcome: 'sent' });
   }

@@ -19,6 +19,9 @@ const {
   findUniqueDraftMock,
   updateProspectMock,
   updateManyProspectMock,
+  queryRawMock,
+  findUniqueClaimProspectMock,
+  transactionMock,
 } = vi.hoisted(() => ({
     findManyDraftMock: vi.fn(),
     updateDraftMock: vi.fn(),
@@ -26,10 +29,17 @@ const {
     findUniqueDraftMock: vi.fn(),
     updateProspectMock: vi.fn(),
     updateManyProspectMock: vi.fn(),
+    queryRawMock: vi.fn(),
+    findUniqueClaimProspectMock: vi.fn(),
+    transactionMock: vi.fn(),
 }));
 
 vi.mock('@/common/db/client', () => ({
   prisma: {
+    // Interactive transaction modeled as invoking the callback with a tx that
+    // shares the same mocks (same approach as convert-to-client.service.test.ts).
+    // `queryRawMock` stands in for the `SELECT ... FOR UPDATE` row lock.
+    $transaction: transactionMock,
     draft: {
       findMany: findManyDraftMock,
       update: updateDraftMock,
@@ -77,6 +87,36 @@ vi.mock('@/features/sending/resend.client', () => ({ sendEmail: sendEmailMock })
 
 const { approveDrafts } = await import('./send-queue.service');
 
+// What the claim writes to the draft: approved, plus the marker recording when
+// this attempt started (see unconfirmed-send.ts).
+const IN_FLIGHT_MARKER = { inFlight: true, startedAt: expect.any(String) };
+
+const MS_PER_MINUTE = 60 * 1000;
+
+function minutesAgo(minutes: number): Date {
+  return new Date(Date.now() - minutes * MS_PER_MINUTE);
+}
+
+// A sibling draft as the claim and the pre-check see it.
+function siblingDraft(overrides: { id?: string; approved?: boolean; generatedAt?: Date; lastSendFailure?: unknown } = {}) {
+  return {
+    id: overrides.id ?? 'sibling',
+    approved: overrides.approved ?? false,
+    generatedAt: overrides.generatedAt ?? minutesAgo(60),
+    lastSendFailure: overrides.lastSendFailure ?? null,
+  };
+}
+
+// The prospect row the claim reads after taking the row lock.
+function claimProspect(overrides: { status?: string; sentAt?: Date | null; tags?: string[]; drafts?: ReturnType<typeof siblingDraft>[] } = {}) {
+  return {
+    status: overrides.status ?? 'drafted',
+    sentAt: overrides.sentAt === undefined ? null : overrides.sentAt,
+    tags: overrides.tags ?? [],
+    drafts: overrides.drafts ?? [],
+  };
+}
+
 interface DraftRowOverrides {
   id?: string;
   prospectId?: string;
@@ -90,6 +130,9 @@ interface DraftRowOverrides {
     contactEmail: string | null;
     statusHistory: unknown;
     tags: string[];
+    status: string;
+    sentAt: Date | null;
+    drafts: Array<ReturnType<typeof siblingDraft>>;
   }>;
 }
 
@@ -110,6 +153,9 @@ function buildDraftRow(overrides: DraftRowOverrides = {}) {
         overrides.prospect?.contactEmail === undefined ? 'contact@example.com' : overrides.prospect.contactEmail,
       statusHistory: overrides.prospect?.statusHistory ?? [],
       tags: overrides.prospect?.tags ?? [],
+      status: overrides.prospect?.status ?? 'drafted',
+      sentAt: overrides.prospect?.sentAt === undefined ? null : overrides.prospect.sentAt,
+      drafts: overrides.prospect?.drafts ?? [],
     },
   };
 }
@@ -122,6 +168,19 @@ beforeEach(() => {
   // unless a test deliberately overrides it to model a lost race.
   updateManyDraftMock.mockResolvedValue({ count: 1 });
   findUniqueDraftMock.mockResolvedValue(null);
+  queryRawMock.mockResolvedValue([]);
+  // Healthy claim-time read by default: still drafted, nothing sent, no siblings.
+  findUniqueClaimProspectMock.mockResolvedValue(claimProspect());
+  // Interactive transaction modeled as invoking the callback with a tx that
+  // shares the same mocks (same approach as convert-to-client.service.test.ts).
+  // `queryRawMock` stands in for the `SELECT ... FOR UPDATE` row lock.
+  transactionMock.mockImplementation((callback: (tx: unknown) => unknown) =>
+    callback({
+      $queryRaw: queryRawMock,
+      prospect: { findUnique: findUniqueClaimProspectMock },
+      draft: { updateMany: updateManyDraftMock },
+    })
+  );
   updateProspectMock.mockResolvedValue({});
   updateManyProspectMock.mockResolvedValue({ count: 1 });
   getEffectiveDailyCapMock.mockReturnValue(10);
@@ -323,7 +382,7 @@ describe('approveDrafts send outcome persistence - the core safety boundary', ()
     // later legitimate retry can re-approve this draft.
     expect(updateManyDraftMock).toHaveBeenCalledWith({
       where: { id: 'draft-1', approved: false, prospect: { doNotContact: false, NOT: { tags: { has: 'send-unconfirmed' } } } },
-      data: { approved: true },
+      data: { approved: true, lastSendFailure: IN_FLIGHT_MARKER },
     });
     expect(updateDraftMock).toHaveBeenCalledWith({
       where: { id: 'draft-1' },
@@ -382,7 +441,7 @@ describe('approveDrafts send outcome persistence - the core safety boundary', ()
 
     expect(updateManyDraftMock).toHaveBeenCalledWith({
       where: { id: 'draft-1', approved: false, prospect: { doNotContact: false, NOT: { tags: { has: 'send-unconfirmed' } } } },
-      data: { approved: true },
+      data: { approved: true, lastSendFailure: IN_FLIGHT_MARKER },
     });
     // The rollback-with-failure-reason shape must never fire on a successful
     // send - only the "clear any prior failure" shape may.
@@ -427,7 +486,7 @@ describe('approveDrafts editedBody handling', () => {
 
     expect(updateManyDraftMock).toHaveBeenCalledWith({
       where: { id: 'draft-1', approved: false, prospect: { doNotContact: false, NOT: { tags: { has: 'send-unconfirmed' } } } },
-      data: { approved: true, body: 'human-edited body', edited: true },
+      data: { approved: true, lastSendFailure: IN_FLIGHT_MARKER, body: 'human-edited body', edited: true },
     });
     expect(sendEmailMock).toHaveBeenCalledWith(expect.objectContaining({ body: 'human-edited body' }));
   });
@@ -441,7 +500,7 @@ describe('approveDrafts editedBody handling', () => {
     expect(results).toEqual([{ draftId: 'draft-1', outcome: 'failed', reason: 'network error' }]);
     expect(updateManyDraftMock).toHaveBeenCalledWith({
       where: { id: 'draft-1', approved: false, prospect: { doNotContact: false, NOT: { tags: { has: 'send-unconfirmed' } } } },
-      data: { approved: true, body: 'edited body', edited: true },
+      data: { approved: true, lastSendFailure: IN_FLIGHT_MARKER, body: 'edited body', edited: true },
     });
     // The rollback only resets `approved` (plus recording the failure) - it
     // must not also revert the body edit, or a human's edit would be
@@ -668,5 +727,195 @@ describe('approveDrafts ambiguous send failure (never send twice)', () => {
     expect(results[0]).toMatchObject({ outcome: 'failed' });
     expect(rollBackDailySendSlotMock).not.toHaveBeenCalled();
     consoleSpy.mockRestore();
+  });
+});
+
+describe('approveDrafts sibling and stale-tab protection', () => {
+  it('refuses a stale tab approving another variant after the prospect was already sent, without reserving a cap slot', async () => {
+    findManyDraftMock.mockResolvedValue([
+      buildDraftRow({
+        id: 'draft-2',
+        prospect: { status: 'sent', sentAt: minutesAgo(5), drafts: [siblingDraft({ id: 'draft-1', approved: true })] },
+      }),
+    ]);
+
+    const results = await approveDrafts([{ draftId: 'draft-2' }]);
+
+    expect(results[0]).toMatchObject({ draftId: 'draft-2', outcome: 'failed' });
+    expect(sendEmailMock).not.toHaveBeenCalled();
+    expect(reserveDailySendSlotMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses under the row lock when the prospect was sent between the snapshot and the claim, and gives the cap slot back', async () => {
+    findManyDraftMock.mockResolvedValue([buildDraftRow({ id: 'draft-2' })]);
+    findUniqueClaimProspectMock.mockResolvedValue(
+      claimProspect({ status: 'sent', sentAt: minutesAgo(1), drafts: [siblingDraft({ id: 'draft-1', approved: true })] })
+    );
+
+    const results = await approveDrafts([{ draftId: 'draft-2' }]);
+
+    expect(results[0]).toMatchObject({ draftId: 'draft-2', outcome: 'failed' });
+    expect(updateManyDraftMock).not.toHaveBeenCalled();
+    expect(sendEmailMock).not.toHaveBeenCalled();
+    expect(rollBackDailySendSlotMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a second new variant of a re-drafted prospect when the first new variant is already claimed, even though sentAt is set', async () => {
+    const earlierSend = minutesAgo(60 * 24);
+    findManyDraftMock.mockResolvedValue([buildDraftRow({ id: 'new-2' })]);
+    findUniqueClaimProspectMock.mockResolvedValue(
+      claimProspect({
+        sentAt: earlierSend,
+        drafts: [
+          // The pre-redraft draft that really went out: stale, must not block.
+          siblingDraft({ id: 'old-1', approved: true, generatedAt: new Date(earlierSend.getTime() - MS_PER_MINUTE) }),
+          // The new variant another tab just claimed: generated after sentAt.
+          siblingDraft({
+            id: 'new-1',
+            approved: true,
+            generatedAt: minutesAgo(30),
+            lastSendFailure: { inFlight: true, startedAt: minutesAgo(1).toISOString() },
+          }),
+          siblingDraft({ id: 'new-2', approved: false, generatedAt: minutesAgo(30) }),
+        ],
+      })
+    );
+
+    const results = await approveDrafts([{ draftId: 'new-2' }]);
+
+    expect(results[0]).toMatchObject({ draftId: 'new-2', outcome: 'failed', reason: expect.stringContaining('being sent right now') });
+    expect(updateManyDraftMock).not.toHaveBeenCalled();
+    expect(sendEmailMock).not.toHaveBeenCalled();
+  });
+
+  it('lets the first new variant of a re-drafted prospect send, because the old approved draft predates the earlier send', async () => {
+    const earlierSend = minutesAgo(60 * 24);
+    findManyDraftMock.mockResolvedValue([
+      buildDraftRow({
+        id: 'new-1',
+        prospect: {
+          sentAt: earlierSend,
+          drafts: [siblingDraft({ id: 'old-1', approved: true, generatedAt: new Date(earlierSend.getTime() - MS_PER_MINUTE) })],
+        },
+      }),
+    ]);
+    findUniqueClaimProspectMock.mockResolvedValue(
+      claimProspect({
+        sentAt: earlierSend,
+        drafts: [siblingDraft({ id: 'old-1', approved: true, generatedAt: new Date(earlierSend.getTime() - MS_PER_MINUTE) })],
+      })
+    );
+
+    const results = await approveDrafts([{ draftId: 'new-1' }]);
+
+    expect(results[0]).toEqual({ draftId: 'new-1', outcome: 'sent' });
+  });
+
+  it('refuses a sibling variant after a delivered resolution marked the prospect sent', async () => {
+    const resolvedAt = minutesAgo(2);
+    findManyDraftMock.mockResolvedValue([
+      buildDraftRow({
+        id: 'draft-2',
+        prospect: { status: 'sent', sentAt: resolvedAt, drafts: [siblingDraft({ id: 'draft-1', approved: true })] },
+      }),
+    ]);
+
+    const results = await approveDrafts([{ draftId: 'draft-2' }]);
+
+    expect(results[0]).toMatchObject({ draftId: 'draft-2', outcome: 'failed' });
+    expect(sendEmailMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses a sibling variant when another variant is approved but never confirmed sent, even though the unconfirmed tag was never written', async () => {
+    findManyDraftMock.mockResolvedValue([
+      buildDraftRow({
+        id: 'draft-2',
+        prospect: { drafts: [siblingDraft({ id: 'draft-1', approved: true, lastSendFailure: { reason: 'timeout', occurredAt: minutesAgo(30).toISOString(), unconfirmed: true } })] },
+      }),
+    ]);
+
+    const results = await approveDrafts([{ draftId: 'draft-2' }]);
+
+    expect(results[0]).toMatchObject({ draftId: 'draft-2', outcome: 'failed', reason: expect.stringContaining('unconfirmed') });
+    expect(updateManyDraftMock).not.toHaveBeenCalled();
+    expect(reserveDailySendSlotMock).not.toHaveBeenCalled();
+  });
+
+  it('reports a sibling whose attempt started moments ago as being sent right now, not as unconfirmed', async () => {
+    findManyDraftMock.mockResolvedValue([
+      buildDraftRow({
+        id: 'draft-2',
+        prospect: {
+          drafts: [siblingDraft({ id: 'draft-1', approved: true, lastSendFailure: { inFlight: true, startedAt: minutesAgo(1).toISOString() } })],
+        },
+      }),
+    ]);
+
+    const results = await approveDrafts([{ draftId: 'draft-2' }]);
+
+    expect(results[0]).toMatchObject({ outcome: 'failed', reason: expect.stringContaining('being sent right now') });
+  });
+
+  it('reports a duplicate request for an already-claimed draft as already approved rather than as a locked sibling', async () => {
+    findManyDraftMock.mockResolvedValue([buildDraftRow({ id: 'draft-1' })]);
+    findUniqueClaimProspectMock.mockResolvedValue(
+      claimProspect({
+        drafts: [siblingDraft({ id: 'draft-1', approved: true, lastSendFailure: { inFlight: true, startedAt: minutesAgo(1).toISOString() } })],
+      })
+    );
+    findUniqueDraftMock.mockResolvedValue({ prospect: { doNotContact: false, tags: [] } });
+
+    const results = await approveDrafts([{ draftId: 'draft-1' }]);
+
+    expect(results[0]).toEqual({ draftId: 'draft-1', outcome: 'skipped_already_approved' });
+    expect(sendEmailMock).not.toHaveBeenCalled();
+  });
+
+  it('takes the prospect row lock before reading the siblings and before running the claim (call order)', async () => {
+    findManyDraftMock.mockResolvedValue([buildDraftRow({ id: 'draft-1' })]);
+    const order: string[] = [];
+    queryRawMock.mockImplementation(async () => {
+      order.push('lock');
+      return [];
+    });
+    findUniqueClaimProspectMock.mockImplementation(async () => {
+      order.push('read');
+      return claimProspect();
+    });
+    updateManyDraftMock.mockImplementation(async () => {
+      order.push('claim');
+      return { count: 1 };
+    });
+
+    await approveDrafts([{ draftId: 'draft-1' }]);
+
+    expect(order).toEqual(['lock', 'read', 'claim']);
+  });
+
+  it('gives the cap slot back, reports failed and carries on with the rest of the batch when the claim transaction throws', async () => {
+    findManyDraftMock.mockResolvedValue([
+      buildDraftRow({ id: 'draft-a', prospectId: 'prospect-a', priorityScore: 9 }),
+      buildDraftRow({ id: 'draft-b', prospectId: 'prospect-b', priorityScore: 1 }),
+    ]);
+    transactionMock.mockRejectedValueOnce(new Error('connection reset'));
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const results = await approveDrafts([{ draftId: 'draft-a' }, { draftId: 'draft-b' }]);
+
+    expect(results[0]).toMatchObject({ draftId: 'draft-a', outcome: 'failed' });
+    expect(results[1]).toEqual({ draftId: 'draft-b', outcome: 'sent' });
+    expect(rollBackDailySendSlotMock).toHaveBeenCalledTimes(1);
+    expect(sendEmailMock).toHaveBeenCalledTimes(1);
+    consoleSpy.mockRestore();
+  });
+
+  it('moves the prospect to sent before clearing the in-flight marker, so a failure in between never leaves a drafted prospect with no marker', async () => {
+    findManyDraftMock.mockResolvedValue([buildDraftRow({ id: 'draft-1' })]);
+
+    await approveDrafts([{ draftId: 'draft-1' }]);
+
+    const prospectOrder = updateProspectMock.mock.invocationCallOrder[0];
+    const markerClearOrder = updateDraftMock.mock.invocationCallOrder[0];
+    expect(prospectOrder).toBeLessThan(markerClearOrder);
   });
 });

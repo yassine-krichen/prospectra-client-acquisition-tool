@@ -51,6 +51,15 @@ describe('POST /api/queue/approve', () => {
     expect(approveDraftsMock).not.toHaveBeenCalled();
   });
 
+  it('fails closed with 400 and never calls approveDrafts when more approvals are sent than one request may carry', async () => {
+    const approvals = Array.from({ length: 51 }, (_, index) => ({ draftId: `draft-${index}` }));
+
+    const response = await POST(approveRequest({ approvals }));
+
+    expect(response.status).toBe(400);
+    expect(approveDraftsMock).not.toHaveBeenCalled();
+  });
+
   it('fails closed with 400 and never calls approveDrafts when the approvals field is missing entirely', async () => {
     const response = await POST(approveRequest({}));
 

@@ -5,6 +5,16 @@ import type { SendEmailInput, SendEmailResult } from '@/features/sending/sending
 
 const RESEND_URL = 'https://api.resend.com/emails';
 
+// Aborts a request that hangs, so a stalled connection cannot hold a claimed
+// draft "in flight" indefinitely. An abort rejects fetch, which is reported as
+// an ambiguous failure (the email may still have been delivered), never as
+// definitelyNotSent. This MUST stay well below SEND_IN_FLIGHT_WINDOW_MS in
+// unconfirmed-send.ts (10 minutes): that window is how long a claimed send is
+// trusted to still be running before it is treated as abandoned and made
+// resolvable, so a request that could outlive it could be resolved as "not
+// delivered" and then sent a second time while still succeeding.
+export const RESEND_REQUEST_TIMEOUT_MS = 30_000;
+
 // Fixed local part for the outbound `from` address - this app only ever
 // sends from one mailbox purpose (cold outreach), so there's no need for a
 // configurable local part on top of the configurable SENDING_DOMAIN.
@@ -58,6 +68,7 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ from, to: input.to, subject: input.subject, text: input.body }),
+      signal: AbortSignal.timeout(RESEND_REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
     return { ok: false, reason: `resend request failed (${(error as Error).message})` };

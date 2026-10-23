@@ -2,8 +2,8 @@ import { Prisma, ProspectStatus as PrismaProspectStatus } from '@/lib/generated/
 import { prisma } from '@/common/db/client';
 import { getEffectiveDailyCap, isDomainVerified } from '@/features/sending/domain-verification-gate';
 import { getTodaysSendCount } from '@/features/sending/daily-send-counter';
-import { SEND_UNCONFIRMED_TAG } from '@/features/sending/sending.types';
 import type { QueueItemView, QueueListResult } from '@/features/sending/sending.types';
+import { getSendLockState, isInFlightMarker, isUnconfirmedFailure } from '@/features/sending/unconfirmed-send';
 
 // Explicit projection - the queue view only needs enough of each prospect
 // and its drafts to render a preview and let a human approve/edit, same
@@ -18,6 +18,7 @@ const QUEUE_SELECT = {
   priorityScore: true,
   activeDraftId: true,
   tags: true,
+  sentAt: true,
   drafts: {
     select: {
       id: true,
@@ -28,6 +29,7 @@ const QUEUE_SELECT = {
       humanizedBody: true,
       edited: true,
       approved: true,
+      generatedAt: true,
       lastSendFailure: true,
     },
   },
@@ -35,15 +37,6 @@ const QUEUE_SELECT = {
 
 type QueueProspectRow = Prisma.ProspectGetPayload<{ select: typeof QUEUE_SELECT }>;
 type QueueDraftRow = QueueProspectRow['drafts'][number];
-
-function isUnconfirmedFailure(lastSendFailure: Prisma.JsonValue | null): boolean {
-  return (
-    typeof lastSendFailure === 'object' &&
-    lastSendFailure !== null &&
-    !Array.isArray(lastSendFailure) &&
-    lastSendFailure.unconfirmed === true
-  );
-}
 
 /**
  * Picks which of a prospect's drafts to pre-select/highlight as the default
@@ -91,7 +84,10 @@ export async function listApprovalQueue(): Promise<QueueListResult> {
     select: QUEUE_SELECT,
   });
 
+  const now = new Date();
+
   const items: QueueItemView[] = prospects.map((prospect) => {
+    const lockState = getSendLockState(prospect, now);
     const sortedDrafts = [...prospect.drafts].sort((a, b) => a.variant - b.variant);
     const defaultDraft = pickDisplayDraft(prospect);
     return {
@@ -100,7 +96,8 @@ export async function listApprovalQueue(): Promise<QueueListResult> {
       contactName: prospect.contactName,
       contactEmail: prospect.contactEmail,
       doNotContact: prospect.doNotContact,
-      sendUnconfirmed: prospect.tags.includes(SEND_UNCONFIRMED_TAG),
+      sendUnconfirmed: lockState === 'unconfirmed',
+      sendInFlight: lockState === 'sending',
       priorityScore: prospect.priorityScore,
       drafts: sortedDrafts.map((draft) => ({
         id: draft.id,
@@ -111,7 +108,8 @@ export async function listApprovalQueue(): Promise<QueueListResult> {
         humanizedBody: draft.humanizedBody,
         edited: draft.edited,
         approved: draft.approved,
-        hasSendFailure: draft.lastSendFailure !== null,
+        // The in-flight marker lives in the same column but is not a failure.
+        hasSendFailure: draft.lastSendFailure !== null && !isInFlightMarker(draft.lastSendFailure),
         sendUnconfirmed: isUnconfirmedFailure(draft.lastSendFailure),
       })),
       defaultDraftId: defaultDraft?.id ?? null,

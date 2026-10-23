@@ -19,7 +19,9 @@ import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
+import { ResolveUnconfirmedButtons } from '@/features/sending/resolve-unconfirmed-buttons';
 import {
+  MAX_APPROVALS_PER_REQUEST,
   approvalBatchResponseSchema,
   queueListResultSchema,
   type ApprovalOutcome,
@@ -245,12 +247,14 @@ export function ApprovalQueueTable(): React.JSX.Element {
   }
 
   function selectableProspectIds(): string[] {
-    return items.filter((item) => item.drafts.length > 0 && !item.doNotContact && !item.sendUnconfirmed).map((item) => item.prospectId);
+    return items.filter((item) => item.drafts.length > 0 && !item.doNotContact && !item.sendUnconfirmed && !item.sendInFlight).map((item) => item.prospectId);
   }
 
   function toggleSelectAll(): void {
     const selectable = selectableProspectIds();
-    setSelectedProspects((prev) => (prev.size === selectable.length ? new Set() : new Set(selectable)));
+    // One request sends at most MAX_APPROVALS_PER_REQUEST emails, so "select all" takes the first ones up to that.
+    const bulk = selectable.slice(0, MAX_APPROVALS_PER_REQUEST);
+    setSelectedProspects((prev) => (prev.size === bulk.length ? new Set() : new Set(bulk)));
   }
 
   // Builds the approval payload for one or more draftIds, attaching
@@ -346,7 +350,7 @@ export function ApprovalQueueTable(): React.JSX.Element {
 
       <div className="flex items-center gap-2">
         <Checkbox
-          checked={selectedProspects.size > 0 && selectedProspects.size === selectableCount}
+          checked={selectedProspects.size > 0 && selectedProspects.size === Math.min(selectableCount, MAX_APPROVALS_PER_REQUEST)}
           disabled={selectableCount === 0}
           onCheckedChange={toggleSelectAll}
           aria-label="Select all"
@@ -354,7 +358,7 @@ export function ApprovalQueueTable(): React.JSX.Element {
         <span className="text-muted-foreground text-sm">Select all</span>
         <Button
           variant="outline"
-          disabled={selectedProspects.size === 0 || pendingDraftIds.size > 0}
+          disabled={selectedProspects.size === 0 || selectedProspects.size > MAX_APPROVALS_PER_REQUEST || pendingDraftIds.size > 0}
           onClick={approveSelected}
         >
           Approve selected ({selectedProspects.size})
@@ -384,7 +388,7 @@ export function ApprovalQueueTable(): React.JSX.Element {
       ) : (
         <div className="flex flex-col gap-4">
           {items.map((item) => {
-            const blocked = item.doNotContact || item.sendUnconfirmed || item.drafts.length === 0;
+            const blocked = item.doNotContact || item.sendUnconfirmed || item.sendInFlight || item.drafts.length === 0;
             const selectedVariantId = chosenDraftId[item.prospectId];
 
             return (
@@ -419,15 +423,30 @@ export function ApprovalQueueTable(): React.JSX.Element {
                         Send unconfirmed
                       </Badge>
                     ) : null}
+                    {item.sendInFlight ? <Badge variant="secondary">Sending…</Badge> : null}
                   </div>
                 </div>
 
-                {item.sendUnconfirmed ? (
-                  <p className="text-sm">
-                    A send to this prospect timed out or got an unclear response, so the email may already have gone
-                    out. Sending is locked: check the Resend dashboard, then clear the send-unconfirmed tag on the
-                    prospect only if it was not delivered.
+                {item.sendInFlight ? (
+                  <p className="text-muted-foreground text-sm">
+                    An email for this prospect is being sent right now. Sending is locked until it finishes; reload in
+                    a minute. If it stays here for several minutes, it will turn into an unconfirmed send that you can
+                    resolve.
                   </p>
+                ) : null}
+
+                {item.sendUnconfirmed ? (
+                  <div className="flex flex-col gap-2">
+                    <p className="text-sm">
+                      A send to this prospect timed out or got an unclear response, so the email may already have
+                      gone out. Sending is locked: check the Resend dashboard, then say what you found.
+                    </p>
+                    <ResolveUnconfirmedButtons
+                      prospectId={item.prospectId}
+                      companyName={item.companyName}
+                      onResolved={() => setRefreshIndex((prev) => prev + 1)}
+                    />
+                  </div>
                 ) : null}
 
                 {item.drafts.length === 0 ? (

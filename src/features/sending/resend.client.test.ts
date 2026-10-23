@@ -11,7 +11,8 @@ vi.mock('@/common/config/env', () => ({ env: envMock }));
 
 const fetchMock = vi.fn();
 
-const { sendEmail } = await import('./resend.client');
+const { sendEmail, RESEND_REQUEST_TIMEOUT_MS } = await import('./resend.client');
+const { SEND_IN_FLIGHT_WINDOW_MS } = await import('./unconfirmed-send');
 
 const INPUT = { to: 'jane@acme.com', subject: 'Hi', body: 'Body' };
 
@@ -87,9 +88,33 @@ describe('sendEmail definitelyNotSent classification', () => {
     expect(result).not.toHaveProperty('definitelyNotSent', true);
   });
 
+  it('is not true when the request is aborted by the timeout signal (the email may still have been delivered)', async () => {
+    fetchMock.mockRejectedValue(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+
+    const result = await sendEmail(INPUT);
+
+    expect(result.ok).toBe(false);
+    expect(result).not.toHaveProperty('definitelyNotSent', true);
+  });
+
   it('returns ok with the message id for a well-formed 2xx', async () => {
     fetchMock.mockResolvedValue(jsonResponse(200, { id: 'msg-1' }));
 
     expect(await sendEmail(INPUT)).toEqual({ ok: true, id: 'msg-1' });
+  });
+});
+
+describe('sendEmail request timeout', () => {
+  it('passes an abort signal to fetch so a hanging request cannot stay in flight forever', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { id: 'msg-1' }));
+
+    await sendEmail(INPUT);
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('keeps the request timeout far below the in-flight window after which a send becomes resolvable', () => {
+    expect(RESEND_REQUEST_TIMEOUT_MS * 10).toBeLessThanOrEqual(SEND_IN_FLIGHT_WINDOW_MS);
   });
 });

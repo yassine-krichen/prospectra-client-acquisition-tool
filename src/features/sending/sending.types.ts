@@ -51,6 +51,10 @@ export const approvalRequestItemSchema = z.object({
 });
 export type ApprovalRequestItem = z.infer<typeof approvalRequestItemSchema>;
 
+// Each approval is a real send, one after another, inside a single request.
+// Bounded so one request cannot run past the route's time limit.
+export const MAX_APPROVALS_PER_REQUEST = 50;
+
 // The full POST /api/queue/approve body. A repeated `draftId` in one
 // request is rejected outright (fail closed, 400) rather than silently
 // collapsed or processed more than once - a batch that names the same
@@ -60,6 +64,7 @@ export const approvalBatchRequestSchema = z.object({
   approvals: z
     .array(approvalRequestItemSchema)
     .min(1, 'at least one approval is required')
+    .max(MAX_APPROVALS_PER_REQUEST, `at most ${MAX_APPROVALS_PER_REQUEST} approvals per request`)
     .refine((approvals) => new Set(approvals.map((item) => item.draftId)).size === approvals.length, {
       message: 'duplicate draftId in approvals: each draftId may appear at most once per request',
     }),
@@ -119,6 +124,9 @@ export const queueItemViewSchema = z.object({
   doNotContact: z.boolean(),
   // Prospect carries SEND_UNCONFIRMED_TAG: sending is locked for every variant.
   sendUnconfirmed: z.boolean(),
+  // A send for this prospect was claimed moments ago and may still be running:
+  // sending is locked, and it cannot be resolved yet.
+  sendInFlight: z.boolean(),
   priorityScore: z.number().int(),
   /**
    * Every draft variant this prospect has (normally 3), sorted by variant
@@ -147,3 +155,21 @@ export const queueListResultSchema = z.object({
   capStatus: queueCapStatusSchema,
 });
 export type QueueListResult = z.infer<typeof queueListResultSchema>;
+
+// POST /api/prospects/[id]/resolve-unconfirmed: a human has checked the
+// provider dashboard and says whether an unconfirmed send was delivered.
+export const resolveUnconfirmedRequestSchema = z.object({
+  outcome: z.enum(['delivered', 'not_delivered']),
+});
+export type ResolveUnconfirmedRequest = z.infer<typeof resolveUnconfirmedRequestSchema>;
+
+export const resolveUnconfirmedResultSchema = z.object({
+  // resolved: the send's state was settled as asked.
+  // tag_cleared_only: a follow-up marked "not delivered" whose prospect had
+  //   since replied, died or opted out, so only the tag was cleared.
+  // nothing_to_resolve: no unconfirmed send (any more) - e.g. already resolved.
+  // send_in_progress: the send was claimed recently and may still be running,
+  //   so nothing can be answered yet.
+  outcome: z.enum(['resolved', 'tag_cleared_only', 'nothing_to_resolve', 'send_in_progress']),
+});
+export type ResolveUnconfirmedResult = z.infer<typeof resolveUnconfirmedResultSchema>;
