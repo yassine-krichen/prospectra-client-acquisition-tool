@@ -3,6 +3,7 @@ import { prisma } from '@/common/db/client';
 import { getEffectiveDailyCap } from '@/features/sending/domain-verification-gate';
 import { reserveDailySendSlot, rollBackDailySendSlot } from '@/features/sending/daily-send-counter';
 import { sendEmail } from '@/features/sending/resend.client';
+import { isFollowupApprovalRequired } from '@/features/followups/followup-approval-setting';
 import { renderFollowupTemplate } from '@/features/followups/followup-templates';
 import type { FollowupTouchNumber } from '@/features/followups/followup-templates';
 import { signalSchema } from '@/features/prospects/prospect.types';
@@ -57,12 +58,12 @@ const FOLLOWUP_ELIGIBLE_STATUSES = [
 // The only send this scheduler makes: a `sent` prospect gets touch 2 and
 // advances to `followup_1`. Every `followup_*` status has no next touch -
 // once stale again it goes to `dead` instead (see the scheduling loop).
-const SECOND_TOUCH: { touch: FollowupTouchNumber; nextStatus: PrismaProspectStatus } = {
+export const SECOND_TOUCH: { touch: FollowupTouchNumber; nextStatus: PrismaProspectStatus } = {
   touch: 2,
   nextStatus: PrismaProspectStatus.followup_1,
 };
 
-const PROSPECT_SELECT = {
+export const FOLLOWUP_CANDIDATE_SELECT = {
   id: true,
   companyName: true,
   contactEmail: true,
@@ -75,16 +76,27 @@ const PROSPECT_SELECT = {
   statusHistory: true,
   activeDraftId: true,
   priorityScore: true,
+  tags: true,
 } as const satisfies Prisma.ProspectSelect;
 
-type CandidateProspect = Prisma.ProspectGetPayload<{ select: typeof PROSPECT_SELECT }>;
+export type CandidateProspect = Prisma.ProspectGetPayload<{ select: typeof FOLLOWUP_CANDIDATE_SELECT }>;
 
 export type FollowupOutcome =
   | { prospectId: string; outcome: 'sent'; touch: FollowupTouchNumber }
   | { prospectId: string; outcome: 'marked_dead' }
   | { prospectId: string; outcome: 'skipped_cap' }
   | { prospectId: string; outcome: 'skipped_not_eligible' }
+  // Approval mode only: a stale `sent` prospect whose follow-up is waiting
+  // for a human on the Queue page. Nothing was claimed, reserved or sent.
+  | { prospectId: string; outcome: 'awaiting_approval' }
   | { prospectId: string; outcome: 'failed'; reason: string };
+
+/** The outcomes a single send attempt can produce - what the approval
+ * service reports per prospect. */
+export type FollowupSendOutcome = Extract<
+  FollowupOutcome,
+  { outcome: 'sent' | 'failed' | 'skipped_cap' | 'skipped_not_eligible' }
+>;
 
 function isStale(lastTouchAt: Date, referenceDate: Date): boolean {
   return referenceDate.getTime() - lastTouchAt.getTime() >= FOLLOWUP_INTERVAL_DAYS * MS_PER_DAY;
@@ -141,11 +153,11 @@ async function markDead(candidate: CandidateProspect): Promise<FollowupOutcome> 
  * `Draft.approved` claim exactly, just against `Prospect.status` instead of
  * `Draft.approved`.
  */
-async function attemptFollowupSend(
+export async function attemptFollowupSend(
   candidate: CandidateProspect,
   touch: FollowupTouchNumber,
   nextStatus: PrismaProspectStatus
-): Promise<FollowupOutcome> {
+): Promise<FollowupSendOutcome> {
   if (!candidate.contactEmail) {
     await rollBackDailySendSlot();
     return { prospectId: candidate.id, outcome: 'failed', reason: 'prospect has no contact email on file' };
@@ -244,6 +256,38 @@ async function attemptFollowupSend(
 }
 
 /**
+ * Every prospect currently due for follow-up action, highest `priorityScore`
+ * first: in-flight status, `doNotContact: false`, and stale by
+ * `FOLLOWUP_INTERVAL_DAYS` from `lastFollowupAt` (or `sentAt` if no
+ * follow-up has gone out yet). Shared by the scheduler and the approval
+ * queue so both always agree on what "due" means.
+ */
+export async function findDueFollowupCandidates(now: Date = new Date()): Promise<CandidateProspect[]> {
+  const candidates = (await prisma.prospect.findMany({
+    where: { status: { in: [...FOLLOWUP_ELIGIBLE_STATUSES] }, doNotContact: false },
+    select: FOLLOWUP_CANDIDATE_SELECT,
+    orderBy: { priorityScore: 'desc' },
+  })) as CandidateProspect[];
+
+  return candidates.filter((candidate) => {
+    const referenceDate = referenceTouchDate(candidate);
+    return referenceDate !== null && isStale(referenceDate, now);
+  });
+}
+
+/** Whether `candidate` is, right now, a stale `sent` prospect eligible for the
+ * second touch. The approval service re-checks this against a fresh read. */
+export function isDueForSecondTouch(candidate: CandidateProspect, now: Date = new Date()): boolean {
+  const referenceDate = referenceTouchDate(candidate);
+  return (
+    candidate.status === PrismaProspectStatus.sent &&
+    !candidate.doNotContact &&
+    referenceDate !== null &&
+    isStale(referenceDate, now)
+  );
+}
+
+/**
  * Finds prospects due for their next follow-up touch and sends it (or marks
  * them `dead` once the last touch has itself gone unanswered - see
  * `MAX_TOTAL_TOUCHES`'s doc comment). Eligibility:
@@ -258,22 +302,27 @@ async function attemptFollowupSend(
  * send-queue.service.ts's `approveDrafts` - once the cap is hit, every
  * remaining eligible prospect in this batch is reported `skipped_cap`
  * without an atomic claim ever being attempted for it.
+ *
+ * When follow-up approval is required (the default - see
+ * followup-approval-setting.ts) this function never sends: stale `sent`
+ * prospects are reported `awaiting_approval` and left untouched for a human
+ * to approve via followup-approval.service.ts. They are removed BEFORE the
+ * batch slice, otherwise a backlog of awaiting prospects (which can never
+ * be completed here) would fill the batch and starve the dead-sweep behind
+ * them. The dead-sweep itself needs no approval and runs either way.
  */
 export async function runFollowupScheduler(limit: number = FOLLOWUP_BATCH_SIZE): Promise<FollowupOutcome[]> {
-  const now = new Date();
+  const dueForAction = await findDueFollowupCandidates(new Date());
+  const approvalRequired = isFollowupApprovalRequired();
 
-  const candidates = (await prisma.prospect.findMany({
-    where: { status: { in: [...FOLLOWUP_ELIGIBLE_STATUSES] }, doNotContact: false },
-    select: PROSPECT_SELECT,
-    orderBy: { priorityScore: 'desc' },
-  })) as CandidateProspect[];
+  const awaitingApproval = approvalRequired
+    ? dueForAction.filter((candidate) => candidate.status === PrismaProspectStatus.sent)
+    : [];
+  const actionable = approvalRequired
+    ? dueForAction.filter((candidate) => candidate.status !== PrismaProspectStatus.sent)
+    : dueForAction;
 
-  const dueForAction = candidates.filter((candidate) => {
-    const referenceDate = referenceTouchDate(candidate);
-    return referenceDate !== null && isStale(referenceDate, now);
-  });
-
-  const batch = dueForAction.slice(0, limit);
+  const batch = actionable.slice(0, limit);
   const outcomes: FollowupOutcome[] = [];
   let capReached = false;
 
@@ -299,6 +348,10 @@ export async function runFollowupScheduler(limit: number = FOLLOWUP_BATCH_SIZE):
     }
 
     outcomes.push(await attemptFollowupSend(candidate, SECOND_TOUCH.touch, SECOND_TOUCH.nextStatus));
+  }
+
+  for (const candidate of awaitingApproval) {
+    outcomes.push({ prospectId: candidate.id, outcome: 'awaiting_approval' });
   }
 
   return outcomes;

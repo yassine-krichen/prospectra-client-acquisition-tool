@@ -56,6 +56,14 @@ vi.mock('@/features/sending/daily-send-counter', () => ({
 const sendEmailMock = vi.fn();
 vi.mock('@/features/sending/resend.client', () => ({ sendEmail: sendEmailMock }));
 
+// Approval mode is off by default in this file so the original send-path
+// tests below keep exercising the scheduler's own sending; the approval-mode
+// describe at the bottom turns it on.
+const { isFollowupApprovalRequiredMock } = vi.hoisted(() => ({ isFollowupApprovalRequiredMock: vi.fn() }));
+vi.mock('@/features/followups/followup-approval-setting', () => ({
+  isFollowupApprovalRequired: isFollowupApprovalRequiredMock,
+}));
+
 const { runFollowupScheduler, FOLLOWUP_INTERVAL_DAYS, FOLLOWUP_SEND_UNCONFIRMED_TAG } = await import('./followup-scheduler');
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -84,6 +92,7 @@ interface CandidateOverrides {
   statusHistory?: unknown;
   activeDraftId?: string | null;
   priorityScore?: number;
+  tags?: string[];
 }
 
 function buildCandidate(overrides: CandidateOverrides = {}) {
@@ -100,6 +109,7 @@ function buildCandidate(overrides: CandidateOverrides = {}) {
     statusHistory: overrides.statusHistory ?? [{ status: 'sent', timestamp: '2026-01-01T00:00:00.000Z' }],
     activeDraftId: overrides.activeDraftId === undefined ? null : overrides.activeDraftId,
     priorityScore: overrides.priorityScore ?? 1,
+    tags: overrides.tags ?? [],
   };
 }
 
@@ -112,6 +122,7 @@ beforeEach(() => {
   getEffectiveDailyCapMock.mockReturnValue(10);
   dailySendState.reservedCount = 0;
   sendEmailMock.mockResolvedValue({ ok: true, id: 'resend-message-id' });
+  isFollowupApprovalRequiredMock.mockReturnValue(false);
 });
 
 describe('runFollowupScheduler candidate query', () => {
@@ -541,5 +552,72 @@ describe('runFollowupScheduler original subject lookup', () => {
     expect(sendEmailMock).toHaveBeenCalledWith(
       expect.objectContaining({ subject: expect.stringContaining('Acme Co') })
     );
+  });
+});
+
+describe('runFollowupScheduler with follow-up approval required', () => {
+  beforeEach(() => {
+    isFollowupApprovalRequiredMock.mockReturnValue(true);
+  });
+
+  it('does not send a due sent prospect and reports it awaiting_approval', async () => {
+    const candidate = buildCandidate({ id: 'awaiting-1', status: 'sent' });
+    findManyMock.mockResolvedValue([candidate]);
+
+    const outcomes = await runFollowupScheduler();
+
+    expect(outcomes).toEqual([{ prospectId: 'awaiting-1', outcome: 'awaiting_approval' }]);
+    expect(sendEmailMock).not.toHaveBeenCalled();
+  });
+
+  it('reserves no cap slot and attempts no claim for an awaiting prospect', async () => {
+    findManyMock.mockResolvedValue([buildCandidate({ id: 'awaiting-1' }), buildCandidate({ id: 'awaiting-2' })]);
+
+    await runFollowupScheduler();
+
+    expect(reserveDailySendSlotMock).not.toHaveBeenCalled();
+    expect(updateManyMock).not.toHaveBeenCalled();
+  });
+
+  it('still sweeps an unanswered followup_1 prospect to dead', async () => {
+    const candidate = buildCandidate({
+      id: 'stale-followup',
+      status: 'followup_1',
+      followupCount: 1,
+      lastFollowupAt: daysAgo(FOLLOWUP_INTERVAL_DAYS + 1),
+    });
+    findManyMock.mockResolvedValue([candidate]);
+
+    const outcomes = await runFollowupScheduler();
+
+    expect(outcomes).toEqual([{ prospectId: 'stale-followup', outcome: 'marked_dead' }]);
+    expect(sendEmailMock).not.toHaveBeenCalled();
+  });
+
+  it('does not let awaiting prospects consume the batch limit, so the dead-sweep behind them still runs', async () => {
+    const awaiting = [1, 2, 3].map((n) => buildCandidate({ id: `awaiting-${n}`, priorityScore: 100 - n }));
+    const stale = buildCandidate({
+      id: 'stale-followup',
+      status: 'followup_1',
+      followupCount: 1,
+      lastFollowupAt: daysAgo(FOLLOWUP_INTERVAL_DAYS + 1),
+      priorityScore: 1,
+    });
+    findManyMock.mockResolvedValue([...awaiting, stale]);
+
+    const outcomes = await runFollowupScheduler(1);
+
+    expect(outcomes).toContainEqual({ prospectId: 'stale-followup', outcome: 'marked_dead' });
+    expect(outcomes.filter((o) => o.outcome === 'awaiting_approval')).toHaveLength(3);
+  });
+
+  it('sends as before when approval is turned off', async () => {
+    isFollowupApprovalRequiredMock.mockReturnValue(false);
+    findManyMock.mockResolvedValue([buildCandidate({ id: 'due-1' })]);
+
+    const outcomes = await runFollowupScheduler();
+
+    expect(outcomes).toEqual([{ prospectId: 'due-1', outcome: 'sent', touch: 2 }]);
+    expect(sendEmailMock).toHaveBeenCalledTimes(1);
   });
 });

@@ -101,6 +101,16 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((value) => value === 'true'),
+  // Whether a human must approve each follow-up (touch 2) before it sends.
+  // Opposite polarity to DOMAIN_DNS_VERIFIED on purpose: this is a safety
+  // gate that defaults ON, so only the exact string "false" turns it off.
+  // An unset, empty, or mistyped value (e.g. "flase", "0") all stay on,
+  // because a typo must never silently re-enable unattended sending. See
+  // followup-approval-setting.ts.
+  FOLLOWUP_APPROVAL_REQUIRED: z
+    .string()
+    .optional()
+    .transform((value) => value !== 'false'),
   // Daily send cap enforced ONLY while DOMAIN_DNS_VERIFIED is false - see
   // getEffectiveDailyCap() in domain-verification-gate.ts. Small default
   // keeps pre-verification volume trivial even if this var is never set.

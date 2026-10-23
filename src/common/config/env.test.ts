@@ -285,3 +285,52 @@ describe("env HOURLY_RATE_CENTS parsing", () => {
     await expect(loadEnvModule()).rejects.toThrow(/Invalid environment variables/)
   })
 })
+
+// FOLLOWUP_APPROVAL_REQUIRED is the opposite polarity of DOMAIN_DNS_VERIFIED:
+// a safety gate that defaults ON. Only the exact string "false" may turn it
+// off, so a typo can never silently re-enable unattended follow-up sending.
+describe("env FOLLOWUP_APPROVAL_REQUIRED parsing", () => {
+  afterEach(() => {
+    process.env = { ...originalEnv }
+    vi.resetModules()
+  })
+
+  it("requires approval when the variable is unset", async () => {
+    setEnv({})
+    delete process.env.FOLLOWUP_APPROVAL_REQUIRED
+
+    const { env } = await loadEnvModule()
+
+    expect(env.FOLLOWUP_APPROVAL_REQUIRED).toBe(true)
+  })
+
+  it("requires approval when the variable is an empty string", async () => {
+    setEnv({})
+    process.env.FOLLOWUP_APPROVAL_REQUIRED = ""
+
+    const { env } = await loadEnvModule()
+
+    expect(env.FOLLOWUP_APPROVAL_REQUIRED).toBe(true)
+  })
+
+  it.each(["flase", "FALSE", "False", "0", "no", "true"])(
+    'still requires approval for the non-exact value "%s"',
+    async (value) => {
+      setEnv({})
+      process.env.FOLLOWUP_APPROVAL_REQUIRED = value
+
+      const { env } = await loadEnvModule()
+
+      expect(env.FOLLOWUP_APPROVAL_REQUIRED).toBe(true)
+    }
+  )
+
+  it('disables approval only for the exact string "false"', async () => {
+    setEnv({})
+    process.env.FOLLOWUP_APPROVAL_REQUIRED = "false"
+
+    const { env } = await loadEnvModule()
+
+    expect(env.FOLLOWUP_APPROVAL_REQUIRED).toBe(false)
+  })
+})

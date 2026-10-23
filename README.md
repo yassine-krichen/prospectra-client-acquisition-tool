@@ -78,6 +78,10 @@ Built for a single operator running their own outbound pipeline, not a multi-ten
 
 **4-touch follow-up scheduler** - stale-by-interval eligibility, auto-`dead` after the fourth unanswered touch, and the same atomic-claim pattern on the reply-vs-follow-up race.
 
+**Follow-up approval** - follow-ups are not sent by the scheduler by default. A `sent` prospect that is stale shows up on the Queue page with the rendered follow-up, and a human approves it (the same atomic claim and daily cap as a first send). Nothing is stored for "awaiting approval": it is computed from the scheduler's due set. Set `FOLLOWUP_APPROVAL_REQUIRED=false` to turn approval off. Turning it off lets the waiting backlog auto-send on the next scheduler run, bounded by the batch size and the daily cap. The dead-sweep for unanswered follow-ups runs either way.
+
+**Unconfirmed sends are resolvable in-app** - when a send times out or returns an unclear response, the prospect is locked and the Queue page offers "It was delivered" or "Not delivered, allow resend" instead of hand-editing tags. Check the Resend dashboard first: a wrong answer sends a duplicate email.
+
 **Verified inbound webhook** - Resend/Svix signature checked before a reply can set `doNotContact`; unverified events are rejected.
 
 **Client conversion and retention** - a replied or won prospect converts to a `Client` with `Job`s, and the retention scheduler sends touches on delivered or active jobs.
@@ -249,6 +253,7 @@ Three variables are required to boot. Everything else is optional and degrades t
 | `RESEND_API_KEY` | No | - | Required to send; unset sends return a typed failure |
 | `SENDING_DOMAIN` | No | - | Outbound `from` domain |
 | `DOMAIN_DNS_VERIFIED` | No | `false` | Only the exact string `"true"` lifts the send cap |
+| `FOLLOWUP_APPROVAL_REQUIRED` | No | `true` | Follow-ups wait for a human approval on the Queue page; only the exact string `"false"` turns that off |
 | `DAILY_SEND_CAP_TEST` | No | `3` | Daily cap while the domain is unverified |
 | `DOMAIN_WARMUP_START_DATE` | No | - | Feeds the post-verification warmup ramp |
 | `RESEND_WEBHOOK_SECRET` | No | - | Svix secret; unset makes the webhook reject every event |
@@ -266,6 +271,12 @@ Three variables are required to boot. Everything else is optional and degrades t
 `GET /api/cron/daily` - Same Bearer auth. Runs drafting, follow-ups and retention back to back, drafting only `strong`-signal prospects.
 
 `POST /api/queue/approve` - Body: `{ items: [{ draftId, editedBody? }] }`. The only route that can cause an email to leave the system.
+
+`GET /api/queue/followups` - Due follow-ups with their rendered subject and body, plus follow-ups whose send is unconfirmed, and whether approval is required.
+
+`POST /api/queue/followups/approve` - Body: `{ prospectIds: string[] }`. Sends the approved follow-ups (duplicate ids are rejected with 400) and returns one outcome per id.
+
+`POST /api/prospects/[id]/resolve-unconfirmed` - Body: `{ outcome: "delivered" | "not_delivered" }`. Settles a send whose delivery was unconfirmed.
 
 `POST /api/webhooks/resend` - Verifies a Svix signature, then maps an inbound reply to `doNotContact` or `replied`.
 

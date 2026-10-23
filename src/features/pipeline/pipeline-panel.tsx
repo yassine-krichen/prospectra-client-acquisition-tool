@@ -156,7 +156,7 @@ export function PipelinePanel(): React.JSX.Element {
       <PipelineSection
         icon={MailSend01Icon}
         title="Follow-ups"
-        description="Sends the next scheduled follow-up email to prospects that are due for one (4-day cadence, one follow-up), or marks a prospect dead once that follow-up has gone unanswered."
+        description="Finds prospects due for a follow-up (4-day cadence, one follow-up). With approval on (the default) due follow-ups queue on the Queue page for you to approve instead of sending; with it off they send now. Either way, a prospect is marked dead once its follow-up has gone unanswered."
         buttonLabel="Run follow-ups"
         onRun={runFollowups}
       />

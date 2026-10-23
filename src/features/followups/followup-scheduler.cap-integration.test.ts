@@ -11,6 +11,12 @@ import { FOLLOWUP_INTERVAL_DAYS, runFollowupScheduler } from '@/features/followu
 // Redirects every layer of `runFollowupScheduler`'s own call chain (not just
 // this file's direct calls) to the isolated test database - see
 // require-destructive-test-guard.ts.
+// This file exercises the scheduler's own send path against the real cap
+// counter, so approval mode is off.
+vi.mock('@/features/followups/followup-approval-setting', () => ({
+  isFollowupApprovalRequired: () => false,
+}));
+
 vi.mock('@/common/db/client', async () => {
   const { prisma } = await import('@/common/testing/test-db-client');
   return { prisma };
